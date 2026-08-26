@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body, #terminal { width: 640px; height: 420px; margin: 0; overflow: hidden; }
+  </style>
+  <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script>
+    const terminal = new Terminal({ cols: 100, rows: 30, scrollback: 1_000 });
+    terminal.open(document.querySelector('#terminal'));
+    globalThis.__probe = {
+      ticks: 0,
+      lastAt: performance.now(),
+      maxGapMs: 0,
+      writes: 0,
+      writeStartedAt: 0,
+      writeFinishedAt: 0,
+      frames: 0,
+    };
+    setInterval(() => {
+      const now = performance.now();
+      globalThis.__probe.maxGapMs = Math.max(globalThis.__probe.maxGapMs, now - globalThis.__probe.lastAt);
+      globalThis.__probe.lastAt = now;
+      globalThis.__probe.ticks += 1;
+    }, 10);
+    const countFrame = () => {
+      globalThis.__probe.frames += 1;
+      requestAnimationFrame(countFrame);
+    };
+    requestAnimationFrame(countFrame);
+    const taskQueue = [];
+    const taskChannel = new MessageChannel();
+    taskChannel.port1.onmessage = () => taskQueue.shift()?.();
+    const scheduleTask = (callback, mode) => {
+      if (mode === 'message-channel') {
+        taskQueue.push(callback);
+        taskChannel.port2.postMessage(0);
+        return;
+      }
+      setTimeout(callback, 0);
+    };
+    globalThis.__startWriteProbe = (count = 180, mode = 'timer') => {
+      globalThis.__probe.writes = 0;
+      globalThis.__probe.writeStartedAt = performance.now();
+      const chunk = `${'x'.repeat(8_192)}\r\n`;
+      const writeNext = () => {
+        if (globalThis.__probe.writes >= count) {
+          globalThis.__probe.writeFinishedAt = performance.now();
+          return;
+        }
+        terminal.write(chunk, () => {
+          globalThis.__probe.writes += 1;
+          scheduleTask(writeNext, mode);
+        });
+      };
+      writeNext();
+    };
+  </script>
+</body>
+</html>

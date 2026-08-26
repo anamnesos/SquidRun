@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#0c1014">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Team Room">
+  <title>SquidRun Team Room</title>
+  <link rel="manifest" href="/team-room.webmanifest">
+  <link rel="icon" href="/team-room-icon-192.png" sizes="192x192" type="image/png">
+  <link rel="apple-touch-icon" href="/team-room-icon-180.png" sizes="180x180">
+  <link rel="stylesheet" href="/team-room.css">
+</head>
+<body>
+  <div class="room-app" id="roomApp">
+    <header class="room-header">
+      <div class="room-brand">
+        <div class="room-mark" aria-hidden="true">
+          <img class="room-mark-logo" src="/squidrun-favicon.ico" alt="">
+        </div>
+        <div>
+          <div class="room-title-row">
+            <h1>Team Room</h1>
+            <span class="connection-dot" id="connectionDot" data-state="connecting" role="status" aria-label="Connecting"></span>
+          </div>
+          <p>You · Architect · Builder · Oracle</p>
+        </div>
+      </div>
+      <div class="room-actions">
+        <details class="room-overflow" id="roomOverflow" hidden>
+          <summary class="room-overflow-trigger" id="roomOverflowTrigger" aria-label="Room options">
+            <span class="room-overflow-state" id="roomOverflowState" aria-hidden="true" hidden></span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.25"></circle><circle cx="12" cy="12" r="1.25"></circle><circle cx="19" cy="12" r="1.25"></circle></svg>
+          </summary>
+          <div class="room-overflow-panel" role="menu" aria-label="Team Room options">
+            <button class="room-menu-item" id="pairPhoneButton" type="button" role="menuitem" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"></rect><path d="M11 18h2"></path></svg>
+              <span>Pair phone</span>
+            </button>
+            <button class="room-menu-item" id="remotePairButton" type="button" role="menuitem" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 8.5A9 9 0 0 1 19 8.5M8 12a5 5 0 0 1 8 0"></path><circle cx="12" cy="17" r="1"></circle></svg>
+              <span>Remote pair</span>
+            </button>
+            <button class="room-menu-item" id="remoteAccessButton" type="button" role="menuitem" aria-label="Remote access off" aria-pressed="false" data-state="off" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10"></path><path d="M6.4 5.6a8 8 0 1 0 11.2 0"></path></svg>
+              <span id="remoteAccessLabel">Remote access: Off</span>
+              <span class="room-menu-state" aria-hidden="true"></span>
+            </button>
+            <button class="room-menu-item" id="notificationButton" type="button" role="menuitem" aria-label="Notification settings" aria-pressed="false" hidden>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"></path><path d="M10 21h4"></path></svg>
+              <span>Notifications</span>
+            </button>
+          </div>
+        </details>
+      </div>
+    </header>
+
+    <div class="disconnect-banner" id="disconnectBanner" hidden>
+      Reconnecting to the room. Your draft is safe.
+    </div>
+
+    <main class="room-main">
+      <section class="pair-screen" id="pairScreen" hidden aria-labelledby="pairScreenTitle">
+        <p class="eyebrow">Private room</p>
+        <h2 id="pairScreenTitle">Pair this device</h2>
+        <p>Enter the six-digit code shown in the Team Room desktop window.</p>
+        <form id="pairForm">
+          <label for="pairCode">Pairing code</label>
+          <input id="pairCode" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+          <button type="submit">Enter room</button>
+          <p class="form-error" id="pairError" role="alert"></p>
+        </form>
+      </section>
+
+      <div class="day-picker" id="dayPicker" hidden></div>
+      <section class="message-scroll" id="messageScroll" aria-label="Team Room conversation" tabindex="0">
+        <div class="message-column" id="messageColumn">
+          <div class="empty-room" id="emptyRoom">
+            <span class="empty-room-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+            <strong>The room is quiet.</strong>
+            <span>Say what matters. The whole team is here.</span>
+          </div>
+        </div>
+      </section>
+      <button class="unread-marker" id="unreadMarker" type="button" hidden>
+        <span id="unreadMarkerLabel">Latest</span>
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 8 5 5 5-5"></path></svg>
+      </button>
+    </main>
+
+    <div class="drop-shield" id="dropShield" hidden aria-hidden="true">
+      <div>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5"></path><path d="M5 14v5h14v-5"></path></svg>
+        <strong>Drop it into the room</strong>
+        <span>Photos and PDFs stay attached to your draft</span>
+      </div>
+    </div>
+
+    <footer class="composer-shell" id="composerShell">
+      <p class="upload-count" id="uploadCount" hidden aria-live="polite"></p>
+      <div class="upload-tray" id="uploadTray" hidden aria-label="Draft attachments"></div>
+      <form class="composer" id="composerForm">
+        <div class="attachment-control">
+          <button class="attachment-button" id="attachmentButton" type="button" aria-hidden="true" tabindex="-1">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h3l1.5-2h7L17 7h3v12H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
+          </button>
+          <input class="attachment-input" id="fileInput" type="file" accept="image/*,.heic,.heif,application/pdf" multiple aria-label="Add photo or file">
+        </div>
+        <label class="sr-only" for="messageInput">Message the team</label>
+        <textarea id="messageInput" rows="1" maxlength="262144" placeholder="Message the team…"></textarea>
+        <button class="send-button" id="sendButton" type="submit" aria-label="Send message" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 14-7-4 14-3-6z"></path><path d="m12 13 7-8"></path></svg>
+        </button>
+      </form>
+      <p class="composer-note"><span>Enter to send</span><span id="attachmentHint">Photos and PDFs · 50 MB each</span></p>
+      <p class="sr-only" id="uploadAnnouncements" aria-live="polite"></p>
+    </footer>
+  </div>
+
+  <dialog class="pair-dialog" id="pairDialog">
+    <form method="dialog" class="pair-dialog-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Private handoff</p>
+          <h2>Pair your phone</h2>
+        </div>
+        <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      </div>
+      <p id="pairInstruction">On your phone, open Camera and scan. Tap the banner and you’re in.</p>
+      <div class="pair-qr-shell" id="pairQrShell">
+        <img class="pair-qr" id="pairQrImage" width="256" height="256" alt="Phone pairing QR code">
+      </div>
+      <div class="pair-fallback">
+        <p>Or open this address and enter the code:</p>
+        <button class="copy-field" id="pairUrl" type="button" value="cancel" aria-label="Copy phone address"></button>
+        <div class="pair-code" id="pairCodeDisplay" aria-label="Pairing code"></div>
+      </div>
+      <p class="pair-expiry" id="pairExpiry">This one-use code expires in 5 minutes.</p>
+      <p class="form-error" id="pairDialogError" role="alert"></p>
+    </form>
+  </dialog>
+
+  <dialog class="notification-dialog" id="notificationDialog">
+    <div class="notification-dialog-card">
+      <div class="dialog-heading">
+        <div>
+          <p class="eyebrow">Your attention</p>
+          <h2>Phone notifications</h2>
+        </div>
+        <button class="dialog-close" id="notificationDialogClose" type="button" aria-label="Close">×</button>
+      </div>
+      <p class="notification-status" id="notificationStatus">Checking this device…</p>
+      <button class="notification-toggle" id="notificationToggle" type="button">Enable notifications</button>
+      <fieldset class="quiet-hours" id="notificationQuietHours" disabled>
+        <legend>Quiet hours</legend>
+        <label>From <input id="notificationQuietStart" type="time" value="23:30"></label>
+        <label>Until <input id="notificationQuietEnd" type="time" value="07:30"></label>
+        <small>Only failure alerts can buzz during this window.</small>
+      </fieldset>
+      <p class="notification-privacy">Lock-screen text stays generic. If SquidRun moves to replacement hardware, enable notifications once again on this phone.</p>
+      <p class="form-error" id="notificationError" role="alert"></p>
+    </div>
+  </dialog>
+
+  <dialog class="media-lightbox" id="mediaLightbox" aria-label="Attachment viewer">
+    <div class="lightbox-bar">
+      <div>
+        <strong id="lightboxName"></strong>
+        <span id="lightboxMeta"></span>
+      </div>
+      <div class="lightbox-actions">
+        <a id="lightboxDownload" download aria-label="Download original">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4"></path><path d="M5 18v3h14v-3"></path></svg>
+        </a>
+        <button id="lightboxClose" type="button" aria-label="Close attachment">×</button>
+      </div>
+    </div>
+    <div class="lightbox-stage" id="lightboxStage">
+      <img id="lightboxImage" alt="">
+    </div>
+  </dialog>
+
+  <script src="/team-room.js"></script>
+</body>
+</html>

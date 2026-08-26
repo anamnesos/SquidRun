@@ -1,0 +1,530 @@
+/**
+ * Backup Manager
+ * Automated backups of .squidrun/config/state with restore points and versioning.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const log = require('./logger');
+const { resolveCoordPath, resolveGlobalPath, getSquidrunRoot, GLOBAL_STATE_ROOT } = require('../config');
+
+// Files backed up from project .squidrun/ (coord root)
+const COORD_BACKUP_FILES = [
+  'shared_context.md',
+  'state.json',
+  'activity.json',
+];
+
+// Files backed up from GLOBAL_STATE_ROOT (%APPDATA%/squidrun)
+const GLOBAL_BACKUP_FILES = [
+  'app-status.json',
+  'message-state.json',
+  'schedules.json',
+  'usage-stats.json',
+];
+
+const DEFAULT_CONFIG = {
+  enabled: true,
+  intervalMinutes: 60,
+  maxBackups: 5,
+  maxAgeDays: 30,
+  createRestorePoint: true,
+  includePaths: [
+    '.squidrun/build',
+    '.squidrun/memory',
+    '.squidrun/knowledge',
+    '.squidrun/history',
+    'ui/settings.json',
+    'ui/session-state.json',
+  ],
+  excludePatterns: [
+    'node_modules',
+    'coverage',
+    'backups',
+    '.git',
+    '.squidrun/logs',
+    '.squidrun/screenshots',
+    '.squidrun/messages',
+    '.squidrun/triggers',
+    '*.tmp',
+  ],
+};
+
+const INDEX_FILE = 'index.json';
+const META_FILE = 'backup.json';
+const ENFORCED_MAX_BACKUPS = 5;
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function safeReadJson(filePath) {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+  } catch (err) {
+    log.warn('Backup', `Failed to read JSON ${filePath}: ${err.message}`);
+    return null;
+  }
+}
+
+function safeWriteJson(filePath, data) {
+  try {
+    const tempPath = `${filePath}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tempPath, filePath);
+    return true;
+  } catch (err) {
+    log.error('Backup', `Failed to write JSON ${filePath}: ${err.message}`);
+    return false;
+  }
+}
+
+function normalizePath(value) {
+  return String(value || '').replace(/\\/g, '/');
+}
+
+function isWithinRoot(targetPath, rootPath) {
+  const resolvedTarget = path.resolve(targetPath);
+  const resolvedRoot = path.resolve(rootPath);
+  if (resolvedTarget === resolvedRoot) return true;
+  return resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`);
+}
+
+function toBackupRelativePath(absolutePath, repoRoot, globalStateRoot) {
+  const resolvedAbsolute = path.resolve(absolutePath);
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  if (isWithinRoot(resolvedAbsolute, resolvedRepoRoot)) {
+    const relPath = path.relative(resolvedRepoRoot, resolvedAbsolute);
+    if (relPath && !relPath.startsWith('..')) {
+      return normalizePath(relPath);
+    }
+  }
+
+  if (isWithinRoot(resolvedAbsolute, globalStateRoot)) {
+    const globalRel = normalizePath(path.relative(globalStateRoot, resolvedAbsolute));
+    const digest = crypto.createHash('sha1').update(resolvedAbsolute).digest('hex').slice(0, 12);
+    return normalizePath(path.join('__global__', digest, globalRel || path.basename(resolvedAbsolute)));
+  }
+
+  return null;
+}
+
+function wildcardToRegex(pattern) {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const regex = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${regex}$`, 'i');
+}
+
+function matchesPattern(relPath, pattern) {
+  const normalized = normalizePath(relPath);
+  const normalizedPattern = normalizePath(pattern);
+  if (!normalizedPattern) return false;
+  if (normalizedPattern.includes('*') || normalizedPattern.includes('?')) {
+    return wildcardToRegex(normalizedPattern).test(normalized);
+  }
+  if (normalized === normalizedPattern || normalized.startsWith(`${normalizedPattern}/`)) {
+    return true;
+  }
+  return normalized.split('/').includes(normalizedPattern);
+}
+
+function resolveCoordBackupPath(relPath, repoRoot, workspacePath) {
+  const squidrunRoot = typeof getSquidrunRoot === 'function'
+    ? getSquidrunRoot()
+    : path.resolve(path.join(workspacePath, '..'));
+  const squidrunFallback = path.join(squidrunRoot, '.squidrun', relPath);
+
+  let resolved = null;
+  if (typeof resolveCoordPath === 'function') {
+    try {
+      resolved = resolveCoordPath(relPath);
+    } catch (_) {
+      resolved = null;
+    }
+  }
+  if (!resolved) {
+    resolved = squidrunFallback;
+  }
+
+  let relativePath = normalizePath(path.relative(repoRoot, resolved));
+  if (!relativePath || relativePath.startsWith('..')) {
+    relativePath = normalizePath(path.relative(repoRoot, squidrunFallback));
+  }
+  return relativePath;
+}
+
+function resolveGlobalBackupPath(relPath, repoRoot) {
+  let resolved = null;
+  if (typeof resolveGlobalPath === 'function') {
+    try {
+      resolved = resolveGlobalPath(relPath);
+    } catch (_) {
+      resolved = null;
+    }
+  }
+  if (!resolved) return null;
+
+  const relativePath = normalizePath(path.relative(repoRoot, resolved));
+  // Global paths will be outside the repo — use absolute path as key
+  if (!relativePath || relativePath.startsWith('..')) {
+    return normalizePath(resolved);
+  }
+  return relativePath;
+}
+
+function buildDefaultIncludePaths(repoRoot, workspacePath) {
+  const coordEntries = COORD_BACKUP_FILES
+    .map((relPath) => resolveCoordBackupPath(relPath, repoRoot, workspacePath))
+    .filter((relPath) => relPath && !relPath.startsWith('..'));
+
+  const globalEntries = GLOBAL_BACKUP_FILES
+    .map((relPath) => resolveGlobalBackupPath(relPath, repoRoot))
+    .filter(Boolean);
+
+  return [...coordEntries, ...globalEntries, ...DEFAULT_CONFIG.includePaths];
+}
+
+function createBackupManager(options = {}) {
+  const workspacePath = options.workspacePath;
+  const repoRoot = options.repoRoot || path.join(workspacePath, '..');
+  const globalStateRoot = path.resolve(GLOBAL_STATE_ROOT || resolveGlobalPath(''));
+  const logActivity = options.logActivity || null;
+
+  const backupRoot = path.join(workspacePath, 'backups');
+  const configPath = path.join(workspacePath, 'backup-config.json');
+  const indexPath = path.join(backupRoot, INDEX_FILE);
+
+  let config = {
+    ...DEFAULT_CONFIG,
+    includePaths: buildDefaultIncludePaths(repoRoot, workspacePath),
+  };
+  let index = { backups: [] };
+  let timer = null;
+
+  function loadConfig() {
+    const baseConfig = {
+      ...DEFAULT_CONFIG,
+      includePaths: buildDefaultIncludePaths(repoRoot, workspacePath),
+    };
+    const loaded = safeReadJson(configPath);
+    if (loaded && typeof loaded === 'object') {
+      config = { ...baseConfig, ...loaded };
+    } else {
+      config = baseConfig;
+    }
+  }
+
+  function saveConfig() {
+    config.lastUpdated = new Date().toISOString();
+    safeWriteJson(configPath, config);
+  }
+
+  function loadIndex() {
+    const loaded = safeReadJson(indexPath);
+    if (loaded && Array.isArray(loaded.backups)) {
+      index = loaded;
+    } else {
+      index = { backups: [] };
+    }
+  }
+
+  function saveIndex() {
+    index.lastUpdated = new Date().toISOString();
+    safeWriteJson(indexPath, index);
+  }
+
+  function getConfig() {
+    return { ...config };
+  }
+
+  function updateConfig(patch = {}) {
+    config = { ...config, ...patch };
+    saveConfig();
+    restartScheduler();
+    return getConfig();
+  }
+
+  function listBackups() {
+    loadIndex();
+    return index.backups.map(item => ({ ...item }));
+  }
+
+  function shouldExclude(relPath) {
+    const normalized = normalizePath(relPath);
+    const patterns = config.excludePatterns || [];
+    return patterns.some(pattern => matchesPattern(normalized, pattern));
+  }
+
+  function resolveIncludePaths(includePaths) {
+    const list = includePaths && includePaths.length ? includePaths : config.includePaths;
+    return (list || []).map(entry => {
+      const full = path.isAbsolute(entry) ? entry : path.join(repoRoot, entry);
+      return { entry, full };
+    });
+  }
+
+  function formatTimestamp(date = new Date()) {
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+  }
+
+  function createId() {
+    return crypto.randomBytes(6).toString('hex');
+  }
+
+  function copyEntry(sourcePath, relPath, destRoot, records) {
+    const normalizedRel = normalizePath(relPath);
+    if (shouldExclude(normalizedRel)) return;
+    if (!fs.existsSync(sourcePath)) return;
+    const stat = fs.statSync(sourcePath);
+    if (stat.isDirectory()) {
+      const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+      entries.forEach(entry => {
+        const childSource = path.join(sourcePath, entry.name);
+        const childRel = path.join(relPath, entry.name);
+        copyEntry(childSource, childRel, destRoot, records);
+      });
+      return;
+    }
+
+    if (!stat.isFile()) return;
+    const destPath = path.join(destRoot, relPath);
+    ensureDir(path.dirname(destPath));
+    fs.copyFileSync(sourcePath, destPath);
+    records.push({
+      relativePath: normalizePath(relPath),
+      sourcePath: path.resolve(sourcePath),
+      size: stat.size,
+      modifiedAt: stat.mtime.toISOString(),
+    });
+  }
+
+  function createBackup(options = {}) {
+    loadConfig();
+    ensureDir(backupRoot);
+    loadIndex();
+
+    const timestamp = formatTimestamp();
+    const id = `${timestamp}-${createId()}`;
+    const backupDir = path.join(backupRoot, id);
+    const dataDir = path.join(backupDir, 'files');
+    ensureDir(dataDir);
+
+    const includePaths = resolveIncludePaths(options.includePaths);
+    const records = [];
+    let totalSize = 0;
+
+    includePaths.forEach(item => {
+      if (!fs.existsSync(item.full)) {
+        log.warn('Backup', `Include path missing: ${item.full}`);
+        return;
+      }
+      const relPath = toBackupRelativePath(item.full, repoRoot, globalStateRoot);
+      if (!relPath) {
+        log.warn('Backup', `Skipping path outside backup roots: ${item.full}`);
+        return;
+      }
+      copyEntry(item.full, relPath, dataDir, records);
+    });
+
+    records.forEach(record => {
+      totalSize += record.size || 0;
+    });
+
+    const metadata = {
+      id,
+      createdAt: new Date().toISOString(),
+      reason: options.reason || 'manual',
+      name: options.name || `Backup ${timestamp}`,
+      totalSize,
+      fileCount: records.length,
+      includePaths: includePaths.map(p => p.entry),
+      excludePatterns: config.excludePatterns || [],
+      records,
+    };
+
+    const metadataPath = path.join(backupDir, META_FILE);
+    const metadataWritten = safeWriteJson(metadataPath, metadata);
+    if (!metadataWritten) {
+      log.warn('Backup', `Aborting backup ${id}: failed to write metadata ${metadataPath}`);
+      return { success: false, error: 'backup_metadata_write_failed' };
+    }
+
+    index.backups.unshift({
+      id,
+      createdAt: metadata.createdAt,
+      name: metadata.name,
+      reason: metadata.reason,
+      fileCount: metadata.fileCount,
+      totalSize: metadata.totalSize,
+    });
+
+    saveIndex();
+    pruneBackups();
+
+    if (logActivity) {
+      logActivity('backup', null, `Backup created (${metadata.fileCount} files)`, {
+        backupId: id,
+        size: totalSize,
+      });
+    }
+
+    config.lastBackupAt = metadata.createdAt;
+    saveConfig();
+    log.info('Backup', `Created backup ${id} (${metadata.fileCount} files)`);
+    return { success: true, backup: metadata };
+  }
+
+  function getBackupMeta(backupId) {
+    const backupDir = path.join(backupRoot, backupId);
+    if (!fs.existsSync(backupDir)) return null;
+    return safeReadJson(path.join(backupDir, META_FILE));
+  }
+
+  function restoreBackup(backupId, options = {}) {
+    loadConfig();
+    const metadata = getBackupMeta(backupId);
+    if (!metadata) return { success: false, error: 'backup_not_found' };
+
+    if (config.createRestorePoint && options.skipRestorePoint !== true) {
+      createBackup({ reason: `pre-restore:${backupId}` });
+    }
+
+    const restored = [];
+    const backupDir = path.join(backupRoot, backupId, 'files');
+    const dryRun = options.dryRun === true;
+
+    metadata.records.forEach(record => {
+      const relPath = record.relativePath;
+      const sourcePath = path.join(backupDir, relPath);
+      const normalizedRelPath = normalizePath(relPath);
+      if (normalizedRelPath.startsWith('..')) return;
+
+      let destPath = path.join(repoRoot, relPath);
+      if (normalizedRelPath.startsWith('__global__/')) {
+        if (typeof record.sourcePath !== 'string' || !path.isAbsolute(record.sourcePath)) return;
+        destPath = path.resolve(record.sourcePath);
+      }
+      if (!isWithinRoot(destPath, repoRoot) && !isWithinRoot(destPath, globalStateRoot)) return;
+      if (!fs.existsSync(sourcePath)) return;
+      if (dryRun) {
+        restored.push(destPath);
+        return;
+      }
+      ensureDir(path.dirname(destPath));
+      fs.copyFileSync(sourcePath, destPath);
+      restored.push(destPath);
+    });
+
+    if (logActivity && !dryRun) {
+      logActivity('backup', null, `Backup restored (${restored.length} files)`, {
+        backupId,
+      });
+    }
+
+    log.info('Backup', `Restored backup ${backupId} (${restored.length} files)`);
+    return { success: true, restored, filesRestored: restored.length, dryRun };
+  }
+
+  function deleteBackup(backupId) {
+    const backupDir = path.join(backupRoot, backupId);
+    if (!fs.existsSync(backupDir)) return { success: false, error: 'not_found' };
+    fs.rmSync(backupDir, { recursive: true, force: true });
+    loadIndex();
+    index.backups = index.backups.filter(item => item.id !== backupId);
+    saveIndex();
+    log.info('Backup', `Deleted backup ${backupId}`);
+    return { success: true };
+  }
+
+  function pruneBackups() {
+    loadConfig();
+    loadIndex();
+    const configuredMaxBackups = Number(config.maxBackups || 0);
+    const maxBackups = configuredMaxBackups > 0
+      ? Math.min(configuredMaxBackups, ENFORCED_MAX_BACKUPS)
+      : ENFORCED_MAX_BACKUPS;
+    const maxAgeDays = Number(config.maxAgeDays || 0);
+    const now = Date.now();
+    let removed = 0;
+
+    if (maxAgeDays > 0) {
+      index.backups = index.backups.filter(entry => {
+        const created = new Date(entry.createdAt).getTime();
+        if (Number.isNaN(created)) return true;
+        const ageDays = (now - created) / (24 * 60 * 60 * 1000);
+        if (ageDays > maxAgeDays) {
+          fs.rmSync(path.join(backupRoot, entry.id), { recursive: true, force: true });
+          removed += 1;
+          return false;
+        }
+        return true;
+      });
+    }
+
+    if (maxBackups > 0 && index.backups.length > maxBackups) {
+      const overflow = index.backups.slice(maxBackups);
+      overflow.forEach(entry => {
+        fs.rmSync(path.join(backupRoot, entry.id), { recursive: true, force: true });
+        removed += 1;
+      });
+      index.backups = index.backups.slice(0, maxBackups);
+    }
+
+    if (removed > 0) {
+      saveIndex();
+      log.info('Backup', `Pruned ${removed} backup(s)`);
+    }
+    return removed;
+  }
+
+  function restartScheduler() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+    if (!config.enabled) return;
+    const intervalMs = Number(config.intervalMinutes || 0) * 60 * 1000;
+    if (!intervalMs) return;
+    timer = setInterval(() => {
+      try {
+        createBackup({ reason: 'scheduled' });
+      } catch (err) {
+        log.error('Backup', `Scheduled backup failed: ${err.message}`);
+      }
+    }, intervalMs);
+  }
+
+  function stop() {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  }
+
+  function init() {
+    ensureDir(backupRoot);
+    loadConfig();
+    loadIndex();
+    saveConfig();
+    restartScheduler();
+  }
+
+  return {
+    init,
+    getConfig,
+    updateConfig,
+    listBackups,
+    createBackup,
+    restoreBackup,
+    deleteBackup,
+    pruneBackups,
+    stop,
+  };
+}
+
+module.exports = { createBackupManager };

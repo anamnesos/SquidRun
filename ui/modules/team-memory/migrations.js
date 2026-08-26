@@ -1,0 +1,149 @@
+const migrationV1 = require('./migrations/001-initial-schema');
+const migrationV2 = require('./migrations/002-phase1-compat');
+const migrationV3 = require('./migrations/003-phase2-search');
+const migrationV4 = require('./migrations/004-phase4-patterns');
+const migrationV5 = require('./migrations/005-phase5-guards');
+const migrationV6 = require('./migrations/006-phase6-experiments');
+const migrationV7 = require('./migrations/007-phase6b-pending-proof');
+const migrationV8 = require('./migrations/008-phase6c-contradiction-resolution');
+const migrationV9 = require('./migrations/009-phase7-memory-ingest');
+const migrationV10 = require('./migrations/010-phase8-memory-ingest-recovery');
+const migrationV11 = require('./migrations/011-phase9-memory-promotion-lifecycle');
+const migrationV12 = require('./migrations/012-phase10-memory-delivery');
+const migrationV13 = require('./migrations/013-phase10b-memory-class-expansion');
+const migrationV14 = require('./migrations/014-phase10c-promotion-correction-links');
+const migrationV15 = require('./migrations/015-phase11-recall-feedback');
+
+const MIGRATIONS = [
+  migrationV1,
+  migrationV2,
+  migrationV3,
+  migrationV4,
+  migrationV5,
+  migrationV6,
+  migrationV7,
+  migrationV8,
+  migrationV9,
+  migrationV10,
+  migrationV11,
+  migrationV12,
+  migrationV13,
+  migrationV14,
+  migrationV15,
+];
+const LATEST_MIGRATION_VERSION = MIGRATIONS[MIGRATIONS.length - 1]?.version || 0;
+
+function toEpochMs(value = Date.now()) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return Math.floor(numeric);
+  }
+  return Date.now();
+}
+
+function ensureMigrationsTable(db) {
+  const existing = db.prepare(`
+    SELECT 1 AS present
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'schema_migrations'
+    LIMIT 1
+  `).get();
+  if (Number(existing?.present || 0) === 1) {
+    return;
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      applied_at INTEGER NOT NULL,
+      description TEXT
+    );
+  `);
+}
+
+function getAppliedVersions(db) {
+  const stmt = db.prepare('SELECT version FROM schema_migrations ORDER BY version ASC');
+  const rows = stmt.all();
+  const versions = new Set();
+  for (const row of rows) {
+    const value = Number(row?.version);
+    if (Number.isFinite(value)) versions.add(value);
+  }
+  return versions;
+}
+
+function runMigrations(db, options = {}) {
+  if (!db || typeof db.exec !== 'function' || typeof db.prepare !== 'function') {
+    return {
+      ok: false,
+      reason: 'invalid_db',
+      appliedVersions: [],
+      currentVersion: 0,
+    };
+  }
+
+  ensureMigrationsTable(db);
+  const applied = getAppliedVersions(db);
+  const appliedVersions = [];
+  const nowMs = toEpochMs(options.nowMs);
+
+  try {
+    for (const migration of MIGRATIONS) {
+      const version = Number(migration?.version);
+      if (!Number.isFinite(version)) continue;
+      if (applied.has(version)) continue;
+
+      const disableForeignKeys = migration.disableForeignKeys === true;
+      if (disableForeignKeys) db.exec('PRAGMA foreign_keys = OFF;');
+      db.exec('BEGIN IMMEDIATE;');
+      try {
+        const migrationOptions = disableForeignKeys
+          ? { ...options, squidrunManagedTransaction: true }
+          : options;
+        if (typeof migration.up === 'function') {
+          migration.up(db, migrationOptions);
+        } else {
+          db.exec(String(migration.sql || '').trim());
+        }
+        db.prepare(`
+          INSERT INTO schema_migrations (version, applied_at, description)
+          VALUES (?, ?, ?)
+        `).run(version, nowMs, migration.description || null);
+        db.exec('COMMIT;');
+        appliedVersions.push(version);
+      } catch (err) {
+        try { db.exec('ROLLBACK;'); } catch {}
+        throw err;
+      } finally {
+        if (disableForeignKeys) db.exec('PRAGMA foreign_keys = ON;');
+      }
+    }
+  } catch (err) {
+    const currentVersion = Number(
+      db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations').get()?.v || 0
+    );
+    return {
+      ok: false,
+      reason: 'migration_failed',
+      error: err.message,
+      appliedVersions,
+      currentVersion,
+    };
+  }
+
+  const currentVersion = Number(
+    db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations').get()?.v || 0
+  );
+
+  return {
+    ok: true,
+    appliedVersions,
+    currentVersion,
+    latestVersion: LATEST_MIGRATION_VERSION,
+  };
+}
+
+module.exports = {
+  MIGRATIONS,
+  LATEST_MIGRATION_VERSION,
+  runMigrations,
+};

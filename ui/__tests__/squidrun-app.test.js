@@ -1,0 +1,14874 @@
+/**
+ * Smoke tests for squidrun-app.js
+ * Tests basic initialization and core functions of the main application controller
+ *
+ * Session 72: Added per audit finding - 650 lines of core code had ZERO tests
+ */
+
+/* global afterEach, beforeEach, describe, expect, it, jest */
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const config = require('../config');
+const { resolveRuntimeInt } = require('../modules/runtime-config');
+
+jest.mock('child_process', () => {
+  const actual = jest.requireActual('child_process');
+  return {
+    ...actual,
+    spawn: jest.fn(() => ({
+      pid: 4321,
+      unref: jest.fn(),
+    })),
+  };
+});
+
+// Mock electron (main process APIs)
+jest.mock('electron', () => ({
+  app: {
+    getPath: jest.fn().mockReturnValue('/mock/app/path'),
+    isPackaged: false,
+    on: jest.fn(),
+    quit: jest.fn(),
+  },
+  BrowserWindow: jest.fn().mockImplementation(() => ({
+    loadFile: jest.fn().mockResolvedValue(),
+    on: jest.fn(),
+    webContents: {
+      send: jest.fn(),
+      on: jest.fn(),
+      openDevTools: jest.fn(),
+      reloadIgnoringCache: jest.fn(),
+    },
+    isDestroyed: jest.fn().mockReturnValue(false),
+    isMinimized: jest.fn().mockReturnValue(false),
+    isVisible: jest.fn().mockReturnValue(true),
+    restore: jest.fn(),
+    moveTop: jest.fn(),
+    focus: jest.fn(),
+    show: jest.fn(),
+    hide: jest.fn(),
+    close: jest.fn(),
+    getTitle: jest.fn().mockReturnValue(''),
+  })),
+  ipcMain: {
+    handle: jest.fn(),
+    on: jest.fn(),
+    removeHandler: jest.fn(),
+  },
+  session: {
+    defaultSession: {
+      webRequest: {
+        onHeadersReceived: jest.fn(),
+      },
+    },
+  },
+  shell: {
+    writeShortcutLink: jest.fn(() => true),
+  },
+}));
+
+// Mock logger
+jest.mock('../modules/logger', () => ({
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+}));
+
+jest.mock('../modules/runtime-config', () => ({
+  resolveRuntimeInt: jest.fn((key, fallback) => fallback),
+}));
+
+// Mock daemon-client
+jest.mock('../daemon-client', () => ({
+  DaemonClient: jest.fn().mockImplementation(() => ({
+    connect: jest.fn().mockResolvedValue(true),
+    disconnect: jest.fn(),
+    on: jest.fn(),
+    off: jest.fn(),
+    getTerminals: jest.fn().mockReturnValue([]),
+    connected: true,
+  })),
+  getDaemonClient: jest.fn().mockReturnValue({
+    connect: jest.fn().mockResolvedValue(),
+    disconnect: jest.fn(),
+    isConnected: jest.fn().mockReturnValue(false),
+  }),
+}));
+
+
+// Mock config
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
+
+// Mock plugins
+jest.mock('../modules/plugins', () => ({
+  createPluginManager: jest.fn().mockReturnValue({
+    loadPlugins: jest.fn().mockResolvedValue([]),
+    getPlugins: jest.fn().mockReturnValue([]),
+  }),
+}));
+
+// Mock backup-manager
+jest.mock('../modules/backup-manager', () => ({
+  createBackupManager: jest.fn().mockReturnValue({
+    init: jest.fn().mockResolvedValue(),
+    createBackup: jest.fn().mockResolvedValue(),
+  }),
+}));
+
+// Mock recovery-manager
+jest.mock('../modules/recovery-manager', () => ({
+  createRecoveryManager: jest.fn().mockReturnValue({
+    init: jest.fn().mockResolvedValue(),
+  }),
+}));
+
+jest.mock('../modules/main/background-agent-manager', () => ({
+  createBackgroundAgentManager: jest.fn().mockReturnValue({
+    start: jest.fn(),
+    stop: jest.fn(),
+    handleSessionScopeChange: jest.fn().mockResolvedValue(),
+    getTargetMap: jest.fn().mockReturnValue({}),
+    listAgents: jest.fn().mockReturnValue([]),
+    spawnAgent: jest.fn().mockResolvedValue({ ok: true }),
+    killAgent: jest.fn().mockResolvedValue({ ok: true }),
+    killAll: jest.fn().mockResolvedValue({ ok: true }),
+    isBackgroundPaneId: jest.fn().mockReturnValue(false),
+    sendMessageToAgent: jest.fn().mockResolvedValue({ ok: true }),
+    handleDaemonData: jest.fn(),
+    handleDaemonExit: jest.fn(),
+    handleDaemonKilled: jest.fn(),
+    syncWithDaemonTerminals: jest.fn(),
+  }),
+}));
+
+jest.mock('../modules/main/pane-host-window-manager', () => ({
+  createPaneHostWindowManager: jest.fn().mockReturnValue({
+    ensurePaneWindows: jest.fn().mockResolvedValue(),
+    getPaneWindow: jest.fn().mockReturnValue({
+      isDestroyed: jest.fn().mockReturnValue(false),
+      webContents: { send: jest.fn() },
+    }),
+    sendToPaneWindow: jest.fn().mockReturnValue(true),
+    closeAllPaneWindows: jest.fn(),
+    getWindowDiagnostics: jest.fn().mockReturnValue({ panes: [] }),
+  }),
+}));
+
+// CONTAINMENT + REALISM. These tests drive the real onMessage, which appends
+// durably and then leaves delivery to the drain — so the spool has to actually
+// store something or the drain reads an empty queue and nothing is delivered.
+// The double redirects the REAL spool at a per-test temp root: writes are real
+// (the drain works end to end) but land in os.tmpdir(), never under the mocked
+// project root or the repo.
+// squidrun-app destructures getModelPromptReceipt at module load, so a later
+// jest.spyOn cannot reach that binding. Mock the module itself, keeping the real
+// implementation as the default so nothing else in the suite changes behaviour.
+jest.mock('../modules/model-prompt-receipt', () => {
+  const actual = jest.requireActual('../modules/model-prompt-receipt');
+  return { ...actual, getModelPromptReceipt: jest.fn(actual.getModelPromptReceipt) };
+});
+
+jest.mock('../modules/main/telegram-ingress-spool', () => {
+  const actual = jest.requireActual('../modules/main/telegram-ingress-spool');
+  const state = { baseDir: null };
+  return {
+    __esModule: false,
+    __setBaseDir: (dir) => { state.baseDir = dir; },
+    isSafeRouteKey: actual.isSafeRouteKey,
+    SPOOL_SEGMENTS: actual.SPOOL_SEGMENTS,
+    resolveSpoolDir: jest.fn((_root, routeKey) => actual.resolveSpoolDir(state.baseDir, routeKey)),
+    acceptInbound: jest.fn((input = {}) => actual.acceptInbound({ ...input, dataRoot: state.baseDir })),
+  };
+});
+
+jest.mock('../modules/main/comms-journal', () => ({
+  appendCommsJournalEntry: jest.fn(() => ({ ok: true, rowId: 1 })),
+  closeCommsJournalStores: jest.fn(),
+  queryCommsJournalEntries: jest.fn(() => []),
+}));
+
+jest.mock('../modules/main/telegram-reply-obligations', () => ({
+  openTelegramReplyObligation: jest.fn(() => ({
+    ok: true,
+    status: 'inserted',
+    obligation: { obligationId: 'telegram-reply-test' },
+  })),
+  queryTelegramReplyObligations: jest.fn(() => []),
+  satisfyTelegramReplyObligation: jest.fn(() => ({
+    ok: true,
+    status: 'satisfied',
+    obligation: { status: 'satisfied' },
+  })),
+}));
+
+jest.mock('../modules/bridge-client', () => {
+  const actual = jest.requireActual('../modules/bridge-client');
+  return {
+    ...actual,
+    createBridgeClient: jest.fn().mockReturnValue({
+      start: jest.fn().mockReturnValue(true),
+      stop: jest.fn(),
+      isReady: jest.fn().mockReturnValue(true),
+      discoverDevices: jest.fn().mockResolvedValue({ ok: true, devices: [], fetchedAt: Date.now() }),
+      initiatePairing: jest.fn().mockResolvedValue({ ok: true }),
+      completePairing: jest.fn().mockResolvedValue({ ok: true }),
+      sendMessage: jest.fn().mockResolvedValue({ ok: true }),
+      getStatusSnapshot: jest.fn().mockReturnValue({ state: 'connected', running: true }),
+    }),
+  };
+});
+
+// Mock triggers
+jest.mock('../modules/triggers', () => ({
+  init: jest.fn(),
+  setWatcher: jest.fn(),
+  setSelfHealing: jest.fn(),
+  setPluginManager: jest.fn(),
+  startTriggerWatcher: jest.fn(),
+  stopTriggerWatcher: jest.fn(),
+  broadcastToAllAgents: jest.fn(),
+  sendDirectMessage: jest.fn(() => ({ success: true })),
+}));
+
+// Mock watcher
+jest.mock('../modules/watcher', () => ({
+  startWatcher: jest.fn(),
+  stopWatcher: jest.fn(),
+  startTriggerWatcher: jest.fn(),
+  stopTriggerWatcher: jest.fn(),
+  startMessageWatcher: jest.fn(),
+  stopMessageWatcher: jest.fn(),
+}));
+
+// Mock ipc-handlers
+jest.mock('../modules/ipc-handlers', () => ({
+  registerHandlers: jest.fn(),
+  setupIPCHandlers: jest.fn(),
+  setDaemonClient: jest.fn(),
+  cleanupProcesses: jest.fn(),
+  cleanup: jest.fn(),
+}));
+
+// Mock websocket-server
+jest.mock('../modules/websocket-server', () => ({
+  start: jest.fn().mockResolvedValue(),
+  stop: jest.fn(),
+  sendToTarget: jest.fn(),
+  DEFAULT_PORT: 9900,
+}));
+
+// Mock sms-poller
+jest.mock('../modules/sms-poller', () => ({
+  start: jest.fn(() => false),
+  stop: jest.fn(),
+  isRunning: jest.fn(() => false),
+}));
+
+// Mock telegram-poller
+jest.mock('../modules/telegram-poller', () => ({
+  start: jest.fn(() => false),
+  stop: jest.fn(),
+  isRunning: jest.fn(() => false),
+}));
+
+// Mock Telegram sender
+jest.mock('../scripts/hm-telegram', () => ({
+  sendTelegram: jest.fn(async () => ({
+    ok: true,
+    chatId: 123456789,
+    messageId: 42,
+  })),
+  normalizeChatId: jest.fn((value) => {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    return /^-?\d+$/.test(text) ? text : null;
+  }),
+}));
+
+jest.mock('../scripts/hm-telegram-routing', () => ({
+  resolveTelegramInboundRoute: jest.fn(({ chatId } = {}) => {
+    const text = chatId === null || chatId === undefined ? null : String(chatId).trim();
+    if (!text || text === '1111111111' || (text !== '2222222222' && text !== '3333333333' && text !== '4444444444' && text !== '9999999999')) {
+      return { ok: true, chatId: text, windowKey: 'main', profile: 'main', reason: 'owner_chat' };
+    }
+    if (text === '2222222222') {
+      return { ok: true, chatId: text, windowKey: 'scoped', profile: 'scoped', reason: 'explicit_non_owner_route' };
+    }
+    if (text === '3333333333') {
+      return { ok: true, chatId: text, windowKey: 'client-profile', profile: 'client-profile', reason: 'explicit_non_owner_route' };
+    }
+    if (text === '4444444444') {
+      return { ok: true, chatId: text, windowKey: 'client', profile: 'client', reason: 'explicit_non_owner_route' };
+    }
+    return { ok: false, blocked: true, chatId: text, reason: 'unknown_non_owner_chat' };
+  }),
+  sendRoutedTelegramMessage: jest.fn(async (_message, _env, options = {}) => ({
+    ok: true,
+    chatId: options.chatId ? Number(options.chatId) : 123456789,
+    messageId: 42,
+    method: options.chatId === '2222222222' ? 'send-long-telegram' : 'hm-send-telegram',
+  })),
+}));
+
+jest.mock('../modules/mira-live-entrypoint', () => ({
+  MIRA_LIVE_PROMPT_REPLY_CHANNEL: 'mira:conversation-reply',
+  sendMiraLivePrompt: jest.fn(async () => ({
+    ok: true,
+    state: 'ready',
+    message: 'Mira visible reply from Telegram.',
+  })),
+}));
+
+// Mock organic-ui-handlers
+jest.mock('../modules/ipc/organic-ui-handlers', () => ({
+  registerHandlers: jest.fn(),
+  getAgentState: jest.fn(() => 'online'),
+  agentActive: jest.fn(),
+  agentOnline: jest.fn(),
+  agentOffline: jest.fn(),
+}));
+
+// Mock evidence-ledger handlers
+jest.mock('../modules/ipc/evidence-ledger-handlers', () => ({
+  executeEvidenceLedgerOperation: jest.fn(),
+  initializeEvidenceLedgerRuntime: jest.fn(() => ({ ok: true, status: { driver: 'better-sqlite3' } })),
+  closeSharedRuntime: jest.fn(),
+}));
+
+// Mock cognitive-memory handlers
+jest.mock('../modules/ipc/cognitive-memory-handlers', () => ({
+  executeCognitiveMemoryOperation: jest.fn(async () => ({ ok: true, results: [] })),
+  closeSharedCognitiveMemoryRuntime: jest.fn(),
+}));
+
+// Mock transition-ledger handlers
+jest.mock('../modules/ipc/transition-ledger-handlers', () => ({
+  executeTransitionLedgerOperation: jest.fn(async () => ({ ok: true, count: 0, items: [] })),
+}));
+
+// Mock github handlers
+jest.mock('../modules/ipc/github-handlers', () => ({
+  executeGitHubOperation: jest.fn(async () => ({ ok: true, action: 'status' })),
+}));
+
+// Mock team-memory service
+jest.mock('../modules/team-memory', () => ({
+  initializeTeamMemoryRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'better-sqlite3' } })),
+  executeTeamMemoryOperation: jest.fn(async () => ({ ok: true, status: 'updated' })),
+  appendPatternHookEvent: jest.fn(async () => ({ ok: true, queued: true })),
+  runBackfill: jest.fn(async () => ({ ok: true, scannedEvents: 0, insertedClaims: 0, duplicateClaims: 0 })),
+  runIntegrityCheck: jest.fn(async () => ({ ok: true, orphanCount: 0 })),
+  startIntegritySweep: jest.fn(),
+  stopIntegritySweep: jest.fn(),
+  startPatternMiningSweep: jest.fn(),
+  stopPatternMiningSweep: jest.fn(),
+  closeTeamMemoryRuntime: jest.fn(async () => undefined),
+}));
+
+// Mock experiment service
+jest.mock('../modules/experiment', () => ({
+  initializeExperimentRuntime: jest.fn(async () => ({ ok: true, status: { driver: 'worker' } })),
+  executeExperimentOperation: jest.fn(async () => ({ ok: true, runId: 'exp_mock', queued: false })),
+  closeExperimentRuntime: jest.fn(),
+}));
+
+jest.mock('../scripts/hm-health-snapshot', () => ({
+  createHealthSnapshot: jest.fn(() => ({
+    generatedAt: '2026-03-13T00:00:00.000Z',
+    tests: {
+      testFileCount: 194,
+      jestList: { ok: true, count: 195 },
+    },
+    modules: {
+      moduleFileCount: 300,
+      keyModules: {
+        recovery_manager: { exists: true },
+        background_agent_manager: { exists: true },
+        scheduler: { exists: true },
+      },
+    },
+    databases: {
+      evidenceLedger: { exists: true, rowCount: 100 },
+      cognitiveMemory: { exists: true, rowCount: 4 },
+    },
+    bridge: {
+      enabled: true,
+      configured: true,
+      mode: 'connected',
+      running: true,
+      relayUrl: 'wss://relay.example.test',
+      deviceId: 'LOCAL',
+      state: 'connected',
+    },
+    status: { level: 'ok', warnings: [] },
+  })),
+  renderStartupHealthMarkdown: jest.fn(() => [
+    'STARTUP HEALTH',
+    '- Overall: OK',
+    '- Tests: 194 files, 195 Jest-discoverable suites',
+    '',
+    'BRIDGE HEALTH',
+    '- Connection: connected',
+  ].join('\n')),
+}));
+
+jest.mock('../scripts/hm-telegram-poller-watchdog', () => ({
+  checkAndRecoverTelegramPoller: jest.fn(async () => ({
+    ok: true,
+    freshness: { wedged: false, status: 'fresh' },
+    recovery: { ok: true, action: 'none', recovered: false, reason: 'not_wedged' },
+  })),
+}));
+
+jest.mock('../scripts/hm-bidirectional-wake-watchdog', () => ({
+  startRunner: jest.fn(() => ({
+    ok: true,
+    alreadyRunning: true,
+    running: true,
+    pid: 2468,
+  })),
+}));
+
+jest.mock('../scripts/hm-session-summary', () => ({
+  generateSessionSummary: jest.fn(async () => ({
+    ok: true,
+    sessionNumber: 147,
+    messageCount: 3,
+    summaryText: '# Session 147 Summary\n\n## Findings\n- Shipped continuity fix.\n',
+    memoryResult: { ok: true, nodeId: 'node-session-147' },
+    fallbackResult: { ok: true, path: 'D:\\projects\\squidrun\\.squidrun\\handoffs\\last-session-summary.md' },
+  })),
+}));
+
+jest.mock('../modules/startup-ai-briefing', () => ({
+  generateStartupBriefing: jest.fn(async () => ({
+    ok: true,
+    outputPath: '/test/.squidrun/handoffs/ai-briefing.md',
+    transcriptFiles: [],
+  })),
+  readStartupBriefing: jest.fn(() => '# AI Startup Briefing'),
+}));
+
+jest.mock('../modules/local-model-capabilities', () => ({
+  buildSystemCapabilitiesSnapshot: jest.fn((options = {}) => ({
+    generatedAt: '2026-03-17T10:15:00.000Z',
+    projectRoot: options.projectRoot || 'D:\\projects\\squidrun',
+    path: 'D:\\projects\\squidrun\\.squidrun\\runtime\\system-capabilities.json',
+    localModels: {
+      enabled: options.settings?.localModelEnabled === true,
+      sleepExtraction: {
+        enabled: true,
+        available: true,
+        model: 'claude-opus-4-6',
+        path: 'anthropic-api',
+        command: '"node" "claude-extract.js" --model "claude-opus-4-6"',
+      },
+    },
+  })),
+  writeSystemCapabilitiesSnapshot: jest.fn(),
+  resolveSleepExtractionCommandFromSnapshot: jest.fn((snapshot) => snapshot?.localModels?.sleepExtraction?.command || ''),
+}));
+
+// Now require the module under test
+const { spawn } = require('child_process');
+const {
+  appendCommsJournalEntry,
+  queryCommsJournalEntries,
+} = require('../modules/main/comms-journal');
+const {
+  openTelegramReplyObligation,
+  queryTelegramReplyObligations,
+  satisfyTelegramReplyObligation,
+} = require('../modules/main/telegram-reply-obligations');
+const {
+  attachProof,
+  closeWorkItem,
+  openWorkItem,
+} = require('../modules/main/work-item-ledger');
+const {
+  buildNewMiraTelegramTurnCandidate,
+} = require('../modules/mira-telegram-turn-candidate');
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
+const { closeArmRegistryStores } = require('../modules/main/arm-registry');
+const {
+  closeArmSpawnJournalStores,
+  queryArmSpawnSessions,
+} = require('../modules/main/arm-spawn-journal');
+const { seedExampleAppArmRegistry } = require('../modules/main/exampleapp-arm-registry-seed');
+const SquidRunApp = require('../modules/main/squidrun-app');
+function createReadyExampleAppWindow(overrides = {}) {
+  const { webContents: webContentsOverrides = {}, ...windowOverrides } = overrides;
+  return {
+    webContents: {
+      send: jest.fn(),
+      executeJavaScript: jest.fn().mockResolvedValue({
+        ok: true,
+        reason: null,
+        blockers: [],
+        overlayVisible: false,
+        startupText: '',
+        startupStage: '',
+        startupPercent: '100%',
+        panes: [
+          { paneId: 'exampleapp-app', effectivePaneId: 'exampleapp-app', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+          { paneId: 'exampleapp-invoice', effectivePaneId: 'exampleapp-invoice', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+        ],
+      }),
+      ...webContentsOverrides,
+    },
+    isDestroyed: jest.fn().mockReturnValue(false),
+    isVisible: jest.fn().mockReturnValue(true),
+    getTitle: jest.fn().mockReturnValue('SquidRun - ExampleApp'),
+    ...windowOverrides,
+  };
+}
+
+const telegramSpoolMock = require('../modules/main/telegram-ingress-spool');
+const telegramSpoolRoots = [];
+
+function freshTelegramSpoolRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-app-spool-'));
+  telegramSpoolRoots.push(root);
+  telegramSpoolMock.__setBaseDir(root);
+  return root;
+}
+
+/**
+ * Delivery is no longer synchronous with the callback: the callback appends and
+ * schedules, and the drain delivers. Awaiting the scheduled drain is how these
+ * tests observe delivery now — setImmediate ticks cannot promise that.
+ */
+async function flushTelegramDrain(app) {
+  for (let i = 0; i < 4; i += 1) {
+    if (app.telegramDrainInFlight) await app.telegramDrainInFlight;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+// Scoped delivery now REFUSES when a profile root cannot be resolved (#138),
+// so the suite must supply one. Previously the code silently fell back to
+// main's tree, which is precisely the cross-profile leak being closed.
+const scopedRootEnvKeys = [
+  'SQUIDRUN_SCOPED_PROJECT_ROOT',
+  'SQUIDRUN_CLIENT_PROFILE_PROJECT_ROOT',
+  'SQUIDRUN_CLIENT_PROJECT_ROOT',
+];
+let scopedProfileRoot = null;
+
+/**
+ * THE ADMISSION KERNEL IS NOW ON THE MAIN TELEGRAM PATH, so every test that
+ * delivers an inbound Telegram message needs the two things production needs:
+ * an isolated durable ledger, and a REAL pane launch bound to the live app
+ * generation. Without the launch, `claimTransportAttempt` has nothing to name
+ * and the delivery correctly refuses — which is the new production behaviour,
+ * not a test artefact.
+ *
+ * The temp path is exported through `SQUIDRUN_ADMISSION_DB_PATH` because the
+ * app is constructed in 142 places in this file; an env-scoped ledger is one
+ * line here instead of 142 injections, and it is what guarantees no test can
+ * reach the live evidence ledger.
+ */
+let admissionLedgerRoot = null;
+
+function seedAdmissionLedgerForApp() {
+  admissionLedgerRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-admission-'));
+  process.env.SQUIDRUN_ADMISSION_DB_PATH = path.join(admissionLedgerRoot, 'ledger.db');
+}
+
+/**
+ * Bind a pane launch to the generation that is live RIGHT NOW.
+ *
+ * Called AFTER the app is constructed, because the constructor publishes a
+ * fresh `app-<pid>-<ms>` generation and the claim joins on exactly that value.
+ * Seeding earlier binds a launch to a generation no delivery will ever name —
+ * which is the same producer/consumer seam defect this whole lane exists to
+ * close, reproduced in a fixture.
+ */
+/**
+ * MAKE THE PANE ANSWERABLE, EXPLICITLY.
+ *
+ * The B_readiness gate refuses to latch a claim for a runtime that has never
+ * produced a terminal receipt, because such a claim can only ever become a
+ * permanent hold. In this process the receipt store is empty, so every delivery
+ * here would refuse — correctly, and uselessly for tests about what happens
+ * AFTER a delivery is authorised.
+ *
+ * So the fixture states the fact it depends on rather than inheriting it: this
+ * pane's runtime has proved recently. The real reader (`getReceiptRuntimeActivity`)
+ * has its own suite; what is being fixed here is the app method that feeds the
+ * probe, not the probe or the store.
+ */
+function seedPaneReadinessForApp(app) {
+  app.getTelegramReceiptRuntimeActivity = () => ({ codex: Date.now() - 1000 });
+}
+
+function seedPaneLaunchForCurrentGeneration() {
+  const { applyTelegramAdmissionSchema } = require('../modules/main/telegram-admission-store');
+  const {
+    generateLaunchId, recordPaneLaunch, bindConsumerSession, completePaneLaunch,
+  } = require('../modules/main/telegram-launch-registry');
+  const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+  const { currentAppGeneration } = require('../modules/main/app-generation');
+
+  const writer = new TelegramAdmissionWriter({ dbPath: process.env.SQUIDRUN_ADMISSION_DB_PATH });
+  const opened = writer.open();
+  if (!opened.ok) throw new Error(`admission writer open failed: ${JSON.stringify(opened)}`);
+  try {
+    applyTelegramAdmissionSchema(writer.db);
+    const launchId = generateLaunchId();
+    recordPaneLaunch(writer.db, {
+      launchId,
+      appGeneration: currentAppGeneration(),
+      paneId: '1',
+      role: 'architect',
+      consumerRuntime: 'codex',
+      daemonProcessId: String(process.pid),
+      launchedAtMs: Date.now() - 5000,
+    });
+    bindConsumerSession(writer.db, {
+      consumerSessionId: `sess-${launchId}`,
+      launchId,
+      consumerRuntime: 'codex',
+      boundAtMs: Date.now() - 4000,
+    });
+    completePaneLaunch(writer.db, { launchId, atMs: Date.now() - 3500 });
+    return launchId;
+  } finally {
+    writer.close();
+  }
+}
+
+/**
+ * WHAT THE ADMISSION LEDGER ACTUALLY HOLDS, read back from the temp database
+ * this suite already gives every app.
+ *
+ * The scoped assertions used to be spy-shaped: "was the scoped delivery method
+ * called with this text". That question stopped meaning anything the moment the
+ * scoped route became record-then-refuse, because the honest evidence is no
+ * longer a call — it is a row. A source row proves the kernel owns the identity;
+ * the ABSENCE of a claim row proves no transport attempt was invented locally
+ * for a route whose proof can never come back.
+ *
+ * Reads the stored columns and nothing else. It cannot report a row that is not
+ * there, and it does not decorate the ones that are.
+ */
+function readAdmissionLedgerFacts() {
+  const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+  const dbPath = process.env.SQUIDRUN_ADMISSION_DB_PATH;
+  if (!dbPath || !fs.existsSync(dbPath)) return { ledgerPresent: false, sources: [], claims: [] };
+  const writer = new TelegramAdmissionWriter({ dbPath });
+  const opened = writer.open();
+  if (!opened.ok) throw new Error(`admission ledger unreadable: ${JSON.stringify(opened)}`);
+  try {
+    const hasTable = (name) => !!writer.db
+      .prepare('SELECT name FROM sqlite_master WHERE type = ? AND name = ?')
+      .get('table', name);
+    const sources = hasTable('telegram_source_identity')
+      ? writer.db.prepare(`
+        SELECT source_row_id, message_id, update_id, route_key, profile, window_key,
+               chat_id, source_session_id, media_identity_sha256, canonical_payload_sha256
+        FROM telegram_source_identity ORDER BY update_id
+      `).all()
+      : [];
+    const claims = hasTable('telegram_transport_claims')
+      ? writer.db.prepare(`
+        SELECT claim_id, update_id, route_key, state FROM telegram_transport_claims
+        ORDER BY update_id
+      `).all()
+      : [];
+    return { ledgerPresent: true, sources, claims };
+  } finally {
+    writer.close();
+  }
+}
+
+/**
+ * The QUEUED RECORD a scoped refusal left pending, read back off the spool.
+ *
+ * A refused scoped delivery must leave its record ordered and visible, so the
+ * record is still there to be read — and it is the only place the canonical
+ * payload digest can be checked against its true input rather than against a
+ * reconstruction this test wrote for itself.
+ */
+function readScopedPendingRecord(updateId, routeKey = 'scoped') {
+  const durableQueue = jest.requireActual('../modules/telegram-inbound-durable-queue');
+  const spool = jest.requireActual('../modules/main/telegram-ingress-spool');
+  const base = telegramSpoolRoots[telegramSpoolRoots.length - 1];
+  // THE SPOOL'S OWN PATH RULE, called rather than copied. A hand-written path
+  // here would go stale silently and read as "no record".
+  const dir = path.join(base, ...spool.SPOOL_SEGMENTS, routeKey);
+  if (!fs.existsSync(dir)) return null;
+  return durableQueue.readPending(dir)
+    .find((entry) => Number(entry.updateId) === Number(updateId)) || null;
+}
+
+/**
+ * The scoped cutover contract, asserted in one place so eight tests cannot
+ * drift into eight slightly different definitions of "refused".
+ */
+function expectScopedSourceOnlyRefusal({ updateId, routeKey, chatId, profile = routeKey, windowKey = routeKey }) {
+  const facts = readAdmissionLedgerFacts();
+  const scoped = facts.sources.filter((row) => Number(row.update_id) === Number(updateId));
+  // RECORDED ONCE. Not zero — the kernel still owns the identity — and not
+  // twice, which is what a second writer on this row would look like.
+  expect(scoped).toHaveLength(1);
+  expect(scoped[0]).toEqual(expect.objectContaining({
+    message_id: `telegram-in-${updateId}`,
+    route_key: routeKey,
+    profile,
+    window_key: windowKey,
+    chat_id: String(chatId),
+  }));
+  // NO CLAIM. A claim is an assertion that exactly one sender may proceed; this
+  // route cannot prove it sent anything, so it may not make that assertion.
+  expect(facts.claims.filter((row) => Number(row.update_id) === Number(updateId))).toEqual([]);
+  return scoped[0];
+}
+
+beforeEach(() => {
+  freshTelegramSpoolRoot();
+  seedAdmissionLedgerForApp();
+  scopedProfileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sq-scoped-root-'));
+  for (const key of scopedRootEnvKeys) process.env[key] = scopedProfileRoot;
+});
+
+afterEach(() => {
+  delete process.env.SQUIDRUN_ADMISSION_DB_PATH;
+  if (admissionLedgerRoot) {
+    fs.rmSync(admissionLedgerRoot, { recursive: true, force: true });
+    admissionLedgerRoot = null;
+  }
+  for (const key of scopedRootEnvKeys) delete process.env[key];
+  if (scopedProfileRoot) {
+    fs.rmSync(scopedProfileRoot, { recursive: true, force: true });
+    scopedProfileRoot = null;
+  }
+});
+
+afterEach(() => {
+  while (telegramSpoolRoots.length) {
+    fs.rmSync(telegramSpoolRoots.pop(), { recursive: true, force: true });
+  }
+});
+
+describe('SquidRunApp', () => {
+  let mockAppContext;
+  let mockManagers;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queryCommsJournalEntries.mockReturnValue([]);
+    openTelegramReplyObligation.mockReturnValue({
+      ok: true,
+      status: 'inserted',
+      obligation: { obligationId: 'telegram-reply-test' },
+    });
+    queryTelegramReplyObligations.mockReturnValue([]);
+    satisfyTelegramReplyObligation.mockReturnValue({
+      ok: true,
+      status: 'satisfied',
+      obligation: { status: 'satisfied' },
+    });
+    const windows = new Map();
+
+    // Create mock app context
+    mockAppContext = {
+      mainWindow: null,
+      windows,
+      daemonClient: null,
+      currentSettings: {},
+      setMainWindow: jest.fn((window) => {
+        mockAppContext.mainWindow = window || null;
+        if (window) {
+          windows.set('main', window);
+        } else {
+          windows.delete('main');
+        }
+      }),
+      setWindow: jest.fn((key, window) => {
+        windows.set(key, window);
+        if (key === 'main') {
+          mockAppContext.mainWindow = window;
+        }
+      }),
+      getWindow: jest.fn((key = 'main') => {
+        if (key === 'main') return mockAppContext.mainWindow;
+        return windows.get(key) || null;
+      }),
+      deleteWindow: jest.fn((key = 'main') => {
+        windows.delete(key);
+        if (key === 'main') {
+          mockAppContext.mainWindow = null;
+        }
+      }),
+      getWindows: jest.fn(() => new Map(windows)),
+      setDaemonClient: jest.fn(),
+    };
+
+    // Create mock managers
+    mockManagers = {
+      settings: {
+        loadSettings: jest.fn(),
+        saveSettings: jest.fn((patch) => Object.assign(mockAppContext.currentSettings, patch)),
+        readPersistedSettingsSnapshot: jest.fn(() => ({})),
+        ensureCodexConfig: jest.fn(),
+        writeAppStatus: jest.fn(),
+        readAppStatus: jest.fn().mockReturnValue({ session: 147 }),
+        getSettings: jest.fn().mockReturnValue({}),
+      },
+      activity: {
+        loadActivityLog: jest.fn(),
+        logActivity: jest.fn(),
+      },
+      usage: {
+        loadUsageStats: jest.fn(),
+        recordUsage: jest.fn(),
+        recordSessionEnd: jest.fn(),
+      },
+      cliIdentity: {
+        getIdentity: jest.fn().mockReturnValue(null),
+        getPaneCommandForIdentity: jest.fn().mockReturnValue('claude'),
+        inferAndEmitCliIdentity: jest.fn(),
+      },
+      contextInjection: {
+        inject: jest.fn().mockResolvedValue(),
+      },
+      firmwareManager: {
+        ensureStartupFirmwareIfEnabled: jest.fn(() => ({ ok: true, skipped: true })),
+      },
+      paneFailureMonitor: {
+        handlePtyData: jest.fn().mockResolvedValue({ ok: true, ignored: true }),
+        handlePtyExit: jest.fn().mockResolvedValue({ ok: true, ignored: false }),
+        handlePtySpawn: jest.fn().mockReturnValue({ ok: true, recovered: true }),
+      },
+    };
+  });
+
+  describe('constructor', () => {
+    it('should create instance without throwing', () => {
+      expect(() => {
+        new SquidRunApp(mockAppContext, mockManagers);
+      }).not.toThrow();
+    });
+
+    it('should store context and managers', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.ctx).toBe(mockAppContext);
+      expect(app.settings).toBe(mockManagers.settings);
+      expect(app.activity).toBe(mockManagers.activity);
+      expect(app.usage).toBe(mockManagers.usage);
+    });
+
+    it('should initialize forwarder flags to false', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.cliIdentityForwarderRegistered).toBe(false);
+      expect(app.triggerAckForwarderRegistered).toBe(false);
+    });
+
+    it('fails loud when packaged root resolution disagrees with the manifest data root', () => {
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-root-coherent-data-'));
+      const heuristicRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-root-coherent-wrong-'));
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.installedDeployment = {
+          active: true,
+          dataRoot,
+          source: path.join(dataRoot, 'squidrun-install.json'),
+        };
+        const markerPath = path.join(dataRoot, '.squidrun', 'runtime', 'root-coherence-assert.jsonl');
+        app.getRootCoherenceMarkerPaths = jest.fn(() => [markerPath]);
+        app.getBootSequencePath = jest.fn(() => path.join(heuristicRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'));
+        app.resolveRootCoherencePaths = jest.fn(() => ({
+          settingsPath: path.join(dataRoot, '.squidrun', 'settings', 'websocket.json'),
+          runtimePath: path.join(heuristicRoot, '.squidrun', 'runtime'),
+          crumbPath: path.join(heuristicRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'),
+          appStatusPath: path.join(heuristicRoot, '.squidrun', 'app-status.json'),
+          websocketPortInfo: {
+            source: `settings:${path.join(dataRoot, '.squidrun', 'settings', 'websocket.json')}:port`,
+          },
+        }));
+
+        expect(() => app.assertRootCoherenceAtBoot()).toThrow(/Root coherence assertion failed/);
+
+        const marker = fs.readFileSync(markerPath, 'utf8');
+        expect(marker).toContain('"reason":"root_coherence_mismatch"');
+        expect(marker).toContain('runtimePath');
+        const dataRootStatus = JSON.parse(fs.readFileSync(
+          path.join(dataRoot, '.squidrun', 'app-status.json'),
+          'utf8'
+        ));
+        expect(dataRootStatus.boot).toEqual(expect.objectContaining({
+          stage: 'root_coherence_failed',
+          reason: 'root_coherence_mismatch',
+        }));
+      } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(heuristicRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('fails loud when the Telegram worker env would use a foreign installed token', () => {
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-root-telegram-data-'));
+      const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+      const previousChatId = process.env.TELEGRAM_CHAT_ID;
+      try {
+        fs.mkdirSync(path.join(dataRoot, '.squidrun', 'settings'), { recursive: true });
+        fs.writeFileSync(
+          path.join(dataRoot, '.squidrun', 'settings', 'telegram.json'),
+          JSON.stringify({
+            botToken: 'owned-client-token',
+            ownerChatId: '7000000002',
+          }, null, 2),
+          'utf8'
+        );
+        process.env.TELEGRAM_BOT_TOKEN = 'main-token-leak';
+        process.env.TELEGRAM_CHAT_ID = '7000000001';
+
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.installedDeployment = {
+          active: true,
+          dataRoot,
+          source: path.join(dataRoot, 'squidrun-install.json'),
+        };
+        const markerPath = path.join(dataRoot, '.squidrun', 'runtime', 'root-coherence-assert.jsonl');
+        app.getRootCoherenceMarkerPaths = jest.fn(() => [markerPath]);
+        app.getBootSequencePath = jest.fn(() => path.join(dataRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'));
+        app.settings.resolveAppStatusPath = jest.fn(() => path.join(dataRoot, '.squidrun', 'app-status.json'));
+
+        expect(() => app.assertRootCoherenceAtBoot()).toThrow(/Root coherence assertion failed/);
+
+        const marker = fs.readFileSync(markerPath, 'utf8');
+        expect(marker).toContain('telegramWorkerTokenFingerprint');
+        expect(marker).toContain('telegramWorkerChatId');
+        expect(marker).toContain('telegramPollerStatePath');
+      } finally {
+        if (previousToken === undefined) {
+          delete process.env.TELEGRAM_BOT_TOKEN;
+        } else {
+          process.env.TELEGRAM_BOT_TOKEN = previousToken;
+        }
+        if (previousChatId === undefined) {
+          delete process.env.TELEGRAM_CHAT_ID;
+        } else {
+          process.env.TELEGRAM_CHAT_ID = previousChatId;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('includes Squid Room arm panes in hidden pane host coverage when enabled', () => {
+      mockAppContext.currentSettings.hiddenPaneHostsEnabled = true;
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.getHiddenPaneHostPaneIds()).toEqual(expect.arrayContaining([
+        '1',
+        '2',
+        '3',
+        'exampleapp-lead',
+        'exampleapp-schedule-dispatch',
+        'exampleapp-app',
+        'exampleapp-invoice',
+      ]));
+    });
+
+    it('routes restart ownership to main for core panes and Squid Room for arm panes', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const mainWindow = createReadyExampleAppWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun'),
+      });
+      const squidRoomWindow = createReadyExampleAppWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun - Squid Room'),
+      });
+      mockAppContext.setMainWindow(mainWindow);
+      mockAppContext.setWindow('squid-room', squidRoomWindow);
+
+      const coreRestart = app.requestPaneRestart('2', { source: 'test-core' });
+      expect(coreRestart).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'main',
+      }));
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: '2',
+        source: 'test-core',
+        restartClaimId: expect.any(String),
+      }));
+      expect(squidRoomWindow.webContents.send).not.toHaveBeenCalled();
+
+      mainWindow.webContents.send.mockClear();
+      squidRoomWindow.webContents.send.mockClear();
+
+      const armRestart = app.requestPaneRestart('exampleapp-app', { source: 'test-arm' });
+      expect(armRestart).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'squid-room',
+      }));
+      expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: 'exampleapp-app',
+        source: 'test-arm',
+        restartClaimId: expect.any(String),
+      }));
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('L0/L6 makes a live arm session impossible without addressed daemon spawn success', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'build-1a-l0-'));
+      const dbPath = path.join(tempDir, 'evidence-ledger.db');
+      const spawnAddressed = jest.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 'not_connected',
+        reason: 'daemon_not_connected',
+      });
+      const killAddressed = jest.fn();
+      mockAppContext.daemonClient = { spawnAddressed, killAddressed };
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      let reopenedStore = null;
+
+      try {
+        const seeded = seedExampleAppArmRegistry({
+          dbPath,
+          mainSessionId: 'app-session-l0',
+          nowMs: 10_000,
+        });
+        expect(seeded).toEqual(expect.objectContaining({
+          ok: true,
+          registry: expect.objectContaining({
+            appRoomId: 'exampleapp',
+            sessionId: 'app-room:exampleapp',
+            desiredCount: 4,
+          }),
+        }));
+        const leadArm = seeded.registry.arms.find((arm) => arm.armKey === 'lead');
+        const spawnInput = {
+          dbPath,
+          workspacePath: tempDir,
+          appRoomId: 'exampleapp',
+          armKey: 'lead',
+          paneId: 'exampleapp-lead',
+          role: 'exampleapp-lead',
+          registryId: seeded.registry.registryId,
+          armId: leadArm.armId,
+          sourceMessageId: 'l0-headless-ping',
+          expectedResponseClass: 'arm.liveness.pong',
+          dryRun: true,
+          nowMs: 11_000,
+        };
+
+        const owner = app.resolvePaneRestartOwner('exampleapp-lead');
+        expect(owner).toEqual(expect.objectContaining({
+          ownerWindowKey: 'squid-room',
+          webContents: null,
+          requiresWebContents: true,
+        }));
+
+        expect(app.requestPaneRestart('exampleapp-lead', { source: 'build-1a-l0' })).toEqual({
+          ok: false,
+          granted: false,
+          reason: 'restart_owner_unavailable',
+          paneId: 'exampleapp-lead',
+          ownerWindowKey: 'squid-room',
+        });
+        expect(spawnAddressed).not.toHaveBeenCalled();
+
+        const refused = await app.spawnAddressedArm(spawnInput);
+        expect(refused).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'not_connected',
+          reason: 'daemon_not_connected',
+        }));
+        expect(queryArmSpawnSessions({}, { dbPath })).toEqual([]);
+
+        spawnAddressed.mockImplementationOnce(async (request) => ({
+          ok: true,
+          status: 'spawned',
+          durableAddress: request.durableAddress,
+          spawnLeaseId: 'lease-l0-success',
+          terminal: {
+            paneId: request.paneId,
+            pid: 4321,
+            alive: true,
+            dryRun: true,
+            durableAddress: request.durableAddress,
+            spawnLeaseId: 'lease-l0-success',
+          },
+          receipt: {
+            schema: 'squidrun.arm_spawn_receipt.v0',
+            eventClass: 'arm.spawn.started',
+            status: 'spawned',
+            reason: null,
+            sourceMessageId: request.sourceMessageId,
+            expectedResponseClass: request.expectedResponseClass,
+            durableAddress: request.durableAddress,
+            spawnLeaseId: 'lease-l0-success',
+            previousSpawnLeaseId: null,
+            paneId: request.paneId,
+            pid: 4321,
+            owner: request.owner,
+            recoveryEvent: request.recoveryEvent,
+            atMs: 12_000,
+          },
+        }));
+        const spawned = await app.spawnAddressedArm({ ...spawnInput, nowMs: 12_000 });
+        expect(spawned).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'spawned_and_registered',
+          spawnLeaseId: 'lease-l0-success',
+          session: expect.objectContaining({
+            status: 'active',
+            paneId: 'exampleapp-lead',
+            spawnLeaseId: 'lease-l0-success',
+          }),
+        }));
+        expect(spawnAddressed).toHaveBeenCalledTimes(2);
+        expect(killAddressed).not.toHaveBeenCalled();
+
+        closeArmRegistryStores();
+        closeArmSpawnJournalStores();
+        reopenedStore = new EvidenceLedgerStore({ dbPath });
+        expect(reopenedStore.init().ok).toBe(true);
+        const persisted = reopenedStore.getArmRegistryManifest({
+          appRoomId: 'exampleapp',
+          sessionId: 'app-room:exampleapp',
+        });
+        expect(persisted).toEqual(expect.objectContaining({
+          sessionId: 'app-room:exampleapp',
+          desiredCount: 4,
+        }));
+        expect(persisted.arms).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            armKey: 'lead',
+            paneId: 'exampleapp-lead',
+          }),
+        ]));
+        expect(reopenedStore.queryArmSpawnSessions({
+          durableAddress: spawned.durableAddress,
+          status: 'active',
+        })).toEqual([
+          expect.objectContaining({
+            registryId: seeded.registry.registryId,
+            armId: leadArm.armId,
+            durableAddress: spawned.durableAddress,
+            spawnLeaseId: 'lease-l0-success',
+            pid: 4321,
+            status: 'active',
+          }),
+        ]);
+      } finally {
+        reopenedStore?.close();
+        closeArmRegistryStores();
+        closeArmSpawnJournalStores();
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('persists addressed terminal release events independently of renderer ownership', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-build-1a-qa';
+      const recordLifecycle = jest.fn().mockReturnValue({ ok: true, status: 'released' });
+      const receipt = {
+        eventClass: 'arm.spawn.released',
+        status: 'released',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
+        spawnLeaseId: 'lease-qa-1',
+        paneId: 'exampleapp-dev-qa',
+        owner: 'terminal-daemon',
+        recoveryEvent: 'pty_exit',
+        sourceMessageId: 'qa-ping-1',
+        expectedResponseClass: 'arm.liveness.pong',
+        atMs: 20_000,
+      };
+
+      expect(app.handleArmSpawnLifecycleEvent({
+        type: 'arm.spawn.released',
+        paneId: 'exampleapp-dev-qa',
+        payload: receipt,
+      }, {
+        recordLifecycle,
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+        nowMs: 20_001,
+      })).toEqual({ ok: true, status: 'released' });
+      expect(recordLifecycle).toHaveBeenCalledWith({
+        eventClass: 'arm.spawn.released',
+        receipt,
+        mainSessionId: 'app-session-build-1a-qa',
+        paneId: 'exampleapp-dev-qa',
+      }, {
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+        nowMs: 20_001,
+      });
+    });
+
+    it('returns Build 1A success only after a journal-correlated liveness proof', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const session = {
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
+        spawnLeaseId: 'lease-qa-1',
+        paneId: 'exampleapp-dev-qa',
+        sourceMessageId: 'qa-ping-1',
+        status: 'active',
+      };
+      const spawnArm = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'spawned_and_registered',
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        session,
+        spawnResult: { ok: true, terminal: { paneId: session.paneId } },
+      });
+      const probeLiveness = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'proved',
+        session: { ...session, livenessMessageId: 'hm-qa-pong-1' },
+      });
+      const rollback = jest.fn();
+
+      const result = await app.spawnAddressedArmAndProveLiveness({
+        paneId: session.paneId,
+      }, {
+        spawnArm,
+        probeLiveness,
+        rollbackSpawn: rollback,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'spawned_and_liveness_proved',
+        liveness: expect.objectContaining({ ok: true, status: 'proved' }),
+        session: expect.objectContaining({ livenessMessageId: 'hm-qa-pong-1' }),
+      }));
+      expect(probeLiveness).toHaveBeenCalledWith(expect.objectContaining({
+        session,
+        durableAddress: session.durableAddress,
+      }), expect.objectContaining({
+        daemonClient: mockAppContext.daemonClient,
+      }));
+      expect(rollback).not.toHaveBeenCalled();
+    });
+
+    it('generation-kills a spawned seat when journal round-trip proof fails', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-build-1a-qa';
+      const session = {
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
+        spawnLeaseId: 'lease-qa-1',
+        paneId: 'exampleapp-dev-qa',
+        sourceMessageId: 'qa-ping-1',
+        status: 'active',
+      };
+      const spawnResult = {
+        ok: true,
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        terminal: { paneId: session.paneId },
+      };
+      const spawnArm = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'spawned_and_registered',
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        session,
+        spawnResult,
+      });
+      const probeLiveness = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 'proof_timeout',
+        reason: 'no_correlated_comms_reply_within_100ms',
+      });
+      const killReceipt = {
+        eventClass: 'arm.spawn.killed',
+        status: 'killed',
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        paneId: session.paneId,
+        sourceMessageId: session.sourceMessageId,
+        atMs: 30_000,
+      };
+      const rollback = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'killed',
+        receipt: killReceipt,
+      });
+      const recordLifecycle = jest.fn().mockReturnValue({ ok: true, status: 'killed' });
+
+      const result = await app.spawnAddressedArmAndProveLiveness({
+        paneId: session.paneId,
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+      }, {
+        spawnArm,
+        probeLiveness,
+        rollbackSpawn: rollback,
+        recordLifecycle,
+        nowMs: 30_001,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'liveness_failed_rolled_back',
+        reason: 'no_correlated_comms_reply_within_100ms',
+        rollback: expect.objectContaining({ ok: true, status: 'killed' }),
+        lifecycle: { ok: true, status: 'killed' },
+      }));
+      expect(rollback).toHaveBeenCalledWith(mockAppContext.daemonClient, spawnResult, expect.objectContaining({
+        durableAddress: session.durableAddress,
+        spawnLeaseId: session.spawnLeaseId,
+        reason: 'liveness_proof_failed',
+        recoveryEvent: 'liveness_proof_failure',
+      }));
+      expect(recordLifecycle).toHaveBeenCalledWith({
+        eventClass: 'arm.spawn.killed',
+        receipt: killReceipt,
+        mainSessionId: 'app-session-build-1a-qa',
+        paneId: session.paneId,
+      }, {
+        dbPath: 'D:\\qa\\evidence-ledger.db',
+        nowMs: 30_001,
+      });
+    });
+
+    it('routes restart ownership to the active profile window for colliding core pane ids', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'client';
+      app.commsSessionScopeId = 'app-session-428';
+      app.setLaunchWindowProfile({
+        profileName: 'client',
+        windowKey: 'client',
+        includeMainWindow: false,
+        standaloneWindow: true,
+      });
+      const mainWindow = createReadyExampleAppWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun'),
+      });
+      const profileWindow = createReadyExampleAppWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun - Client'),
+      });
+      app.registerAppWindow('main', mainWindow, {
+        profileName: 'main',
+        sessionScopeId: 'app-session-428',
+      });
+      app.registerAppWindow('client', profileWindow, {
+        profileName: 'client',
+        sessionScopeId: 'app-session-428:client',
+      });
+
+      const owner = app.resolvePaneRestartOwner('3');
+      expect(owner).toEqual(expect.objectContaining({
+        ownerWindowKey: 'client',
+        ownerProfileName: 'client',
+        ownerSessionScopeId: 'app-session-428:client',
+        ownerInstance: {
+          profileName: 'client',
+          windowKey: 'client',
+          sessionScopeId: 'app-session-428:client',
+        },
+      }));
+
+      const result = app.requestPaneRestart('3', { source: 'test-profile' });
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        granted: true,
+        delivered: true,
+        ownerWindowKey: 'client',
+      }));
+      expect(profileWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
+        paneId: '3',
+        source: 'test-profile',
+        restartClaim: expect.objectContaining({
+          ownerWindowKey: 'client',
+          ownerProfileName: 'client',
+          ownerSessionScopeId: 'app-session-428:client',
+          ownerInstance: {
+            profileName: 'client',
+            windowKey: 'client',
+            sessionScopeId: 'app-session-428:client',
+          },
+        }),
+        restartClaimId: expect.any(String),
+      }));
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('restart-pane', expect.anything());
+    });
+  });
+
+  describe('fresh install marker persistence', () => {
+    it('uses explicit installed data root for packaged workspace bootstrap path', () => {
+      const electron = require('electron');
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousWorkspaceRoot = process.env.SQUIDRUN_WORKSPACE_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-data-root-'));
+      try {
+        electron.app.isPackaged = true;
+        electron.app.getPath.mockImplementation((name) => (name === 'home' ? path.join(dataRoot, '..') : '/mock/app/path'));
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+        delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        expect(app.getDefaultExternalWorkspacePath()).toBe(path.resolve(dataRoot));
+        expect(app.resolvePackagedWorkspacePath()).toBe(path.resolve(dataRoot));
+      } finally {
+        electron.app.isPackaged = false;
+        electron.app.getPath.mockReturnValue('/mock/app/path');
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousWorkspaceRoot === undefined) {
+          delete process.env.SQUIDRUN_WORKSPACE_ROOT;
+        } else {
+          process.env.SQUIDRUN_WORKSPACE_ROOT = previousWorkspaceRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('writes fresh-install marker under .squidrun', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-fresh-marker-'));
+
+      const markerPath = app.writeFreshInstallMarker(workspace);
+      expect(markerPath).toBe(path.join(workspace, '.squidrun', 'fresh-install.json'));
+      expect(fs.existsSync(markerPath)).toBe(true);
+
+      const payload = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+      expect(payload).toEqual(expect.objectContaining({
+        fresh_install: true,
+        workspace_path: path.resolve(workspace),
+      }));
+      fs.rmSync(workspace, { recursive: true, force: true });
+    });
+
+    it('clears fresh-install marker when onboarding completes', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-fresh-marker-clear-'));
+      const markerPath = app.writeFreshInstallMarker(workspace);
+
+      expect(fs.existsSync(markerPath)).toBe(true);
+      app.clearFreshInstallMarker(workspace);
+      expect(fs.existsSync(markerPath)).toBe(false);
+      fs.rmSync(workspace, { recursive: true, force: true });
+    });
+  });
+
+  describe('getCurrentAppStatusSessionNumber', () => {
+    it('reads session from canonical session field', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 147 });
+      expect(app.getCurrentAppStatusSessionNumber()).toBe(147);
+    });
+
+    it('accepts legacy snake_case session_number field', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      mockManagers.settings.readAppStatus.mockReturnValue({ session_number: 148 });
+      expect(app.getCurrentAppStatusSessionNumber()).toBe(148);
+    });
+  });
+
+  describe('routeInjectMessage', () => {
+    it('dedupes repeated side-profile visible-window injections by messageId', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      const payload = {
+        panes: ['2'],
+        message: 'Client scoped Architect -> Builder message',
+        deliveryId: 'delivery-client-replay-1',
+        traceContext: {
+          messageId: 'hm-client-visible-replay-1',
+        },
+        meta: {
+          windowKey: 'client',
+          profileName: 'client',
+        },
+      };
+
+      expect(app.routeInjectMessage(payload)).toBe(true);
+      expect(app.routeInjectMessage(payload)).toBe(true);
+
+      const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls).toHaveLength(1);
+      expect(injectCalls[0][2]).toEqual(expect.objectContaining({ windowKey: 'client' }));
+      expect(injectCalls[0][1]).toEqual(expect.objectContaining({
+        panes: ['2'],
+        message: payload.message,
+        _ipcPacketized: true,
+        _routerAttempted: true,
+        meta: expect.objectContaining({
+          windowKey: 'client',
+          profileName: 'client',
+        }),
+      }));
+      expect(app.visibleInjectDeliveryCache.size).toBe(1);
+    });
+
+    it('dedupes repeated startup/session injections by metadata identity before body text', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-462';
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      const payload = {
+        panes: ['2'],
+        startupInjection: true,
+        message: 'Startup context original body.',
+        deliveryId: 'delivery-startup-session-1',
+        traceContext: {
+          messageId: 'hm-startup-session-duplicate-1',
+        },
+        meta: {
+          startupInjection: true,
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+          routeKind: 'startup',
+        },
+      };
+
+      expect(app.routeInjectMessage(payload)).toBe(true);
+      expect(app.routeInjectMessage({
+        ...payload,
+        message: 'Startup context retry with changed body text.',
+      })).toBe(true);
+
+      const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls).toHaveLength(1);
+      expect(app.visibleInjectDeliveryCache.size).toBe(1);
+      const [dedupeKey] = app.visibleInjectDeliveryCache.keys();
+      expect(dedupeKey).toContain('main|main|app-session-462|startup|2|hm-startup-session-duplicate-1|');
+    });
+
+    it('routes fresh startup/session injections when message ids differ', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-462';
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+      const basePayload = {
+        panes: ['2'],
+        startupInjection: true,
+        message: 'Startup context body.',
+        meta: {
+          startupInjection: true,
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+          routeKind: 'startup',
+        },
+      };
+
+      expect(app.routeInjectMessage({
+        ...basePayload,
+        traceContext: { messageId: 'hm-startup-session-fresh-1' },
+      })).toBe(true);
+      expect(app.routeInjectMessage({
+        ...basePayload,
+        traceContext: { messageId: 'hm-startup-session-fresh-2' },
+      })).toBe(true);
+
+      const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls).toHaveLength(2);
+      expect(app.visibleInjectDeliveryCache.size).toBe(2);
+    });
+
+    it('routes correct metadata even when body text mentions another profile', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'main';
+      app.commsSessionScopeId = 'app-session-462';
+      app.registerAppWindow('main', createReadyExampleAppWindow(), {
+        profileName: 'main',
+        sessionScopeId: 'app-session-462',
+      });
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      expect(app.routeInjectMessage({
+        panes: ['2'],
+        message: 'This body says Client/scoped, but the envelope belongs to main.',
+        traceContext: { messageId: 'hm-route-metadata-correct-body-misleading' },
+        meta: {
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+          routeKind: 'agent_message',
+        },
+      })).toBe(true);
+
+      expect(sendToVisibleWindow).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: 'This body says Client/scoped, but the envelope belongs to main.',
+          meta: expect.objectContaining({
+            windowKey: 'main',
+            profileName: 'main',
+            sessionScopeId: 'app-session-462',
+          }),
+        }),
+        { windowKey: 'main' }
+      );
+      expect(app.lastInjectRouteBlock).toBeNull();
+    });
+
+    it('blocks wrong metadata even when body text looks plausible for the target window', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'main';
+      app.commsSessionScopeId = 'app-session-462';
+      app.registerAppWindow('main', createReadyExampleAppWindow(), {
+        profileName: 'main',
+        sessionScopeId: 'app-session-462',
+      });
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      expect(app.routeInjectMessage({
+        panes: ['2'],
+        message: 'Builder, this is for the main current session. Please handle it here.',
+        traceContext: { messageId: 'hm-route-metadata-wrong-body-plausible' },
+        meta: {
+          windowKey: 'main',
+          profileName: 'client',
+          sessionScopeId: 'app-session-462:client',
+          routeKind: 'agent_message',
+        },
+      })).toBe(false);
+
+      expect(sendToVisibleWindow).not.toHaveBeenCalled();
+      expect(app.lastInjectRouteBlock).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'inject_route_metadata_mismatch',
+        paneId: '2',
+        blockers: expect.arrayContaining([
+          'profile_mismatch:client->main',
+          'session_scope_mismatch:app-session-462:client->app-session-462',
+        ]),
+        routeMetadata: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'client',
+          sessionScopeId: 'app-session-462:client',
+        }),
+        targetScope: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+        }),
+      }));
+    });
+
+    it('blocks wrong session metadata even when body text looks plausible for the target window', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.activeProfileName = 'main';
+      app.commsSessionScopeId = 'app-session-462';
+      app.registerAppWindow('main', createReadyExampleAppWindow(), {
+        profileName: 'main',
+        sessionScopeId: 'app-session-462',
+      });
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+
+      expect(app.routeInjectMessage({
+        panes: ['2'],
+        message: 'Builder, this body says main profile and current session; metadata says otherwise.',
+        traceContext: { messageId: 'hm-route-metadata-wrong-session-body-plausible' },
+        meta: {
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-999',
+          routeKind: 'agent_message',
+        },
+      })).toBe(false);
+
+      expect(sendToVisibleWindow).not.toHaveBeenCalled();
+      expect(app.lastInjectRouteBlock).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'inject_route_metadata_mismatch',
+        paneId: '2',
+        blockers: expect.arrayContaining([
+          'session_scope_mismatch:app-session-999->app-session-462',
+        ]),
+        routeMetadata: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-999',
+        }),
+        targetScope: expect.objectContaining({
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: 'app-session-462',
+        }),
+      }));
+    });
+
+    it('does not cache failed side-profile visible-window handoffs', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const sendToVisibleWindow = jest
+        .spyOn(app, 'sendToVisibleWindow')
+        .mockReturnValueOnce(false)
+        .mockReturnValueOnce(true);
+
+      const payload = {
+        panes: ['2'],
+        message: 'retry after failed scoped visible handoff',
+        traceContext: {
+          messageId: 'hm-client-visible-retry-1',
+        },
+        meta: {
+          windowKey: 'client',
+          profileName: 'client',
+        },
+      };
+
+      expect(app.routeInjectMessage(payload)).toBe(false);
+      expect(app.routeInjectMessage(payload)).toBe(true);
+      expect(sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message')).toHaveLength(2);
+      expect(app.visibleInjectDeliveryCache.size).toBe(1);
+    });
+
+    it('pre-chunks oversized inject messages before visible-window delivery', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const sendToVisibleWindow = jest.spyOn(app, 'sendToVisibleWindow').mockReturnValue(true);
+      const message = 'main-route-🙂-'.repeat(700);
+
+      const routed = app.routeInjectMessage({
+        panes: ['1'],
+        message,
+        deliveryId: 'delivery-route-1',
+      });
+
+      expect(routed).toBe(true);
+      expect(sendToVisibleWindow).toHaveBeenCalled();
+
+      const payloads = sendToVisibleWindow.mock.calls
+        .filter(([channel]) => channel === 'inject-message')
+        .map(([, payload]) => payload);
+
+      expect(payloads.length).toBeGreaterThan(1);
+      const reconstructed = payloads
+        .slice()
+        .sort((left, right) => left.ipcChunk.index - right.ipcChunk.index)
+        .map((payload) => payload.message)
+        .join('');
+
+      expect(reconstructed).toBe(message);
+      for (const payload of payloads) {
+        expect(payload.messageBytes).toBe(Buffer.byteLength(payload.message, 'utf8'));
+        expect(payload._ipcPacketized).toBe(true);
+        expect(payload._routerAttempted).toBe(true);
+        expect(payload.meta).toEqual(expect.objectContaining({
+          ipcChunked: true,
+          ipcOriginalBytes: Buffer.byteLength(message, 'utf8'),
+        }));
+      }
+      expect(payloads[0].ipcChunk).toEqual(expect.objectContaining({
+        index: 0,
+        count: payloads.length,
+        totalBytes: Buffer.byteLength(message, 'utf8'),
+      }));
+    });
+
+    it('prefers the visible main window over hidden pane-host delivery for normal injections', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      const mainWindow = {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          send: jest.fn(),
+        },
+      };
+      app.registerAppWindow('main', mainWindow);
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+
+      const routed = app.routeInjectMessage({
+        panes: ['1'],
+        message: 'visible-main-before-hidden-host',
+        traceContext: {
+          messageId: 'hm-visible-main-before-hidden-host',
+        },
+      });
+
+      expect(routed).toBe(true);
+      expect(sendPaneHostBridgeEvent).not.toHaveBeenCalled();
+      expect(app.paneHostWindowManager.getPaneWindow).not.toHaveBeenCalled();
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          panes: ['1'],
+          message: 'visible-main-before-hidden-host',
+          _ipcPacketized: true,
+          _routerAttempted: true,
+        })
+      );
+    });
+
+    it('still routes visible-renderer hidden pane-host handoff after visible-window delivery', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      const mainWindow = {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          send: jest.fn(),
+        },
+      };
+      app.registerAppWindow('main', mainWindow);
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+      const traceContext = { messageId: 'hm-visible-then-hidden-echo' };
+
+      expect(app.routeInjectMessage({
+        panes: ['1'],
+        message: 'visible first payload',
+        traceContext,
+      })).toBe(true);
+
+      mainWindow.webContents.send.mockClear();
+      expect(app.routeInjectMessage({
+        panes: ['1'],
+        message: 'same message after renderer stripping prefix',
+        traceContext,
+        meta: {
+          preferHiddenPaneHost: true,
+        },
+      })).toBe(true);
+
+      expect(sendPaneHostBridgeEvent).toHaveBeenCalledWith(
+        '1',
+        'inject-message',
+        expect.objectContaining({
+          message: 'same message after renderer stripping prefix',
+          traceContext,
+        })
+      );
+      expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('clears stale pane-host degraded state when visible fallback reaches a live dynamic PTY', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.ctx.daemonClient = {
+        connected: true,
+        getTerminals: jest.fn(() => [
+          {
+            paneId: 'exampleapp-invoice',
+            alive: true,
+            pid: 610968,
+            mode: 'pty',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
+          },
+        ]),
+        getTerminal: jest.fn((paneId) => (
+          paneId === 'exampleapp-invoice'
+            ? {
+              paneId: 'exampleapp-invoice',
+              alive: true,
+              pid: 610968,
+              mode: 'pty',
+              scrollback: 'PS D:\\projects\\ExampleApp> ',
+            }
+            : null
+        )),
+      };
+      const mainWindow = {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          send: jest.fn(),
+        },
+      };
+      app.registerAppWindow('main', mainWindow);
+      app.paneHostMissingPanes = new Set(['exampleapp-invoice']);
+      app.paneHostLastErrorReason = 'inject_hidden_not_ready';
+      app.paneHostLastErrorAt = '2026-06-07T09:39:10.096Z';
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => null);
+
+      const routed = app.routeInjectMessage({
+        panes: ['exampleapp-invoice'],
+        message: 'status',
+        meta: {
+          preferHiddenPaneHost: true,
+        },
+      });
+
+      expect(routed).toBe(true);
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          panes: ['exampleapp-invoice'],
+          meta: expect.objectContaining({
+            deliveryPath: 'visible_fallback',
+          }),
+        })
+      );
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostReady.has('exampleapp-invoice')).toBe(true);
+    });
+
+    it('routes pane-host inject IPC through the shared inject router and chunks long payloads', async () => {
+      const { ipcMain } = require('electron');
+      const watcher = require('../modules/watcher');
+      const ipcHandlers = require('../modules/ipc-handlers');
+      const pipeline = require('../modules/pipeline');
+      const sharedState = require('../modules/shared-state');
+      const contextCompressor = require('../modules/context-compressor');
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      watcher.init = jest.fn();
+      ipcHandlers.init = jest.fn();
+      jest.spyOn(pipeline, 'init').mockImplementation(() => {});
+      jest.spyOn(sharedState, 'init').mockImplementation(() => {});
+      jest.spyOn(contextCompressor, 'init').mockImplementation(() => {});
+      mockAppContext.setRecoveryManager = jest.fn((manager) => {
+        mockAppContext.recoveryManager = manager;
+      });
+      mockAppContext.setPluginManager = jest.fn((manager) => {
+        mockAppContext.pluginManager = manager;
+      });
+      mockAppContext.setBackupManager = jest.fn((manager) => {
+        mockAppContext.backupManager = manager;
+      });
+      mockAppContext.mainWindow = {
+        webContents: {
+          send: jest.fn(),
+          on: jest.fn(),
+          openDevTools: jest.fn(),
+        },
+      };
+      jest.spyOn(app, 'initRecoveryManager').mockReturnValue({});
+      jest.spyOn(app, 'initPluginManager').mockReturnValue({ loadAll: jest.fn() });
+      jest.spyOn(app, 'initBackupManager').mockReturnValue({});
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+      const message = 'pane-host-route-🙂-'.repeat(700);
+      const traceContext = { traceId: 'hm-pane-host-1' };
+      const meta = { source: 'test' };
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+
+      app.initModules();
+
+      const paneHostInjectHandler = ipcMain.handle.mock.calls
+        .find(([channel]) => channel === 'pane-host-inject')?.[1];
+
+      expect(typeof paneHostInjectHandler).toBe('function');
+
+      const result = await paneHostInjectHandler({}, '1', {
+        message,
+        deliveryId: 'delivery-pane-host-1',
+        traceContext,
+        meta,
+      });
+
+      expect(result).toEqual({
+        success: true,
+        paneId: '1',
+        mode: 'routed-inject',
+        verified: false,
+        status: 'pane_host_route_pending',
+        reason: 'hidden_pane_host_delivery_pending',
+      });
+
+      const hostPayloads = sendPaneHostBridgeEvent.mock.calls
+        .filter(([paneId, type]) => paneId === '1' && type === 'inject-message')
+        .map(([, , payload]) => payload);
+
+      expect(hostPayloads.length).toBeGreaterThan(1);
+      const reconstructed = hostPayloads
+        .slice()
+        .sort((left, right) => left.ipcChunk.index - right.ipcChunk.index)
+        .map((payload) => payload.message)
+        .join('');
+      expect(reconstructed).toBe(message);
+      expect(hostPayloads[0]).toEqual(expect.objectContaining({
+        deliveryId: 'delivery-pane-host-1',
+        traceContext,
+        meta: expect.objectContaining({
+          source: 'test',
+          disableVisibleFallback: true,
+          ipcChunked: true,
+          ipcOriginalBytes: Buffer.byteLength(message, 'utf8'),
+        }),
+      }));
+    });
+
+    it('binds Mira Lab sendAgentMessage as a Mira-authored Architect pane route with metadata', async () => {
+      const watcher = require('../modules/watcher');
+      const ipcHandlers = require('../modules/ipc-handlers');
+      const pipeline = require('../modules/pipeline');
+      const sharedState = require('../modules/shared-state');
+      const contextCompressor = require('../modules/context-compressor');
+      const triggers = require('../modules/triggers');
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      watcher.init = jest.fn();
+      ipcHandlers.init = jest.fn();
+      jest.spyOn(pipeline, 'init').mockImplementation(() => {});
+      jest.spyOn(sharedState, 'init').mockImplementation(() => {});
+      jest.spyOn(contextCompressor, 'init').mockImplementation(() => {});
+      mockAppContext.setRecoveryManager = jest.fn((manager) => {
+        mockAppContext.recoveryManager = manager;
+      });
+      mockAppContext.setPluginManager = jest.fn((manager) => {
+        mockAppContext.pluginManager = manager;
+      });
+      mockAppContext.setBackupManager = jest.fn((manager) => {
+        mockAppContext.backupManager = manager;
+      });
+      mockAppContext.mainWindow = {
+        webContents: {
+          send: jest.fn(),
+          on: jest.fn(),
+          openDevTools: jest.fn(),
+        },
+      };
+      jest.spyOn(app, 'initRecoveryManager').mockReturnValue({});
+      jest.spyOn(app, 'initPluginManager').mockReturnValue({ loadAll: jest.fn() });
+      jest.spyOn(app, 'initBackupManager').mockReturnValue({});
+      triggers.sendDirectMessage.mockReturnValueOnce({ accepted: true, queued: true, status: 'routed_unverified' });
+
+      app.initModules();
+
+      const setupDeps = ipcHandlers.setupIPCHandlers.mock.calls.at(-1)[0];
+      const result = await setupDeps.sendAgentMessage(
+        'architect',
+        '(MIRA/NEW-MIRA CAPABILITY NOTE): I can inject to Architect now.',
+        {
+          source: 'new_mira_typed_capability_roundtable',
+          senderRole: 'mira',
+          senderIdentity: 'new_mira',
+          routeKind: 'internal_pane_message',
+          sessionScopeId: 'app-session-372',
+        }
+      );
+
+      expect(result).toEqual({ accepted: true, queued: true, status: 'routed_unverified' });
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '(MIRA/NEW-MIRA CAPABILITY NOTE): I can inject to Architect now.',
+        'mira',
+        expect.objectContaining({
+          meta: expect.objectContaining({
+            source: 'new_mira_typed_capability_roundtable',
+            senderRole: 'mira',
+            senderIdentity: 'new_mira',
+            routeKind: 'internal_pane_message',
+            deliverySource: 'new_mira_typed_capability_roundtable',
+            targetRole: 'architect',
+            sessionScopeId: 'app-session-372',
+          }),
+        })
+      );
+    });
+  });
+
+  describe('createWindow startup ordering', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      jest.spyOn(app, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+      jest.spyOn(app, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+      jest.spyOn(app, 'setupPermissions').mockImplementation(() => {});
+      jest.spyOn(app, 'initModules').mockImplementation(() => {});
+      jest.spyOn(app, 'setupWindowListeners').mockImplementation(() => {});
+    });
+
+    it('loads main window after core startup hooks are installed', async () => {
+      await app.createWindow();
+
+      const loadFile = app.ctx.mainWindow.loadFile;
+      expect(loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'main',
+            windowTeam: 'main',
+          }),
+        })
+      );
+      expect(app.initModules.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
+      expect(app.setupWindowListeners.mock.invocationCallOrder[0]).toBeLessThan(loadFile.mock.invocationCallOrder[0]);
+    });
+
+    it('uses integrated dark Windows chrome without replacing native window controls', async () => {
+      const { BrowserWindow } = require('electron');
+
+      await app.createWindow();
+
+      const expected = {
+        backgroundColor: '#0c1014',
+      };
+      if (process.platform === 'win32' || process.platform === 'linux') {
+        Object.assign(expected, {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: {
+            color: '#0c1014',
+            symbolColor: '#8fa1b3',
+            height: 32,
+          },
+        });
+      }
+      expect(BrowserWindow).toHaveBeenCalledWith(expect.objectContaining(expected));
+    });
+
+    it('keeps the restart launch probe hidden and stops before pane-host startup', async () => {
+      const electron = require('electron');
+      const previousProbe = process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+      const probeWindow = {
+        loadFile: jest.fn().mockResolvedValue(),
+        on: jest.fn(),
+        once: jest.fn(),
+        removeListener: jest.fn(),
+        webContents: {
+          send: jest.fn(),
+          on: jest.fn(),
+          once: jest.fn(),
+          removeListener: jest.fn(),
+          executeJavaScript: jest.fn().mockResolvedValue({
+            readyState: 'complete',
+            title: 'SquidRun',
+            hasBody: true,
+            terminalCount: 3,
+            preloadBridgeReady: true,
+            rendererModulesReady: true,
+            rendererModulesLoadError: null,
+            rendererScriptReady: true,
+          }),
+          openDevTools: jest.fn(),
+        },
+        isDestroyed: jest.fn().mockReturnValue(false),
+        isVisible: jest.fn().mockReturnValue(false),
+        isFocused: jest.fn().mockReturnValue(false),
+        show: jest.fn(),
+      };
+      try {
+        process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = '1';
+        electron.BrowserWindow.mockImplementationOnce(() => probeWindow);
+        const probeApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(probeApp, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'setupPermissions').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'initModules').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'setupWindowListeners').mockImplementation(() => {});
+        jest.spyOn(probeApp, 'schedulePaneHostBootstrap').mockImplementation(() => {});
+
+        await probeApp.createWindow();
+
+        expect(electron.BrowserWindow).toHaveBeenCalledWith(expect.objectContaining({
+          show: false,
+          skipTaskbar: true,
+          focusable: false,
+        }));
+        expect(probeWindow.loadFile).toHaveBeenCalledWith(
+          expect.stringContaining('index.html'),
+          expect.objectContaining({
+            query: expect.objectContaining({
+              autoBootAgents: 'false',
+              displayOnly: 'true',
+              skipStartupBundle: 'true',
+            }),
+          })
+        );
+        expect(probeWindow.show).not.toHaveBeenCalled();
+        expect(probeApp.schedulePaneHostBootstrap).not.toHaveBeenCalled();
+        expect(probeApp.restartLaunchProbeResult).toEqual(expect.objectContaining({
+          ok: true,
+          visible: false,
+          focused: false,
+        }));
+      } finally {
+        if (previousProbe === undefined) {
+          delete process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+        } else {
+          process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = previousProbe;
+        }
+      }
+    });
+
+    it('keeps default dev main window on normal main chrome context', async () => {
+      await app.createWindow();
+
+      expect(app.ctx.mainWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'main',
+            profileName: 'main',
+            standaloneWindow: 'false',
+            installedDeploymentWindow: 'false',
+            lifecycleMode: 'main-app',
+          }),
+        })
+      );
+    });
+
+    it('marks pinned installed main window for installed operator chrome', async () => {
+      const electron = require('electron');
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-installed-operator-'));
+      try {
+        electron.app.isPackaged = true;
+        electron.app.getPath.mockImplementation((name) => (name === 'home' ? path.join(dataRoot, '..') : '/mock/app/path'));
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+
+        const installedApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(installedApp, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'setupPermissions').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initModules').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initPostLoad').mockResolvedValue();
+        jest.spyOn(installedApp, 'restorePersistedSquidRoomWindow').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'schedulePaneHostBootstrap').mockImplementation(() => {});
+
+        await installedApp.createWindow();
+        const mainWindow = installedApp.ctx.mainWindow;
+
+        expect(mainWindow.loadFile).toHaveBeenCalledWith(
+          expect.stringContaining('index.html'),
+          expect.objectContaining({
+            query: expect.objectContaining({
+              windowKey: 'main',
+              profileName: 'main',
+              standaloneWindow: 'true',
+              installedDeploymentWindow: 'true',
+              lifecycleMode: 'main-app',
+            }),
+          })
+        );
+
+        const didFinishLoad = mainWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+        expect(typeof didFinishLoad).toBe('function');
+
+        await didFinishLoad();
+
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+          'window-context',
+          expect.objectContaining({
+            windowKey: 'main',
+            profileName: 'main',
+            standaloneWindow: true,
+            installedDeploymentWindow: true,
+            lifecycleMode: 'main-app',
+          })
+        );
+      } finally {
+        electron.app.isPackaged = false;
+        electron.app.getPath.mockReturnValue('/mock/app/path');
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('closing an installed main window cannot strand a headless host behind another app window', async () => {
+      const electron = require('electron');
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-installed-close-'));
+      try {
+        electron.app.isPackaged = true;
+        electron.app.getPath.mockImplementation((name) => (name === 'home' ? path.join(dataRoot, '..') : '/mock/app/path'));
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+
+        const installedApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(installedApp, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'setupPermissions').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initModules').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initPostLoad').mockResolvedValue();
+        jest.spyOn(installedApp, 'restorePersistedSquidRoomWindow').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'schedulePaneHostBootstrap').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'getOpenAppWindowCount').mockReturnValue(1);
+        jest.spyOn(installedApp, 'confirmFullShutdown').mockResolvedValue(true);
+        const shutdownSpy = jest.spyOn(installedApp, 'performFullShutdown').mockResolvedValue({ success: true });
+
+        await installedApp.createWindow();
+        const mainWindow = installedApp.ctx.mainWindow;
+        const closeHandler = mainWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
+        const event = { preventDefault: jest.fn() };
+
+        closeHandler(event);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(installedApp.confirmFullShutdown).toHaveBeenCalledWith(mainWindow);
+        expect(shutdownSpy).toHaveBeenCalledWith('window-close');
+      } finally {
+        electron.app.isPackaged = false;
+        electron.app.getPath.mockReturnValue('/mock/app/path');
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('generates packaged runtime manifest and memory dependencies', () => {
+      const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-bin-'));
+      const uiRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-ui-'));
+      try {
+        const files = [
+          'config.js',
+          'profile.js',
+          'scripts/hm-send.js',
+          'scripts/hm-comms.js',
+          'scripts/send-long-telegram.js',
+          'modules/runtime-config.js',
+          'node_modules/ws/index.js',
+          'node_modules/dotenv/lib/main.js',
+          'node_modules/sqlite-vec/index.js',
+          'node_modules/sqlite-vec-windows-x64/vec0.dll',
+          'node_modules/@xenova/transformers/index.js',
+          'node_modules/@huggingface/jinja/index.js',
+          'node_modules/onnxruntime-node/bin/napi-v3/win32/x64/onnxruntime_binding.node',
+          'node_modules/onnxruntime-common/dist/index.js',
+          'node_modules/onnxruntime-web/dist/ort.min.js',
+          'node_modules/onnx-proto/index.js',
+          'node_modules/protobufjs/index.js',
+        ];
+        for (const relPath of files) {
+          const filePath = path.join(uiRoot, relPath);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, 'module.exports = {};\n');
+        }
+        const packageManifests = {
+          'node_modules/ws/package.json': { name: 'ws', version: '8.18.0' },
+          'node_modules/dotenv/package.json': { name: 'dotenv', version: '17.2.3' },
+          'node_modules/sqlite-vec/package.json': {
+            name: 'sqlite-vec',
+            version: '0.1.9',
+            optionalDependencies: { 'sqlite-vec-windows-x64': '0.1.9' },
+          },
+          'node_modules/sqlite-vec-windows-x64/package.json': { name: 'sqlite-vec-windows-x64', version: '0.1.9' },
+          'node_modules/@xenova/transformers/package.json': {
+            name: '@xenova/transformers',
+            version: '2.17.2',
+            dependencies: {
+              '@huggingface/jinja': '^0.2.2',
+              'onnxruntime-web': '1.14.0',
+            },
+            optionalDependencies: { 'onnxruntime-node': '1.14.0' },
+          },
+          'node_modules/@huggingface/jinja/package.json': { name: '@huggingface/jinja', version: '0.2.2' },
+          'node_modules/onnxruntime-node/package.json': {
+            name: 'onnxruntime-node',
+            version: '1.14.0',
+            dependencies: { 'onnxruntime-common': '~1.14.0' },
+          },
+          'node_modules/onnxruntime-common/package.json': { name: 'onnxruntime-common', version: '1.14.0' },
+          'node_modules/onnxruntime-web/package.json': {
+            name: 'onnxruntime-web',
+            version: '1.14.0',
+            dependencies: {
+              'onnx-proto': '^4.0.4',
+              'onnxruntime-common': '1.14.0',
+            },
+          },
+          'node_modules/onnx-proto/package.json': {
+            name: 'onnx-proto',
+            version: '4.0.4',
+            dependencies: { protobufjs: '^7.5.8' },
+          },
+          'node_modules/protobufjs/package.json': { name: 'protobufjs', version: '7.5.8' },
+        };
+        for (const [relPath, payload] of Object.entries(packageManifests)) {
+          const filePath = path.join(uiRoot, relPath);
+          fs.mkdirSync(path.dirname(filePath), { recursive: true });
+          fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+        }
+        const packagedApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(packagedApp, 'resolvePackagedUiRoot').mockReturnValue(uiRoot);
+
+        packagedApp.ensurePackagedCommsBin(workspace);
+        const runtimeRoot = path.join(workspace, '.squidrun', 'bin', 'runtime', 'ui');
+        const runtimePackage = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'package.json'), 'utf8'));
+
+        expect(runtimePackage.dependencies).toEqual({
+          '@xenova/transformers': '^2.17.2',
+          dotenv: '^17.2.3',
+          'sqlite-vec': '^0.1.9',
+          ws: '^8.18.0',
+        });
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'sqlite-vec', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'sqlite-vec-windows-x64', 'vec0.dll'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', '@xenova', 'transformers', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'onnxruntime-node', 'bin', 'napi-v3', 'win32', 'x64', 'onnxruntime_binding.node'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'onnxruntime-common', 'dist', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(runtimeRoot, 'node_modules', 'onnx-proto', 'index.js'))).toBe(true);
+        expect(fs.existsSync(path.join(workspace, 'workspace', 'memory', 'models'))).toBe(true);
+      } finally {
+        fs.rmSync(workspace, { recursive: true, force: true });
+        fs.rmSync(uiRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('does not block createWindow on hidden pane host bootstrap', async () => {
+      jest.useFakeTimers();
+      const ensurePaneHostWindows = jest
+        .spyOn(app, 'ensurePaneHostWindows')
+        .mockImplementation(() => new Promise(() => {}));
+
+      await expect(app.createWindow()).resolves.toBeUndefined();
+
+      // Bootstrap is deferred; no pane-host startup should run until timer tick.
+      expect(ensurePaneHostWindows).not.toHaveBeenCalled();
+      jest.runOnlyPendingTimers();
+      expect(ensurePaneHostWindows).toHaveBeenCalledTimes(1);
+      jest.useRealTimers();
+    });
+
+    it('creates a second top-level window without replacing the main window', async () => {
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+
+      expect(app.ctx.mainWindow).toBe(primaryWindow);
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('scoped', expect.any(Object));
+      const secondaryWindow = app.ctx.getWindow('scoped');
+      expect(secondaryWindow).toBeTruthy();
+      expect(secondaryWindow).not.toBe(primaryWindow);
+      expect(secondaryWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'scoped',
+            windowTeam: 'scoped',
+          }),
+        })
+      );
+    });
+
+    it('opens Squid Room without ExampleApp preparation or startup bundle materialization', async () => {
+      const writeBundle = jest.spyOn(app, 'writeProfileStartupBundle');
+
+      await expect(app.openAppWindow('squid-room')).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'squid-room',
+        title: 'SquidRun - Squid Room',
+      }));
+
+      expect(writeBundle).not.toHaveBeenCalled();
+      const squidRoomWindow = app.ctx.getWindow('squid-room');
+      expect(squidRoomWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'squid-room',
+            windowTeam: 'squid-room',
+            profileName: 'main',
+            profileLabel: 'Main',
+            startupBundlePath: '',
+            startupBundleReady: 'false',
+            autoBootAgents: 'false',
+            displayOnly: 'true',
+            skipStartupBundle: 'true',
+          }),
+        })
+      );
+    });
+
+    it('persists Squid Room open state and clears it on intentional close', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squid-room-state-'));
+      app.squidRoomWindowStatePath = path.join(tempDir, 'squid-room-window-state.json');
+
+      await app.openAppWindow('squid-room');
+
+      expect(JSON.parse(fs.readFileSync(app.squidRoomWindowStatePath, 'utf8'))).toEqual(expect.objectContaining({
+        windowKey: 'squid-room',
+        open: true,
+        reason: 'open_app_window',
+      }));
+
+      const squidRoomWindow = app.ctx.getWindow('squid-room');
+      app.handleAppWindowClosed('squid-room', squidRoomWindow);
+
+      expect(JSON.parse(fs.readFileSync(app.squidRoomWindowStatePath, 'utf8'))).toEqual(expect.objectContaining({
+        windowKey: 'squid-room',
+        open: false,
+        reason: 'window_closed',
+      }));
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it('restores Squid Room on startup when the persisted state says it was open', async () => {
+      jest.useFakeTimers();
+      try {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squid-room-restore-'));
+        app.squidRoomWindowStatePath = path.join(tempDir, 'squid-room-window-state.json');
+        fs.writeFileSync(app.squidRoomWindowStatePath, JSON.stringify({
+          windowKey: 'squid-room',
+          open: true,
+        }), 'utf8');
+        const openAppWindow = jest.spyOn(app, 'openAppWindow').mockResolvedValue({ ok: true });
+
+        expect(app.restorePersistedSquidRoomWindow()).toEqual({ ok: true, scheduled: true });
+        jest.advanceTimersByTime(500);
+
+        expect(openAppWindow).toHaveBeenCalledWith('squid-room', { restoredFromState: true });
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('emits window visibility state for minimize and restore events', () => {
+      const visibilityApp = new SquidRunApp(mockAppContext, mockManagers);
+      const handlers = new Map();
+      const windowRef = {
+        on: jest.fn((eventName, handler) => {
+          handlers.set(eventName, handler);
+        }),
+        isDestroyed: jest.fn().mockReturnValue(false),
+        isMinimized: jest.fn().mockReturnValue(false),
+        isVisible: jest.fn().mockReturnValue(true),
+        webContents: {
+          on: jest.fn(),
+          send: jest.fn(),
+        },
+      };
+
+      visibilityApp.setupWindowListeners(windowRef, {
+        windowKey: 'squid-room',
+        displayOnly: true,
+        skipStartupBundle: true,
+      });
+
+      windowRef.isMinimized.mockReturnValue(true);
+      handlers.get('minimize')();
+      expect(windowRef.webContents.send).toHaveBeenCalledWith(
+        'window-visibility-changed',
+        expect.objectContaining({
+          windowKey: 'squid-room',
+          reason: 'minimize',
+          hidden: true,
+          minimized: true,
+          visible: true,
+        })
+      );
+
+      windowRef.webContents.send.mockClear();
+      windowRef.isMinimized.mockReturnValue(false);
+      windowRef.isVisible.mockReturnValue(true);
+      handlers.get('restore')();
+      expect(windowRef.webContents.send).toHaveBeenCalledWith(
+        'window-visibility-changed',
+        expect.objectContaining({
+          windowKey: 'squid-room',
+          reason: 'restore',
+          hidden: false,
+          minimized: false,
+          visible: true,
+        })
+      );
+    });
+
+    it('routes visible-window sends to the requested secondary window without clobbering main', async () => {
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
+
+      primaryWindow.webContents.send.mockClear();
+      secondaryWindow.webContents.send.mockClear();
+
+      const delivered = app.sendToVisibleWindow('inject-message', {
+        panes: ['1'],
+        message: 'case-only message',
+        meta: {
+          windowKey: 'scoped',
+        },
+      });
+
+      expect(delivered).toBe(true);
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: 'case-only message',
+        })
+      );
+      expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('does not route scoped secondary-window injection through the main hidden pane host', async () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
+      const sendPaneHostBridgeEvent = jest.spyOn(app, 'sendPaneHostBridgeEvent').mockReturnValue(true);
+
+      app.paneHostReady = new Set(['1']);
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          isDestroyed: jest.fn(() => false),
+          isLoadingMainFrame: jest.fn(() => false),
+        },
+      }));
+      primaryWindow.webContents.send.mockClear();
+      secondaryWindow.webContents.send.mockClear();
+
+      const routed = app.routeInjectMessage({
+        panes: ['1'],
+        message: '[Telegram from scoped]: hello',
+        meta: {
+          windowKey: 'scoped',
+        },
+      });
+
+      expect(routed).toBe(true);
+      expect(sendPaneHostBridgeEvent).not.toHaveBeenCalled();
+      expect(app.paneHostWindowManager.getPaneWindow).not.toHaveBeenCalled();
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: '[Telegram from scoped]: hello',
+          _ipcPacketized: true,
+          _routerAttempted: true,
+          meta: expect.objectContaining({
+            windowKey: 'scoped',
+          }),
+        })
+      );
+      expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
+    });
+
+    it('launches only Scoped for standalone launch intent', async () => {
+      await app.launchWindowsForProfile({
+        windowKey: 'scoped',
+        includeMainWindow: false,
+      });
+
+      const scopedWindow = app.ctx.getWindow('scoped');
+      expect(scopedWindow).toBeTruthy();
+      expect(app.ctx.getWindow('main')).toBe(scopedWindow);
+      expect(scopedWindow.focus).toHaveBeenCalled();
+    });
+
+    it('broadcasts daemon lifecycle events to every open top-level window', async () => {
+      await app.createWindow();
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const primaryWindow = app.ctx.getWindow('main');
+      const secondaryWindow = app.ctx.getWindow('scoped');
+
+      primaryWindow.webContents.send.mockClear();
+      secondaryWindow.webContents.send.mockClear();
+
+      const delivered = app.sendToAllWindows('daemon-connected', { terminals: [{ paneId: '1' }] });
+
+      expect(delivered).toBe(true);
+      expect(primaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1' }],
+        })
+      );
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1' }],
+        })
+      );
+    });
+
+    it('closing the Scoped window does not trigger full shutdown while main stays alive', async () => {
+      app.setupWindowListeners.mockRestore();
+      const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });
+
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
+      const closeHandler = secondaryWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
+      const closedHandler = secondaryWindow.on.mock.calls.find(([eventName]) => eventName === 'closed')?.[1];
+
+      expect(typeof closeHandler).toBe('function');
+      expect(typeof closedHandler).toBe('function');
+
+      const event = { preventDefault: jest.fn() };
+      closeHandler(event);
+
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(shutdownSpy).not.toHaveBeenCalled();
+
+      closedHandler();
+
+      expect(app.ctx.deleteWindow).toHaveBeenCalledWith('scoped');
+      expect(app.ctx.mainWindow).toBe(primaryWindow);
+    });
+
+    it('openAppWindow("live-task-audit-sidecar") creates the standalone task audit sidecar', async () => {
+      const enforceMenuSpy = jest.spyOn(app, 'enforceMenuSuppression');
+      const result = await app.openAppWindow('live-task-audit-sidecar');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'live-task-audit-sidecar',
+        title: 'SquidRun Task Audit',
+      }));
+      expect(result.htmlPath).toMatch(/live-task-audit-sidecar\.html$/);
+      expect(result.preloadPath).toMatch(/preload\.js$/);
+
+      expect(app.ctx.setWindow).toHaveBeenCalledWith('live-task-audit-sidecar', expect.any(Object));
+      const sidecarWindow = app.ctx.getWindow('live-task-audit-sidecar');
+      expect(sidecarWindow).toBeTruthy();
+      expect(sidecarWindow).not.toBe(app.ctx.mainWindow);
+      expect(sidecarWindow.loadFile).toHaveBeenCalledWith(expect.stringMatching(/live-task-audit-sidecar\.html$/));
+      expect(sidecarWindow.focus).toHaveBeenCalled();
+      expect(enforceMenuSpy).toHaveBeenCalledWith(sidecarWindow);
+      expect(app.setupWindowListeners).toHaveBeenCalledWith(
+        sidecarWindow,
+        expect.objectContaining({ windowKey: 'live-task-audit-sidecar', lifecycleRoot: false }),
+      );
+    });
+
+    it('openAppWindow("live-task-audit-sidecar") reloads a reused sidecar before focusing it', async () => {
+      await app.openAppWindow('live-task-audit-sidecar');
+      const sidecarWindow = app.ctx.getWindow('live-task-audit-sidecar');
+      sidecarWindow.focus.mockClear();
+      sidecarWindow.webContents.reloadIgnoringCache.mockClear();
+
+      const result = await app.openAppWindow('live-task-audit-sidecar');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        windowKey: 'live-task-audit-sidecar',
+        status: 'reused_existing_reloaded',
+      }));
+      expect(sidecarWindow.webContents.reloadIgnoringCache).toHaveBeenCalledTimes(1);
+      expect(sidecarWindow.focus).toHaveBeenCalled();
+      expect(app.ctx.getWindow('live-task-audit-sidecar')).toBe(sidecarWindow);
+    });
+
+    it('closing a standalone Scoped profile window quits that profile process cleanly', async () => {
+      app.setupWindowListeners.mockRestore();
+      const shutdownSpy = jest.spyOn(app, 'performFullShutdown').mockResolvedValue({ success: true });
+
+      await app.launchWindowsForProfile({
+        windowKey: 'scoped',
+        includeMainWindow: false,
+      });
+      const scopedWindow = app.ctx.getWindow('scoped');
+      const closeHandler = scopedWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
+
+      expect(app.isStandaloneProfileWindow('scoped')).toBe(true);
+      expect(typeof closeHandler).toBe('function');
+
+      const event = { preventDefault: jest.fn() };
+      closeHandler(event);
+
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(shutdownSpy).toHaveBeenCalledWith('profile-window-close:scoped');
+    });
+
+    it('refuses close-window IPC for main so callers use the quit flow', async () => {
+      await app.createWindow();
+
+      await expect(app.closeAppWindow('main')).resolves.toEqual({
+        ok: false,
+        reason: 'main_window_requires_quit',
+        windowKey: 'main',
+      });
+    });
+
+    it('replays daemon state to the Scoped window after load so the renderer can mount existing terminals', async () => {
+      app.setupWindowListeners.mockRestore();
+      mockAppContext.daemonClient = {
+        connected: true,
+        getTerminals: jest.fn(() => [{ paneId: '1', alive: true, scrollback: 'ready' }]),
+      };
+      jest.spyOn(app, 'injectScopedStartupBundle').mockResolvedValue({
+        bundlePath: '/tmp/scoped-startup-bundle.md',
+        sourcePaths: ['/tmp/case-operations.md'],
+      });
+
+      await app.createWindow();
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
+      const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
+          windowKey: 'scoped',
+        })
+      );
+    });
+
+    it('still seeds Scoped runtime state when startup bundle materialization fails', async () => {
+      app.setupWindowListeners.mockRestore();
+      mockAppContext.daemonClient = {
+        connected: true,
+        getTerminals: jest.fn(() => [{ paneId: '1', alive: true, scrollback: 'ready' }]),
+      };
+      jest.spyOn(app, 'injectScopedStartupBundle').mockRejectedValue(new Error('bundle_missing'));
+
+      await app.createWindow();
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
+      const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'scoped',
+          startupBundlePath: '/test/workspace/runtime/window-teams/scoped/startup-bundle.md',
+          startupSourceFiles: [],
+          startupBundleReady: false,
+          standaloneWindow: false,
+          lifecycleMode: 'secondary-window',
+        })
+      );
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'daemon-connected',
+        expect.objectContaining({
+          terminals: [{ paneId: '1', alive: true, scrollback: 'ready' }],
+          windowKey: 'scoped',
+        })
+      );
+    });
+
+    it('does not write a startup bundle when Squid Room finishes loading', async () => {
+      app.setupWindowListeners.mockRestore();
+      const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
+        bundlePath: '/test/workspace/runtime/window-teams/squid-room/startup-bundle.md',
+        sourcePaths: ['/test/profile/AGENTS.md'],
+        text: 'should not be written',
+      });
+
+      await app.createWindow({
+        windowKey: 'squid-room',
+        windowTeam: 'squid-room',
+        profileName: 'main',
+        autoBootAgents: false,
+        displayOnly: true,
+        skipStartupBundle: true,
+      });
+      const squidRoomWindow = app.ctx.getWindow('squid-room');
+      const didFinishLoad = squidRoomWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(bundleSpy).not.toHaveBeenCalled();
+      expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'squid-room',
+          windowTeam: 'squid-room',
+          profileName: 'main',
+          startupBundlePath: null,
+          startupSourceFiles: [],
+          startupBundleReady: false,
+          autoBootAgents: false,
+          displayOnly: true,
+          skipStartupBundle: true,
+          standaloneWindow: false,
+          lifecycleMode: 'secondary-window',
+        })
+      );
+    });
+
+    it('passes visual-capture window options through without auto-booting agents', async () => {
+      app.setupWindowListeners.mockRestore();
+      const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
+        bundlePath: '/test/workspace/runtime/window-teams/visual-capture/startup-bundle.md',
+        sourcePaths: ['/test/profile/AGENTS.md'],
+        text: 'should not be written',
+      });
+
+      await app.openAppWindow('visual-capture', {
+        autoBootAgents: false,
+        profileName: 'main',
+        windowTeam: 'main',
+        displayOnly: false,
+        skipStartupBundle: true,
+        title: 'SquidRun - Visual Capture',
+      });
+      const captureWindow = app.ctx.getWindow('visual-capture');
+      const didFinishLoad = captureWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+      expect(captureWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'visual-capture',
+            windowTeam: 'main',
+            profileName: 'main',
+            startupBundlePath: '',
+            autoBootAgents: 'false',
+            displayOnly: 'false',
+            skipStartupBundle: 'true',
+          }),
+        })
+      );
+
+      await didFinishLoad();
+
+      expect(bundleSpy).not.toHaveBeenCalled();
+      expect(captureWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'visual-capture',
+          windowTeam: 'main',
+          profileName: 'main',
+          startupBundlePath: null,
+          startupSourceFiles: [],
+          startupBundleReady: false,
+          autoBootAgents: false,
+          displayOnly: false,
+          skipStartupBundle: true,
+        })
+      );
+    });
+
+    it('auto-boots agents for standalone non-main profile windows', async () => {
+      app.setupWindowListeners.mockRestore();
+      jest.spyOn(app, 'initPostLoad').mockResolvedValue();
+      const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
+        bundlePath: '/test/workspace/runtime/window-teams/client/startup-bundle.md',
+        sourcePaths: ['/test/profile/AGENTS.md', '/test/profile/CLAUDE.md', '/test/profile/ROLES.md'],
+        text: 'Client startup bundle',
+        sessionScopeId: 'app-test:client',
+      });
+      app.activeProfileName = 'client';
+
+      await app.launchWindowsForProfile({
+        profileName: 'client',
+        windowKey: 'client',
+        includeMainWindow: false,
+      });
+      const profileWindow = app.ctx.getWindow('client');
+      const didFinishLoad = profileWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+      expect(profileWindow.loadFile).toHaveBeenCalledWith(
+        expect.stringContaining('index.html'),
+        expect.objectContaining({
+          query: expect.objectContaining({
+            windowKey: 'client',
+            windowTeam: 'client',
+            profileName: 'client',
+            profileLabel: 'Client',
+            startupBundleReady: 'true',
+            autoBootAgents: 'true',
+            standaloneWindow: 'true',
+            lifecycleMode: 'standalone-profile-app',
+            contextReady: 'true',
+          }),
+        })
+      );
+
+      await didFinishLoad();
+
+      expect(bundleSpy).toHaveBeenCalledWith('client');
+      expect(profileWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'client',
+          windowTeam: 'client',
+          profileName: 'client',
+          profileLabel: 'Client',
+          startupBundlePath: '/test/workspace/runtime/window-teams/client/startup-bundle.md',
+          startupBundleReady: true,
+          autoBootAgents: true,
+          standaloneWindow: true,
+          lifecycleMode: 'standalone-profile-app',
+        })
+      );
+    });
+
+    it('writes profile-local link metadata so side agents keep the profile workspace identity', () => {
+      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-client-profile-'));
+      try {
+        app.commsSessionScopeId = 'app-test';
+        const linkPath = app.ensureProfileWorkspaceLink('client', profileRoot);
+        const payload = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
+
+        expect(payload).toEqual(expect.objectContaining({
+          workspace: profileRoot.replace(/\\/g, '/'),
+          session_id: 'app-test:client',
+          profile: 'client',
+          version: 1,
+        }));
+        expect(payload.comms.hm_send).toContain('/ui/scripts/hm-send.js');
+      } finally {
+        fs.rmSync(profileRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('writes profile-local link metadata to packaged runtime scripts when source scripts are absent', () => {
+      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-client-profile-'));
+      const runtimeRoot = path.resolve(path.join(__dirname, '..', '..', '.squidrun', 'bin', 'runtime', 'ui', 'scripts'));
+      const runtimeHmSend = path.join(runtimeRoot, 'hm-send.js');
+      const runtimeHmComms = path.join(runtimeRoot, 'hm-comms.js');
+      const originalExistsSync = fs.existsSync;
+      jest.spyOn(fs, 'existsSync').mockImplementation((filePath) => {
+        const resolved = path.resolve(filePath);
+        if (resolved === runtimeHmSend || resolved === runtimeHmComms) return true;
+        if (resolved.endsWith(path.join('ui', 'scripts', 'hm-send.js'))
+          || resolved.endsWith(path.join('ui', 'scripts', 'hm-comms.js'))) {
+          return false;
+        }
+        return originalExistsSync(filePath);
+      });
+      try {
+        app.commsSessionScopeId = 'app-test';
+        const linkPath = app.ensureProfileWorkspaceLink('client', profileRoot);
+        const payload = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
+
+        expect(payload.comms.hm_send).toBe(runtimeHmSend.replace(/\\/g, '/'));
+        expect(payload.comms.hm_comms).toBe(runtimeHmComms.replace(/\\/g, '/'));
+      } finally {
+        fs.existsSync.mockRestore();
+        fs.rmSync(profileRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('can register Scoped as the lifecycle root for standalone launch mode', async () => {
+      await app.createWindow({
+        windowKey: 'scoped',
+        title: 'SquidRun - Scoped',
+        lifecycleRoot: true,
+      });
+
+      expect(app.ctx.setMainWindow).toHaveBeenCalledWith(expect.any(Object));
+      expect(app.ctx.mainWindow).toBe(app.ctx.getWindow('scoped'));
+    });
+  });
+
+  describe('pane host bootstrap verification', () => {
+    let app;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('waits while the hidden pane host is still loading', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
+        loading: true,
+        paneIds: ['1', '2', '3'],
+        lastLoadStartedAt: Date.now(),
+      }));
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
+      const degradedSpy = jest.spyOn(app, 'reportPaneHostDegraded');
+
+      app.verifyPaneHostWindowsAfterBootstrap('test_loading');
+
+      expect(degradedSpy).not.toHaveBeenCalled();
+      expect(app.paneHostBootstrapVerifyTimer).toBeTruthy();
+    });
+
+    it('gives the hidden pane host a short post-load grace window for ready signals', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
+        loading: false,
+        paneIds: ['1', '2', '3'],
+        lastDidFinishLoadAt: Date.now(),
+      }));
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
+      const degradedSpy = jest.spyOn(app, 'reportPaneHostDegraded');
+
+      app.verifyPaneHostWindowsAfterBootstrap('test_ready_wait');
+
+      expect(degradedSpy).not.toHaveBeenCalled();
+      expect(app.paneHostBootstrapVerifyTimer).toBeTruthy();
+    });
+
+    it('clears stale degraded pane-host status once verification succeeds', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      const paneIds = [
+        '1',
+        '2',
+        '3',
+        'exampleapp-lead',
+        'exampleapp-schedule-dispatch',
+        'exampleapp-app',
+        'exampleapp-invoice',
+      ];
+      app.paneHostMissingPanes = new Set(paneIds);
+      app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
+      app.paneHostLastErrorAt = '2026-04-03T00:00:00.000Z';
+      app.paneHostReady = new Set(paneIds);
+      app.paneHostWindowManager.getWindowDiagnostics = jest.fn(() => ({
+        loading: false,
+        paneIds,
+      }));
+      app.paneHostWindowManager.getPaneWindow = jest.fn(() => ({ webContents: {} }));
+
+      app.verifyPaneHostWindowsAfterBootstrap('test_verified');
+
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+    });
+
+    it('clears stale degraded pane-host status when hidden pane hosts are disabled', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = false;
+      app.paneHostMissingPanes = new Set(['1', '2', '3']);
+      app.paneHostReady = new Set(['exampleapp-invoice']);
+      app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
+      app.paneHostLastErrorAt = '2026-06-12T07:09:07.638Z';
+
+      app.updatePaneHostStatus();
+
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(Array.from(app.paneHostReady)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              hiddenModeEnabled: false,
+              degraded: false,
+              missingPanes: [],
+              readyPanes: [],
+              lastErrorReason: null,
+              lastErrorAt: null,
+            }),
+          }),
+        })
+      );
+    });
+
+    it('clears stale degraded pane-host status on mode-off bootstrap early return', async () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = false;
+      app.paneHostMissingPanes = new Set(['1', '2', '3']);
+      app.paneHostReady = new Set(['exampleapp-invoice']);
+      app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
+      app.paneHostLastErrorAt = '2026-06-12T07:09:07.638Z';
+
+      await app.ensurePaneHostWindows();
+
+      expect(app.paneHostWindowManager.ensurePaneWindows).not.toHaveBeenCalled();
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(Array.from(app.paneHostReady)).toEqual([]);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              hiddenModeEnabled: false,
+              degraded: false,
+              missingPanes: [],
+              readyPanes: [],
+              lastErrorReason: null,
+              lastErrorAt: null,
+            }),
+          }),
+        })
+      );
+    });
+
+    it('clears stale dynamic pane-host degradation from a live daemon terminal', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostMissingPanes = new Set(['exampleapp-invoice']);
+      app.paneHostLastErrorReason = 'inject_hidden_not_ready';
+      app.paneHostLastErrorAt = '2026-06-07T09:39:10.096Z';
+
+      const result = app.reconcilePaneHostStatusFromDaemonTerminals([
+        {
+          paneId: 'exampleapp-invoice',
+          alive: true,
+          pid: 610968,
+          mode: 'pty',
+          cwd: 'D:\\projects\\ExampleApp',
+          scrollback: 'PS D:\\projects\\ExampleApp> ',
+        },
+      ], { source: 'test_live_terminal' });
+
+      expect(result.recovered).toEqual(['exampleapp-invoice']);
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostReady.has('exampleapp-invoice')).toBe(true);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              degraded: false,
+              missingPanes: [],
+              readyPanes: expect.arrayContaining(['exampleapp-invoice']),
+            }),
+          }),
+        })
+      );
+    });
+
+    it('derives Squid Room arm readiness from live daemon PTYs when writing pane-host status', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.paneHostReady = new Set(['1', '2', '3']);
+      app.paneHostMissingPanes = new Set(['exampleapp-invoice', 'exampleapp-schedule-dispatch']);
+      app.paneHostLastErrorReason = 'inject_hidden_not_ready';
+      app.paneHostLastErrorAt = '2026-06-07T09:51:25.850Z';
+      app.ctx.daemonClient = {
+        getTerminals: jest.fn(() => [
+          {
+            paneId: 'exampleapp-invoice',
+            alive: true,
+            pid: 610968,
+            mode: 'pty',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
+          },
+          {
+            paneId: 'exampleapp-schedule-dispatch',
+            alive: true,
+            pid: 646232,
+            mode: 'pty',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
+          },
+          {
+            paneId: 'exampleapp-money-documents',
+            alive: true,
+            pid: 111111,
+            mode: 'pty',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
+          },
+          {
+            paneId: 'exampleapp-work-schedule',
+            alive: true,
+            pid: 222222,
+            mode: 'pty',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
+          },
+        ]),
+      };
+
+      app.updatePaneHostStatus();
+
+      const paneHostPatch = mockManagers.settings.writeAppStatus.mock.calls.at(-1)[0].statusPatch.paneHost;
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              degraded: false,
+              missingPanes: [],
+              lastErrorReason: null,
+              lastErrorAt: null,
+            }),
+          }),
+        })
+      );
+      expect(paneHostPatch.readyPanes).toEqual(expect.arrayContaining([
+        '1',
+        '2',
+        '3',
+        'exampleapp-invoice',
+        'exampleapp-schedule-dispatch',
+      ]));
+      expect(paneHostPatch.readyPanes).toEqual(expect.not.arrayContaining([
+        'exampleapp-money-documents',
+        'exampleapp-work-schedule',
+      ]));
+    });
+
+    it('does not re-degrade a live Squid Room arm from the hidden inject readiness gate', () => {
+      app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
+      app.ctx.daemonClient = {
+        getTerminals: jest.fn(() => [
+          {
+            paneId: 'exampleapp-invoice',
+            alive: true,
+            pid: 610968,
+            mode: 'pty',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
+          },
+        ]),
+        getTerminal: jest.fn(() => null),
+      };
+
+      app.reportPaneHostDegraded({
+        paneId: 'exampleapp-invoice',
+        reason: 'inject_hidden_not_ready',
+        message: 'Hidden pane host unavailable/not ready for pane exampleapp-invoice.',
+      });
+
+      expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
+      expect(app.paneHostReady.has('exampleapp-invoice')).toBe(true);
+      expect(app.paneHostLastErrorReason).toBeNull();
+      expect(app.paneHostLastErrorAt).toBeNull();
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            paneHost: expect.objectContaining({
+              degraded: false,
+              missingPanes: [],
+              readyPanes: expect.arrayContaining(['exampleapp-invoice']),
+            }),
+          }),
+        })
+      );
+    });
+  });
+
+  describe('Scoped window startup bundle', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      jest.spyOn(app, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+      jest.spyOn(app, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+      jest.spyOn(app, 'setupPermissions').mockImplementation(() => {});
+      jest.spyOn(app, 'initModules').mockImplementation(() => {});
+      jest.spyOn(app, 'initPostLoad').mockResolvedValue();
+    });
+
+    it('injects the Scoped startup bundle only into the Scoped window panes with a scoped session id', async () => {
+      const routeSpy = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      const bundleSpy = jest.spyOn(app, 'writeScopedStartupBundle').mockReturnValue({
+        bundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\scoped\\startup-bundle.md',
+        sourcePaths: ['D:\\projects\\squidrun\\workspace\\knowledge\\case-operations.md'],
+        text: 'Scoped startup bundle',
+        sessionScopeId: 'app-test:scoped',
+      });
+
+      await app.createWindow({ windowKey: 'scoped', title: 'SquidRun - Scoped' });
+      const secondaryWindow = app.ctx.getWindow('scoped');
+      const didFinishLoad = secondaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(bundleSpy).toHaveBeenCalledTimes(1);
+      expect(routeSpy).toHaveBeenCalledTimes(3);
+      expect(routeSpy).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        panes: ['1'],
+        startupInjection: true,
+        meta: expect.objectContaining({
+          windowKey: 'scoped',
+          session_id: 'app-test:scoped',
+          contextBundle: 'scoped',
+        }),
+      }));
+      expect(routeSpy).toHaveBeenNthCalledWith(2, expect.objectContaining({ panes: ['2'] }));
+      expect(routeSpy).toHaveBeenNthCalledWith(3, expect.objectContaining({ panes: ['3'] }));
+      expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+        'window-context',
+        expect.objectContaining({
+          windowKey: 'scoped',
+          sessionScopeId: app.getWindowSessionScopeId('scoped'),
+          startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\scoped\\startup-bundle.md',
+          autoBootAgents: true,
+        })
+      );
+    });
+
+    it('does not inject the Scoped startup bundle on the main window load path', async () => {
+      const bundleSpy = jest.spyOn(app, 'writeScopedStartupBundle').mockReturnValue({
+        bundlePath: 'ignored',
+        sourcePaths: [],
+        text: 'ignored',
+        sessionScopeId: 'ignored',
+      });
+
+      await app.createWindow();
+      const primaryWindow = app.ctx.mainWindow;
+      const didFinishLoad = primaryWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
+
+      expect(typeof didFinishLoad).toBe('function');
+
+      await didFinishLoad();
+
+      expect(bundleSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('lazy worker initialization', () => {
+    it('ends restart launch probe init immediately after the real renderer is ready', async () => {
+      const previousProbe = process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+      try {
+        process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = '1';
+        mockManagers.settings.autoDetectPaneCommandsOnStartup = jest.fn();
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        const briefingSpy = jest.spyOn(app, 'kickoffStartupBriefingGeneration');
+        app.initDaemonClient = jest.fn();
+        app.launchWindowsForProfile = jest.fn(async () => {
+          app.restartLaunchProbeResult = {
+            ok: true,
+            stage: 'renderer_ready',
+            visible: false,
+            focused: false,
+          };
+          return { ok: true };
+        });
+
+        const result = await app.init();
+        expect(result).toEqual({
+          ok: true,
+          stage: 'renderer_ready',
+          renderer: app.restartLaunchProbeResult,
+        });
+
+        expect(briefingSpy).not.toHaveBeenCalled();
+        expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).not.toHaveBeenCalled();
+        expect(mockManagers.settings.autoDetectPaneCommandsOnStartup).not.toHaveBeenCalled();
+        expect(mockManagers.activity.loadActivityLog).not.toHaveBeenCalled();
+        expect(mockManagers.usage.loadUsageStats).not.toHaveBeenCalled();
+        expect(app.initDaemonClient).not.toHaveBeenCalled();
+        expect(app.backgroundAgentManager.start).not.toHaveBeenCalled();
+        expect(mockManagers.settings.writeAppStatus).not.toHaveBeenCalledWith(
+          expect.objectContaining({ incrementSession: true })
+        );
+      } finally {
+        if (previousProbe === undefined) {
+          delete process.env.SQUIDRUN_RESTART_LAUNCH_PROBE;
+        } else {
+          process.env.SQUIDRUN_RESTART_LAUNCH_PROBE = previousProbe;
+        }
+      }
+    });
+
+    it('does not prewarm non-critical runtimes during init', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
+      const experiment = require('../modules/experiment');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(evidenceLedger.initializeEvidenceLedgerRuntime).not.toHaveBeenCalled();
+      expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
+      expect(experiment.initializeExperimentRuntime).not.toHaveBeenCalled();
+      // initializeStartupSessionScope is always called now (session always increments on app launch)
+    });
+
+    it('continues app init loudly when daemon client connect never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        const timeoutSendSpy = jest.spyOn(app, 'sendToAllWindows').mockReturnValue(true);
+
+        app.initDaemonClient = jest.fn(() => new Promise(() => {}));
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+        jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(app.initDaemonClient).toHaveBeenCalledWith({ preserveConnectTimeout: true });
+        expect(mockManagers.settings.writeAppStatus).not.toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+
+        await jest.advanceTimersByTimeAsync(15000);
+        await initPromise;
+
+        expect(app.daemonTimeoutTriggered).toBe(true);
+        expect(app.daemonTimeoutNotified).toBe(true);
+        expect(timeoutSendSpy).toHaveBeenCalledWith('daemon-timeout', expect.objectContaining({
+          reason: 'daemon_connect_timeout',
+        }));
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('continues app init loudly when supervisor daemon bootstrap never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+
+        app.initDaemonClient = jest.fn().mockResolvedValue(true);
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+        jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockImplementation(() => new Promise(() => {}));
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(app.initDaemonClient).toHaveBeenCalledWith({ preserveConnectTimeout: true });
+        expect(app.ensureSupervisorDaemonRunning).toHaveBeenCalledWith('app-init');
+        expect(mockManagers.settings.writeAppStatus).not.toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+
+        await jest.advanceTimersByTimeAsync(15000);
+        await initPromise;
+
+        expect(app.daemonTimeoutTriggered).toBe(true);
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('writes startup health artifacts without forcing team memory init', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      const { startRunner: startBidirectionalWakeWatchdogRunner } = require('../scripts/hm-bidirectional-wake-watchdog');
+      const teamMemory = require('../modules/team-memory');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        appStatus: {
+          sessionNumber: 147,
+          sessionId: 'app-session-147',
+        },
+        tests: {
+          testFileCount: 194,
+          jestList: { ok: true, count: 195 },
+        },
+        modules: {
+          moduleFileCount: 300,
+          keyModules: {
+            recovery_manager: { exists: true },
+            background_agent_manager: { exists: true },
+            scheduler: { exists: true },
+          },
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 100 },
+          cognitiveMemory: { exists: true, rowCount: 4 },
+        },
+        bridge: {
+          enabled: true,
+          configured: true,
+          mode: 'connected',
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'LOCAL',
+          state: 'connected',
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 147,
+        status: 'ACTIVE',
+        mode: 'APP',
+        completed: ['Shipped memory v0.1.31'],
+        roadmap: ['Wire startup truth'],
+        important_notes: ['Regression coverage exists'],
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        sessionNumber: 147,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        ingestResult: expect.objectContaining({
+          skipped: true,
+          reason: 'team_memory_not_initialized',
+        }),
+      }));
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Snapshot status: refreshing current-session startup health...')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('STARTUP LEDGER')
+      );
+      expect(createHealthSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        jestTimeoutMs: undefined,
+        bridgeStatus: expect.any(Object),
+        nowMs: expect.any(Number),
+        generatedAt: expect.any(String),
+      }));
+      expect(checkAndRecoverTelegramPoller).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        staleThresholdMs: undefined,
+      }));
+      expect(checkAndRecoverTelegramPoller.mock.invocationCallOrder[0])
+        .toBeLessThan(createHealthSnapshot.mock.invocationCallOrder[0]);
+      expect(startBidirectionalWakeWatchdogRunner).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+      }));
+      expect(startBidirectionalWakeWatchdogRunner.mock.invocationCallOrder[0])
+        .toBeLessThan(createHealthSnapshot.mock.invocationCallOrder[0]);
+      expect(result.bidirectionalWakeWatchdog).toEqual(expect.objectContaining({
+        ok: true,
+        alreadyRunning: true,
+        running: true,
+        pid: 2468,
+      }));
+      expect(createHealthSnapshot.mock.calls[0][0].bridgeStatus).toEqual(expect.objectContaining({
+        state: expect.any(String),
+      }));
+      expect(teamMemory.initializeTeamMemoryRuntime).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a watchdog ownership conflict as nonfatal degraded startup health without retry', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const { startRunner: startBidirectionalWakeWatchdogRunner } = require('../scripts/hm-bidirectional-wake-watchdog');
+      startBidirectionalWakeWatchdogRunner.mockReturnValueOnce({
+        ok: false,
+        status: 'ownership_conflict',
+        reason: 'ownership_conflict',
+        blocked: true,
+        retryable: false,
+        ownership: {
+          pidFilePid: 33400,
+          statusPid: 33380,
+        },
+      });
+      jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        sessionNumber: 147,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        degraded: true,
+        reason: 'bidirectional_wake_watchdog_ownership_conflict',
+        bidirectionalWakeWatchdog: expect.objectContaining({
+          ok: false,
+          status: 'ownership_conflict',
+          blocked: true,
+          retryable: false,
+        }),
+      }));
+      expect(startBidirectionalWakeWatchdogRunner).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips Telegram poller recovery for pinned installed deployments', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      app.installedDeployment = {
+        active: true,
+        dataRoot: 'D:\\SquidRun\\Client',
+        source: 'env',
+      };
+
+      const result = await app.runStartupHealthTelegramPollerAutoRecover({
+        projectRoot: 'D:\\SquidRun\\Client',
+        profileName: 'main',
+      });
+
+      expect(result).toEqual({
+        ok: true,
+        skipped: true,
+        reason: 'installed_deployment_app_poller_owner',
+      });
+      expect(checkAndRecoverTelegramPoller).not.toHaveBeenCalled();
+    });
+
+    it('skips Telegram poller recovery for side-profile startup health artifacts', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
+      const { startRunner: startBidirectionalWakeWatchdogRunner } = require('../scripts/hm-bidirectional-wake-watchdog');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 777,
+        status: 'ACTIVE',
+        mode: 'APP',
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        profileName: 'client',
+        sessionNumber: 777,
+      });
+
+      expect(result.telegramPollerRecovery).toEqual({
+        ok: true,
+        skipped: true,
+        reason: 'profile_not_owner',
+      });
+      expect(result.bidirectionalWakeWatchdog).toEqual({
+        ok: true,
+        skipped: true,
+        reason: 'profile_not_owner',
+      });
+      expect(checkAndRecoverTelegramPoller).not.toHaveBeenCalled();
+      expect(startBidirectionalWakeWatchdogRunner).not.toHaveBeenCalled();
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health-client.md'),
+        expect.any(String)
+      );
+    });
+
+    it('anchors startup ledger session context to app-status when ledger context is stale', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        appStatus: {
+          sessionNumber: 230,
+          sessionId: 'app-session-230',
+        },
+        tests: {
+          testFileCount: 194,
+          jestList: { ok: true, count: 195 },
+        },
+        modules: {
+          moduleFileCount: 300,
+          keyModules: {
+            recovery_manager: { exists: true },
+          },
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 100 },
+          cognitiveMemory: { exists: true, rowCount: 4 },
+        },
+        bridge: {
+          enabled: true,
+          configured: true,
+          mode: 'connected',
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'LOCAL',
+          state: 'connected',
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 228,
+        status: 'ACTIVE',
+        mode: 'APP',
+        completed: ['Old completion'],
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      await app.refreshStartupHealthArtifacts({
+        sessionNumber: 230,
+      });
+
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'get-context',
+        { sessionNumber: 230 },
+        expect.any(Object)
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Session context: session 230 ACTIVE (APP)')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Session context: session 230 ACTIVE (APP)')
+      );
+    });
+
+    it('writes side-profile startup health to scoped artifact without overwriting main report', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        profileName: 'client',
+        appStatus: {
+          sessionNumber: 777,
+          sessionId: 'app-session-777-client',
+        },
+        tests: {
+          testFileCount: 194,
+          jestList: { ok: true, count: 195 },
+        },
+        modules: {
+          moduleFileCount: 300,
+          keyModules: {
+            recovery_manager: { exists: true },
+          },
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 7 },
+          cognitiveMemory: { exists: true, rowCount: 11 },
+        },
+        bridge: {
+          enabled: true,
+          configured: true,
+          mode: 'connected',
+          running: true,
+          relayUrl: 'wss://relay.example.test',
+          deviceId: 'CLIENT',
+          state: 'connected',
+        },
+        memoryConsistency: {
+          status: 'in_sync',
+          synced: true,
+          summary: {},
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 999,
+        status: 'ACTIVE',
+        mode: 'APP',
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      const result = await app.refreshStartupHealthArtifacts({
+        profileName: 'client',
+      });
+
+      expect(result.outputPath).toContain('startup-health-client.md');
+      expect(result.outputPath).not.toContain('startup-health.md');
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health-client.md'),
+        expect.stringContaining('App Session: unknown')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health-client.md'),
+        expect.stringContaining('Session context: session 777 ACTIVE (APP)')
+      );
+      expect(createHealthSnapshot).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        profileName: 'client',
+      }));
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'get-context',
+        { sessionNumber: 777 },
+        expect.objectContaining({
+          source: expect.objectContaining({
+            via: 'startup-health',
+            profileName: 'client',
+          }),
+        })
+      );
+    });
+
+    it('keeps explicit side-profile session fields consistent across placeholder, snapshot, and ledger', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockReturnValueOnce({
+        generatedAt: '2026-03-13T00:00:00.000Z',
+        profileName: 'client',
+        appStatus: {
+          sessionNumber: 777,
+          sessionId: 'app-session-777-client',
+        },
+        tests: {
+          testFileCount: 1,
+          jestList: { ok: true, count: 1 },
+        },
+        modules: {
+          moduleFileCount: 1,
+          keyModules: {},
+        },
+        databases: {
+          evidenceLedger: { exists: true, rowCount: 7 },
+          cognitiveMemory: { exists: true, rowCount: 11 },
+        },
+        bridge: {
+          enabled: false,
+          configured: false,
+          mode: 'disabled',
+          running: false,
+        },
+        memoryConsistency: {
+          status: 'in_sync',
+          synced: true,
+          summary: {},
+        },
+        status: { level: 'ok', warnings: [] },
+      });
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        session: 312,
+        status: 'ACTIVE',
+        mode: 'APP',
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      await app.refreshStartupHealthArtifacts({
+        profileName: 'client',
+        sessionNumber: 777,
+      });
+
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        1,
+        expect.stringContaining('startup-health-client.md'),
+        expect.stringContaining('App Session: session 777')
+      );
+      expect(writeFileAtomic).toHaveBeenNthCalledWith(
+        2,
+        expect.stringContaining('startup-health-client.md'),
+        expect.stringContaining('Session context: session 777 ACTIVE (APP)')
+      );
+      const writeTargets = writeFileAtomic.mock.calls.map(([targetPath]) => String(targetPath).replace(/\\/g, '/'));
+      expect(writeTargets.some((targetPath) => targetPath.endsWith('/build/startup-health.md'))).toBe(false);
+    });
+
+    it('writes a fresh current-session placeholder before probing startup health', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
+      createHealthSnapshot.mockImplementationOnce(() => {
+        throw new Error('snapshot probe failed');
+      });
+      const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
+
+      await expect(app.refreshStartupHealthArtifacts({
+        sessionNumber: 234,
+        nowMs: Date.parse('2026-03-17T07:50:00.000Z'),
+      })).rejects.toThrow('snapshot probe failed');
+
+      expect(writeFileAtomic).toHaveBeenCalledTimes(1);
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('Generated: 2026-03-17T07:50:00.000Z')
+      );
+      expect(writeFileAtomic).toHaveBeenCalledWith(
+        expect.stringContaining('startup-health.md'),
+        expect.stringContaining('App Session: session 234')
+      );
+    });
+
+    it('parses autonomous smoke JSON summaries even with surrounding stdout noise', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.resolveAutonomousSmokeProjectPath = jest.fn(() => '/tmp/project');
+      app.runAutonomousSmokeSidecar = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 'ok',
+        code: 0,
+        signal: null,
+        timedOut: false,
+        stdout: [
+          '[dotenv@17.2.3] injecting env (0) from .env',
+          '{',
+          '  "ok": true,',
+          '  "runId": "run-99",',
+          '  "url": "http://localhost:3000"',
+          '}',
+          'post-run note',
+        ].join('\n'),
+        stderr: '',
+      });
+      app.reportAutonomousSmokeSummary = jest.fn().mockResolvedValue({ ok: true });
+
+      app.runAutonomousSmokeInBackground({
+        runId: 'run-99',
+        senderRole: 'builder',
+      });
+
+      await flushTelegramDrain(app);
+
+      expect(app.reportAutonomousSmokeSummary).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ok: true,
+          runId: 'run-99',
+          url: 'http://localhost:3000',
+          runner: expect.objectContaining({
+            status: 'ok',
+            exitCode: 0,
+          }),
+        }),
+        expect.objectContaining({
+          runId: 'run-99',
+          senderRole: 'builder',
+        })
+      );
+    });
+
+    it('suppresses autonomous smoke injection noise when runner returns no structured JSON', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.resolveAutonomousSmokeProjectPath = jest.fn(() => '/tmp/project');
+      app.runAutonomousSmokeSidecar = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 'runner_failed',
+        code: 1,
+        signal: null,
+        timedOut: false,
+        stdout: '[dotenv@17.2.3] injecting env (0) from .env',
+        stderr: 'no runnable smoke target',
+      });
+      app.reportAutonomousSmokeSummary = jest.fn().mockResolvedValue({ ok: true });
+
+      app.runAutonomousSmokeInBackground({
+        runId: 'run-100',
+        senderRole: 'builder',
+      });
+
+      await flushTelegramDrain(app);
+
+      expect(app.reportAutonomousSmokeSummary).not.toHaveBeenCalled();
+    });
+
+    it('runs firmware startup generation hook during init', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledTimes(1);
+      expect(mockManagers.firmwareManager.ensureStartupFirmwareIfEnabled).toHaveBeenCalledWith({ preflight: true });
+    });
+
+    it('kicks off startup ai briefing generation during init', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const startupBriefing = require('../modules/startup-ai-briefing');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(startupBriefing.generateStartupBriefing).toHaveBeenCalledWith(expect.objectContaining({
+        projectRoot: '/test',
+        source: 'app-init',
+      }));
+    });
+
+    it('always increments session and initializes startup scope on app launch', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.initDaemonClient = jest.fn().mockImplementation(async () => {
+        mockAppContext.daemonClient = {};
+      });
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ incrementSession: true })
+      );
+      expect(app.initializeStartupSessionScope).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionNumber: 147 })
+      );
+    });
+
+    it('writes an early boot heartbeat after windows launch before session increment', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.initDaemonClient = jest.fn().mockImplementation(async () => {
+        mockAppContext.daemonClient = {};
+      });
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue({ ok: true });
+      app.refreshStartupHealthArtifacts = jest.fn().mockResolvedValue({ ok: true });
+
+      await app.init();
+
+      const calls = mockManagers.settings.writeAppStatus.mock.calls.map((call) => call[0]);
+      const heartbeatIndex = calls.findIndex((payload) => (
+        payload?.statusPatch?.boot?.stage === 'windows_launched'
+      ));
+      const sessionIncrementIndex = calls.findIndex((payload) => payload?.incrementSession === true);
+      expect(heartbeatIndex).toBeGreaterThanOrEqual(0);
+      expect(sessionIncrementIndex).toBeGreaterThanOrEqual(0);
+      expect(heartbeatIndex).toBeLessThan(sessionIncrementIndex);
+    });
+
+    it('continues boot with a degraded heartbeat when startup window launch never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+
+        app.launchWindowsForProfile = jest.fn().mockImplementation(() => new Promise(() => {}));
+        app.initDaemonClient = jest.fn().mockImplementation(async () => {
+          mockAppContext.daemonClient = {};
+        });
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue({ ok: true });
+        app.refreshStartupHealthArtifacts = jest.fn().mockResolvedValue({ ok: true });
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(20000);
+        await initPromise;
+
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            boot: expect.objectContaining({
+              stage: 'launch_windows_degraded',
+              reason: 'launch_windows_for_profile_timeout',
+            }),
+          }),
+        }));
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          incrementSession: true,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('continues boot with a degraded heartbeat when startup session scope never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+
+        app.initDaemonClient = jest.fn().mockImplementation(async () => {
+          mockAppContext.daemonClient = {};
+        });
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockImplementation(() => new Promise(() => {}));
+        app.refreshStartupHealthArtifacts = jest.fn().mockResolvedValue({ ok: true });
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(20000);
+        await initPromise;
+
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            boot: expect.objectContaining({
+              stage: 'startup_session_scope_degraded',
+              reason: 'initialize_startup_session_scope_timeout',
+            }),
+          }),
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('continues boot with a degraded heartbeat when startup health refresh never settles', async () => {
+      jest.useFakeTimers();
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+
+        app.initDaemonClient = jest.fn().mockImplementation(async () => {
+          mockAppContext.daemonClient = {};
+        });
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue({ ok: true });
+        app.refreshStartupHealthArtifacts = jest.fn().mockImplementation(() => new Promise(() => {}));
+
+        const initPromise = app.init();
+        await jest.advanceTimersByTimeAsync(0);
+        await jest.advanceTimersByTimeAsync(20000);
+        await initPromise;
+
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            boot: expect.objectContaining({
+              stage: 'startup_health_degraded',
+              reason: 'refresh_startup_health_artifacts_timeout',
+            }),
+          }),
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('initializes team memory lazily on first pattern append', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const teamMemory = require('../modules/team-memory');
+
+      await app.appendTeamMemoryPatternEvent({ eventType: 'test.pattern' }, 'test');
+
+      expect(teamMemory.initializeTeamMemoryRuntime).toHaveBeenCalledTimes(1);
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: 'test.pattern' })
+      );
+    });
+
+    it('initializes experiment lazily for guard block dispatch', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const experiment = require('../modules/experiment');
+
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'block',
+        guardId: 'grd_lazy',
+        event: {
+          claimId: 'claim_lazy',
+          status: 'contested',
+          session: 's_lazy',
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(experiment.initializeExperimentRuntime).toHaveBeenCalledTimes(1);
+      expect(experiment.executeExperimentOperation).toHaveBeenCalledWith(
+        'run-experiment',
+        expect.objectContaining({
+          claimId: 'claim_lazy',
+        })
+      );
+    });
+  });
+
+  describe('supervisor bootstrap', () => {
+    function createSupervisorRuntimeFixture() {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-supervisor-'));
+      const runtimeDir = path.join(tempRoot, 'runtime');
+      fs.mkdirSync(runtimeDir, { recursive: true });
+      const daemonScriptPath = path.join(tempRoot, 'supervisor-daemon.js');
+      fs.writeFileSync(daemonScriptPath, '// supervisor fixture\n');
+      return {
+        tempRoot,
+        daemonScriptPath,
+        pidPath: path.join(runtimeDir, 'supervisor.pid'),
+        statusPath: path.join(runtimeDir, 'supervisor-status.json'),
+        logPath: path.join(runtimeDir, 'supervisor.log'),
+      };
+    }
+
+    it('spawns the detached supervisor during init when none is healthy', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+      jest.spyOn(app, 'isProcessAlive').mockReturnValue(false);
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+
+      await app.init();
+
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [spawnPath, spawnArgs, spawnOptions] = spawn.mock.calls[0];
+      expect(spawnPath).toBe(process.execPath);
+      expect(spawnArgs).toEqual([
+        runtimePaths.daemonScriptPath,
+        '--pid-path',
+        runtimePaths.pidPath,
+        '--status-path',
+        runtimePaths.statusPath,
+        '--log-path',
+        runtimePaths.logPath,
+      ]);
+      expect(spawnOptions).toMatchObject({
+        cwd: '/test',
+        detached: true,
+        windowsHide: true,
+        stdio: 'ignore',
+      });
+
+      fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+
+    it('uses system node instead of electron to launch the unpacked dev supervisor daemon', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const originalExecPath = process.execPath;
+      const originalVersions = process.versions;
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: {
+          ...originalVersions,
+          electron: '35.0.0',
+        },
+      });
+
+      try {
+        const result = app.spawnSupervisorDaemon('test-electron-runtime');
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          spawned: true,
+        }));
+        expect(spawn).toHaveBeenCalledWith(
+          process.platform === 'win32' ? 'node.exe' : 'node',
+          [
+            runtimePaths.daemonScriptPath,
+            '--pid-path',
+            runtimePaths.pidPath,
+            '--status-path',
+            runtimePaths.statusPath,
+            '--log-path',
+            runtimePaths.logPath,
+          ],
+          expect.objectContaining({
+            cwd: '/test',
+            detached: true,
+            windowsHide: true,
+            stdio: 'ignore',
+          })
+        );
+        expect(spawn.mock.calls[0][2].env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+      } finally {
+        Object.defineProperty(process, 'execPath', {
+          configurable: true,
+          writable: true,
+          value: originalExecPath,
+        });
+        Object.defineProperty(process, 'versions', {
+          configurable: true,
+          value: originalVersions,
+        });
+        fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('uses electron-as-node to launch a packaged app.asar supervisor daemon', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const asarRoot = path.join(runtimePaths.tempRoot, 'resources', 'app.asar');
+      const asarDaemonScriptPath = path.join(asarRoot, 'supervisor-daemon.js');
+      const originalExecPath = process.execPath;
+      const originalVersions = process.versions;
+
+      fs.mkdirSync(asarRoot, { recursive: true });
+      fs.writeFileSync(asarDaemonScriptPath, '// packaged supervisor fixture\n');
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue({
+        ...runtimePaths,
+        daemonScriptPath: asarDaemonScriptPath,
+      });
+
+      Object.defineProperty(process, 'execPath', {
+        configurable: true,
+        writable: true,
+        value: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
+      });
+      Object.defineProperty(process, 'versions', {
+        configurable: true,
+        value: {
+          ...originalVersions,
+          electron: '28.3.3',
+        },
+      });
+
+      try {
+        const result = app.spawnSupervisorDaemon('test-packaged-runtime');
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          spawned: true,
+        }));
+        expect(spawn).toHaveBeenCalledWith(
+          'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
+          [
+            asarDaemonScriptPath,
+            '--pid-path',
+            runtimePaths.pidPath,
+            '--status-path',
+            runtimePaths.statusPath,
+            '--log-path',
+            runtimePaths.logPath,
+          ],
+          expect.objectContaining({
+            cwd: '/test',
+            detached: true,
+            windowsHide: true,
+            stdio: 'ignore',
+            env: expect.objectContaining({
+              ELECTRON_RUN_AS_NODE: '1',
+            }),
+          })
+        );
+      } finally {
+        Object.defineProperty(process, 'execPath', {
+          configurable: true,
+          writable: true,
+          value: originalExecPath,
+        });
+        Object.defineProperty(process, 'versions', {
+          configurable: true,
+          value: originalVersions,
+        });
+        fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('cleans stale supervisor pid and status artifacts before respawn', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const stalePid = 9876;
+      const killSpy = jest.spyOn(process, 'kill').mockImplementation(() => true);
+
+      fs.writeFileSync(runtimePaths.pidPath, JSON.stringify({ pid: stalePid }, null, 2));
+      fs.writeFileSync(runtimePaths.statusPath, JSON.stringify({
+        heartbeatAtMs: Date.now() - 120000,
+        pollMs: 4000,
+      }, null, 2));
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+      jest.spyOn(app, 'isProcessAlive').mockImplementation((pid) => Number(pid) === stalePid);
+
+      const result = await app.ensureSupervisorDaemonRunning('test-stale');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        spawned: true,
+        cleaned: expect.objectContaining({
+          processKilled: true,
+          pidFileRemoved: true,
+          statusFileRemoved: true,
+        }),
+      }));
+      expect(killSpy).toHaveBeenCalledWith(stalePid, 'SIGTERM');
+      expect(fs.existsSync(runtimePaths.pidPath)).toBe(false);
+      expect(fs.existsSync(runtimePaths.statusPath)).toBe(false);
+      expect(spawn).toHaveBeenCalledTimes(1);
+
+      killSpy.mockRestore();
+      fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+
+    it('does not respawn a healthy supervisor with a fresh heartbeat', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const runtimePaths = createSupervisorRuntimeFixture();
+      const livePid = 2468;
+
+      fs.writeFileSync(runtimePaths.pidPath, JSON.stringify({ pid: livePid }, null, 2));
+      fs.writeFileSync(runtimePaths.statusPath, JSON.stringify({
+        heartbeatAtMs: Date.now() - 1000,
+        pollMs: 4000,
+      }, null, 2));
+
+      jest.spyOn(app, 'getSupervisorRuntimePaths').mockReturnValue(runtimePaths);
+      jest.spyOn(app, 'isProcessAlive').mockImplementation((pid) => Number(pid) === livePid);
+
+      const result = await app.ensureSupervisorDaemonRunning('test-healthy');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        alreadyRunning: true,
+        pid: livePid,
+      }));
+      expect(spawn).not.toHaveBeenCalled();
+
+      fs.rmSync(runtimePaths.tempRoot, { recursive: true, force: true });
+    });
+  });
+
+  describe('cognitive memory runtime integration', () => {
+    it('starts websocket runtime on installed data-root configured port', async () => {
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const previousProjectRoot = config.getProjectRoot();
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-app-ws-root-'));
+      const settingsDir = path.join(dataRoot, '.squidrun', 'settings');
+
+      try {
+        fs.mkdirSync(settingsDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(settingsDir, 'websocket.json'),
+          `${JSON.stringify({ schema: 'squidrun.websocket_settings.v1', port: 9901 }, null, 2)}\n`,
+          'utf8'
+        );
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+        process.env.SQUIDRUN_PROFILE = 'main';
+        config.setProjectRoot(dataRoot);
+
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        const websocketServer = require('../modules/websocket-server');
+        jest.spyOn(app, 'resolveRootCoherencePaths').mockReturnValue({
+          settingsPath: path.join(dataRoot, '.squidrun', 'settings', 'websocket.json'),
+          runtimePath: path.join(dataRoot, '.squidrun', 'runtime'),
+          crumbPath: path.join(dataRoot, '.squidrun', 'runtime', 'boot-sequence.jsonl'),
+          appStatusPath: path.join(dataRoot, '.squidrun', 'app-status.json'),
+          websocketPortInfo: {
+            source: `settings:${path.join(dataRoot, '.squidrun', 'settings', 'websocket.json')}:port`,
+          },
+        });
+
+        app.initDaemonClient = jest.fn().mockResolvedValue();
+        app.createWindow = jest.fn().mockResolvedValue();
+        app.startSmsPoller = jest.fn();
+        app.startTelegramPoller = jest.fn();
+        app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+        jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+        await app.init();
+
+        expect(websocketServer.start).toHaveBeenCalledWith(expect.objectContaining({
+          port: 9901,
+          portSource: expect.stringContaining('websocket.json'),
+        }));
+        expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(expect.objectContaining({
+          statusPatch: expect.objectContaining({
+            websocket: expect.objectContaining({
+              desiredPort: 9901,
+              source: expect.stringContaining('websocket.json'),
+            }),
+          }),
+        }));
+      } finally {
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        config.setProjectRoot(previousProjectRoot);
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('routes websocket cognitive-memory messages into the runtime handler', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const websocketServer = require('../modules/websocket-server');
+      const { executeCognitiveMemoryOperation } = require('../modules/ipc/cognitive-memory-handlers');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+      jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+      await app.init();
+
+      const startCall = websocketServer.start.mock.calls[0];
+      expect(startCall).toBeTruthy();
+      const options = startCall[0];
+
+      await options.onMessage({
+        role: 'builder',
+        paneId: '2',
+        message: {
+          type: 'cognitive-memory',
+          action: 'retrieve',
+          payload: {
+            query: 'ServiceTitan auth endpoint',
+            limit: 2,
+          },
+        },
+      });
+
+      expect(executeCognitiveMemoryOperation).toHaveBeenCalledWith(
+        'retrieve',
+        expect.objectContaining({
+          query: 'ServiceTitan auth endpoint',
+          limit: 2,
+        }),
+        expect.objectContaining({
+          source: expect.objectContaining({
+            via: 'websocket',
+            role: 'builder',
+            paneId: '2',
+          }),
+        })
+      );
+    });
+  });
+
+  describe('websocket local delivery journaling', () => {
+    async function initWebSocketApp() {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const websocketServer = require('../modules/websocket-server');
+      const triggers = require('../modules/triggers');
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+
+      app.initDaemonClient = jest.fn().mockResolvedValue();
+      app.createWindow = jest.fn().mockResolvedValue();
+      app.startSmsPoller = jest.fn();
+      app.startTelegramPoller = jest.fn();
+      app.initializeStartupSessionScope = jest.fn().mockResolvedValue(null);
+      jest.spyOn(app, 'ensureSupervisorDaemonRunning').mockResolvedValue({ ok: true, alreadyRunning: true });
+
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValue({ ok: true });
+
+      await app.init();
+
+      const options = websocketServer.start.mock.calls.at(-1)?.[0];
+      expect(typeof options?.onMessage).toBe('function');
+
+      return { app, options, triggers, evidenceLedger };
+    }
+
+    it('finalizes comms journal rows as acked after verified local pane delivery', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+        deliveryId: 'delivery-acked-1',
+        mode: 'pty',
+        notified: ['1'],
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-acked-1' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE #1): verified delivery test',
+          messageId: 'hm-acked-1',
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[0]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-acked-1',
+          status: 'brokered',
+        }),
+        expect.any(Object),
+      ]);
+      expect(commsJournalCalls[1]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-acked-1',
+          status: 'acked',
+          ackStatus: 'delivered.verified',
+          errorCode: null,
+          metadata: expect.objectContaining({
+            source: 'websocket-local-trigger-delivery',
+            paneId: '1',
+            deliveryId: 'delivery-acked-1',
+            finalOutcome: 'delivered.verified',
+            deliveryAccepted: true,
+            deliveryVerified: true,
+          }),
+        }),
+        expect.any(Object),
+      ]);
+    });
+
+    it('preserves obligation declarations in canonical broker metadata until the routed upsert', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+        deliveryId: 'delivery-obligation-1',
+        mode: 'pty',
+        notified: ['3'],
+      });
+      const expects = { class: 'verdict', staleness_class: 'turn' };
+
+      await options.onMessage({
+        role: 'builder',
+        paneId: '2',
+        traceContext: { traceId: 'hm-obligation-broker-1' },
+        message: {
+          type: 'send',
+          target: 'oracle',
+          content: '(BUILDER #1): verdict gate',
+          messageId: 'hm-obligation-broker-1',
+          metadata: {
+            expects,
+            envelope: {
+              expects,
+            },
+          },
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[0][1].metadata).toEqual(expect.objectContaining({
+        expects,
+        envelope: expect.objectContaining({ expects }),
+      }));
+      expect(commsJournalCalls[1][1]).toEqual(expect.objectContaining({
+        messageId: 'hm-obligation-broker-1',
+        status: 'acked',
+      }));
+    });
+
+    it('routes ExampleApp arm hm-send targets into their PTY panes', async () => {
+      const { app, options } = await initWebSocketApp();
+      const write = jest.fn().mockReturnValue(true);
+      app.ctx.daemonClient = {
+        connected: true,
+        write,
+      };
+
+      const result = await options.onMessage({
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
+        traceContext: { traceId: 'hm-arm-to-lead-1' },
+        message: {
+          type: 'send',
+          target: 'exampleapp-lead',
+          content: '(EXAMPLEAPP-INVOICE #1): status for lead',
+          messageId: 'hm-arm-to-lead-1',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        paneId: 'exampleapp-lead',
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+      }));
+      expect(write).toHaveBeenCalledWith(
+        'exampleapp-lead',
+        expect.stringContaining('(EXAMPLEAPP-INVOICE #1): status for lead'),
+        expect.objectContaining({
+          source: 'squidrun-app.direct-pane-delivery',
+        })
+      );
+      expect(write).toHaveBeenCalledWith(
+        'exampleapp-lead',
+        '\r',
+        expect.objectContaining({
+          source: 'squidrun-app.direct-pane-delivery',
+        })
+      );
+    });
+
+    it('finalizes comms journal rows as routed for accepted but unverified local delivery timeouts', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'routed_unverified_timeout',
+        deliveryId: 'delivery-routed-1',
+        mode: 'pty',
+        notified: ['1'],
+        details: {
+          failureReason: 'accepted.unverified',
+        },
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-routed-1' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE #2): timeout delivery test',
+          messageId: 'hm-routed-1',
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[1]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-routed-1',
+          status: 'routed',
+          ackStatus: 'routed_unverified_timeout',
+          errorCode: null,
+          metadata: expect.objectContaining({
+            source: 'websocket-local-trigger-delivery',
+            deliveryId: 'delivery-routed-1',
+            finalOutcome: 'routed_unverified_timeout',
+            deliveryAccepted: true,
+            deliveryVerified: false,
+            failureReason: 'accepted.unverified',
+          }),
+        }),
+        expect.any(Object),
+      ]);
+    });
+
+    it('emits pending visibility events for unverified Oracle verdict delivery', async () => {
+      const { app, options, triggers } = await initWebSocketApp();
+      app.kernelBridge.emitBridgeEvent = jest.fn();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        deliveryId: 'delivery-verdict-pending-1',
+        mode: 'pty',
+        notified: ['1'],
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-oracle-79' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE 79): PASS',
+          messageId: 'hm-oracle-79',
+        },
+      });
+
+      expect(app.kernelBridge.emitBridgeEvent).toHaveBeenCalledWith(
+        'comms.verdict.pending',
+        expect.objectContaining({
+          kind: 'oracle_verdict_visibility_pending',
+          messageId: 'hm-oracle-79',
+          sourceRef: 'oracle#79',
+          verdict: 'PASS',
+          status: 'routed',
+          ackStatus: 'accepted.daemon_pty_unverified',
+          senderRole: 'oracle',
+          targetRole: 'architect',
+        }),
+        'system'
+      );
+      expect(triggers.sendDirectMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('finalizes comms journal rows as failed when local pane delivery is rejected', async () => {
+      const { options, triggers, evidenceLedger } = await initWebSocketApp();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
+        reason: 'main_window_unavailable',
+        deliveryId: 'delivery-failed-1',
+        mode: 'pty',
+        notified: [],
+      });
+
+      await options.onMessage({
+        role: 'oracle',
+        paneId: '3',
+        traceContext: { traceId: 'hm-failed-1' },
+        message: {
+          type: 'send',
+          target: 'architect',
+          content: '(ORACLE #3): failed delivery test',
+          messageId: 'hm-failed-1',
+        },
+      });
+
+      const commsJournalCalls = evidenceLedger.executeEvidenceLedgerOperation.mock.calls
+        .filter((call) => call[0] === 'upsert-comms-journal');
+      expect(commsJournalCalls[1]).toEqual([
+        'upsert-comms-journal',
+        expect.objectContaining({
+          messageId: 'hm-failed-1',
+          status: 'failed',
+          ackStatus: 'window_unavailable',
+          errorCode: 'main_window_unavailable',
+          metadata: expect.objectContaining({
+            source: 'websocket-local-trigger-delivery',
+            deliveryId: 'delivery-failed-1',
+            finalOutcome: 'window_unavailable',
+            deliveryAccepted: false,
+            deliveryVerified: false,
+          }),
+        }),
+        expect.any(Object),
+      ]);
+    });
+
+    it('injects a watchdog alert when architect gets no response from builder within 90 seconds', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 90 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const triggers = require('../modules/triggers');
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('uses hot-reloaded runtime config for the agent response watchdog timeout', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 45 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const triggers = require('../modules/triggers');
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(44 * 1000);
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(1000);
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+
+      jest.useRealTimers();
+    });
+
+    it('cancels the watchdog after an accepted builder response to architect', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const triggers = require('../modules/triggers');
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+      app.maybeResolveAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        deliveryAccepted: true,
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses a stale watchdog when later comms quote back the timed-out task', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          messageId: 'm-builder-ack',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(BUILDER #5): ACK ARCHITECT #12. Proceeding on the focused patch.',
+          brokeredAtMs: new Date('2026-03-28T10:10:15').getTime(),
+        },
+        {
+          messageId: 'm-builder-cleanup',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'brokered',
+          rawBody: '(BUILDER #7): ACK ARCHITECT #17. Cleanup complete; patch reverted.',
+          brokeredAtMs: new Date('2026-03-28T10:12:00').getTime(),
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-336';
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '(ARCHITECT #12): TASK: startup-health bridge probe accuracy.',
+        sentAtMs: new Date('2026-03-28T10:10:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+        sessionId: 'app-session-336',
+        sinceMs: new Date('2026-03-28T10:10:00').getTime(),
+        order: 'asc',
+        limit: 500,
+      });
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('watches builder-to-oracle task handoffs and alerts both builder and architect on silence', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '[TASK] Investigate the invalidation level and reply with evidence.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'builder',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from oracle to builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM WATCHDOG): [WATCHDOG] No response from oracle to builder for task sent at 10:15. Check if task was received.'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses builder-to-oracle watchdog when the task directs a PASS/HOLD verdict to architect', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          rowId: 75766,
+          messageId: 'm-oracle-production-gate-pass',
+          senderRole: 'oracle',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'routed',
+          rawBody: '(ORACLE — PRODUCTION GATE: PASS. The ship is verified live on both domains.)',
+          brokeredAtMs: new Date('2026-03-28T10:15:15').getTime(),
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-480';
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '(BUILDER #108): Independent production gate requested. Please independently audit production. Reply PASS/HOLD to Architect with evidence.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(true);
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('does not treat unrelated redirected chatter as a PASS/HOLD watchdog response', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-redirect-negative-'));
+      try {
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 75766,
+            messageId: 'm-oracle-unrelated-update',
+            senderRole: 'oracle',
+            targetRole: 'architect',
+            channel: 'ws',
+            direction: 'outbound',
+            status: 'routed',
+            rawBody: '(ORACLE #44): I am reviewing a separate kernel note.',
+            brokeredAtMs: new Date('2026-03-28T10:15:15').getTime(),
+          },
+        ]);
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.agentResponseWatchdogWorkItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+        app.agentResponseWatchdogCurrentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+
+        expect(app.scheduleAgentResponseWatchdog({
+          senderRole: 'builder',
+          targetRole: 'oracle',
+          content: '(BUILDER #108): Independent production gate requested. Please independently audit production. Reply PASS/HOLD to Architect with evidence.',
+          sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+        })).toBe(true);
+
+        jest.advanceTimersByTime(30 * 1000);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'builder',
+            expect.stringContaining('No response from oracle to builder'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({ windowsHide: true })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not watchdog messages that explicitly say no reply is needed', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: 'Status only. No further acknowledgment needed.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('still watchdogs explicit tasks when no-reply-needed is body text only', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-body-only-'));
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+        app.agentResponseWatchdogCurrentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+
+        expect(app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'builder',
+          sourceMessageId: 'm-architect-builder-body-only',
+          content: '(ARCHITECT #204): Verify the watchdog no-reply body text and report. No reply needed.',
+          sentAtMs: new Date('2026-05-30T10:06:30').getTime(),
+        })).toBe(true);
+
+        jest.advanceTimersByTime(30 * 1000);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'architect',
+            expect.stringContaining('[WATCHDOG] No response from builder for task sent at 10:06. Check if task was received.'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({ windowsHide: true })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not watchdog a completed-task cleanup that explicitly needs no response', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        sourceMessageId: 'm-builder-architect-watchdog-close',
+        content: '(BUILDER #18): Watchdog check: the earlier correction was received and its outcome is complete. No reply or rework needed; please close the watchdog without waking Operator.',
+        sentAtMs: new Date('2026-08-23T04:29:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('still watchdogs a separate response demand after a no-response clause', () => {
+      jest.useFakeTimers();
+      const contradictoryRequests = [
+        'No reply needed. Send PASS/HOLD to Builder.',
+        'No response necessary. Please provide a verdict.',
+        'No reply needed; report if RED.',
+      ];
+
+      for (const [index, content] of contradictoryRequests.entries()) {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        expect(app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: `m-architect-oracle-contradictory-${index + 1}`,
+          content,
+          sentAtMs: new Date('2026-08-23T04:53:00').getTime() + index,
+        })).toBe(true);
+        app.clearAllAgentResponseWatchdogs();
+      }
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('never watchdogs a watchdog alert even when it contains a contradictory response demand', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        sourceMessageId: 'm-system-watchdog-contradictory',
+        content: '[WATCHDOG] No reply needed. Report status.',
+        sentAtMs: new Date('2026-08-23T04:54:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog FYI-class messages even when they contain task-like words', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '[FYI] Context updated. Please check if local state changed; do not respond.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog machine-readable consultation JSON payloads', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: JSON.stringify({
+          requestId: 'consultation-123',
+          agentId: 'builder',
+          signals: [
+            {
+              ticker: 'BTC/USD',
+              direction: 'HOLD',
+              confidence: 0.86,
+              reasoning: 'VETO keeps this watch-only.',
+            },
+          ],
+        }),
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog consultation JSON payloads wrapped in agent-prefixed text', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #99): {"requestId":"consultation-1776880824458-80tl7e","agentId":"builder","signals":[{"ticker":"BTC/USD","direction":"BUY","confidence":0.63,"reasoning":"BTC is the only clear long."}]}',
+        sentAtMs: new Date('2026-03-28T11:01:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog acknowledgement-only alignment notes', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #42): Copy. I’ve updated my working read: XPL hold remains valid while OI stays firm around 0.1044 support and price holds above 0.103, TP1 should fire immediately on green recovery, and the real target is the doubled daily quota path (~$33).',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog acknowledgement-only notes that mention pre-fix or post-fix noise', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #51): Copy. Treating the 10:09 watchdog hit as pre-fix queue noise, not a fresh miss. I will watch for any new post-fix false positives and only reopen if they reproduce after #49.',
+        sentAtMs: new Date('2026-03-28T10:24:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('does not watchdog multiline status updates that do not ask for action', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: [
+          '(BUILDER #52): Fresh watchdog hit traced and patched.',
+          'Root cause was narrower than the original compaction issue.',
+          'I removed the false-positive trigger, added a regression test, and reran the focused watchdog slice: 8 passed.',
+        ].join('\n'),
+        sentAtMs: new Date('2026-03-28T10:42:00').getTime(),
+      })).toBe(false);
+
+      jest.advanceTimersByTime(5 * 60 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('still watchdogs explicit consultation-style task requests', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: 'Analyze ALL 5 symbols in consultation request consultation-123. Deadline: 2026-03-28T10:45:00Z. Reply via hm-send architect with JSON containing a signal for every symbol.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      })).toBe(true);
+
+      jest.useRealTimers();
+    });
+
+    it('cancels the watchdog after an accepted oracle response to builder', () => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'oracle',
+        content: '[TASK] Investigate the invalidation level and reply with evidence.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+      app.maybeResolveAgentResponseWatchdog({
+        senderRole: 'oracle',
+        targetRole: 'builder',
+        deliveryAccepted: true,
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it.each([
+      'accepted.unverified',
+      'submit_pending_input',
+      'accepted.daemon_pty_unverified',
+    ])('cancels the watchdog after %s delivery status', (deliveryStatus) => {
+      jest.useFakeTimers();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '[TASK] Fix the delivery pipeline.',
+        sentAtMs: new Date('2026-03-28T10:15:00').getTime(),
+      });
+      app.maybeResolveAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        deliveryAccepted: false,
+        deliveryStatus,
+      });
+
+      jest.advanceTimersByTime(90 * 1000);
+      expect(spawn).not.toHaveBeenCalled();
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses a stale watchdog when a later target response has accepted daemon status', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          messageId: 'm-builder-daemon-response',
+          senderRole: 'builder',
+          targetRole: 'architect',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'failed',
+          ackStatus: 'accepted.daemon_pty_unverified',
+          rawBody: '(BUILDER #8): I have this in hand.',
+          brokeredAtMs: new Date('2026-03-28T10:10:15').getTime(),
+          metadata: {
+            failureReason: 'accepted.daemon_pty_unverified',
+          },
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-336';
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'architect',
+        targetRole: 'builder',
+        content: '(ARCHITECT #12): TASK: startup-health bridge probe accuracy.',
+        sentAtMs: new Date('2026-03-28T10:10:00').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses architect-to-oracle watchdog when the matching work item is terminal', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-work-item-terminal-'));
+      const workItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+      try {
+        openWorkItem({
+          id: 'wi-watchdog-terminal',
+          session: 'app-session-389',
+          profile: 'main',
+          window: 'main',
+          sourceMessageIds: ['m-architect-oracle-terminal'],
+          objective: 'Oracle verify the terminal watchdog suppression patch',
+          ownerRoles: ['builder', 'oracle'],
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:00:00.000Z',
+        });
+        closeWorkItem({
+          id: 'wi-watchdog-terminal',
+          verdict: 'passed',
+          reason: 'terminal before stale watchdog fired',
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:01:00.000Z',
+        });
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = workItemRoot;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-terminal',
+          content: '(ARCHITECT #200): Verify wi-watchdog-terminal and report.',
+          sentAtMs: new Date('2026-05-30T10:00:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses architect-to-oracle watchdog when oracle_verify proof is already attached', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-work-item-proof-'));
+      const workItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+      try {
+        openWorkItem({
+          id: 'wi-watchdog-acknowledged',
+          session: 'app-session-389',
+          profile: 'main',
+          window: 'main',
+          sourceMessageIds: ['m-architect-oracle-acknowledged'],
+          objective: 'Oracle verify the acknowledged watchdog suppression patch',
+          ownerRoles: ['builder', 'oracle'],
+          requiredProof: ['oracle_verify'],
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:02:00.000Z',
+        });
+        attachProof({
+          id: 'wi-watchdog-acknowledged',
+          role: 'oracle_verify',
+          ref: 'oracle:watchdog-pass',
+          hash: 'sha256:oracle-watchdog-pass',
+          summary: 'Oracle verification already attached',
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:03:00.000Z',
+        });
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = workItemRoot;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-acknowledged',
+          content: '(ARCHITECT #201): Verify wi-watchdog-acknowledged and report.',
+          sentAtMs: new Date('2026-05-30T10:03:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses architect-to-oracle watchdog when current-lane evidence is terminal', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-current-lane-'));
+      const currentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+      try {
+        fs.mkdirSync(path.dirname(currentLanePath), { recursive: true });
+        fs.writeFileSync(currentLanePath, JSON.stringify({
+          version: 1,
+          source: 'comms_journal',
+          status: 'none',
+          activeLane: {
+            laneId: 'app-session-389:architect-202:m-architect-current-lane-terminal',
+            sourceMessageId: 'm-architect-current-lane-terminal',
+            sourceRef: 'architect#202',
+            objective: 'Oracle verify current-lane terminal suppression',
+            status: 'resolved_or_superseded',
+          },
+        }, null, 2));
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogCurrentLanePath = currentLanePath;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-current-lane-terminal',
+          content: '(ARCHITECT #202): Verify current-lane terminal suppression.',
+          sentAtMs: new Date('2026-05-30T10:04:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses response watchdog when pending entry has explicit no_ack_needed state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #205): Verify the route-proof gate and report.',
+        responseWatchdogState: 'no_ack_needed',
+        sentAtMs: new Date('2026-05-30T10:07:30').getTime(),
+      })).toBe(true);
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses response watchdog when later ledger metadata has explicit no_ack_needed state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          rowId: 73001,
+          messageId: 'm-architect-intentional-autonomy-ledger',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          channel: 'ws',
+          direction: 'outbound',
+          status: 'routed',
+          rawBody: '(ARCHITECT #205): Received; broad-autonomy mode means no per-increment ack.',
+          brokeredAtMs: new Date('2026-05-30T10:07:45').getTime(),
+          metadata: {
+            routeHealthRequirement: {
+              required: false,
+              responseWatchdogState: 'no_ack_needed',
+            },
+          },
+        },
+      ]);
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.commsSessionScopeId = 'app-session-389';
+
+      app.scheduleAgentResponseWatchdog({
+        senderRole: 'builder',
+        targetRole: 'architect',
+        content: '(BUILDER #205): Verify the route-proof gate and report.',
+        sentAtMs: new Date('2026-05-30T10:07:30').getTime(),
+      });
+
+      jest.advanceTimersByTime(30 * 1000);
+
+      expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+        sessionId: 'app-session-389',
+        sinceMs: new Date('2026-05-30T10:07:30').getTime(),
+        order: 'asc',
+        limit: 500,
+      });
+      expect(spawn).not.toHaveBeenCalled();
+      expect(app.pendingAgentResponseWatchdogs.size).toBe(0);
+
+      jest.useRealTimers();
+    });
+
+    it('suppresses response watchdog when correlated WorkItem has explicit intentional_hold route state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-work-item-intentional-'));
+      const workItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+      try {
+        openWorkItem({
+          id: 'wi-watchdog-intentional-hold',
+          session: 'app-session-389',
+          profile: 'main',
+          window: 'main',
+          sourceMessageIds: ['m-architect-oracle-intentional-hold'],
+          objective: 'Oracle verify intentional autonomy hold suppression',
+          ownerRoles: ['oracle'],
+          routeHealthRequirement: {
+            required: false,
+            responseWatchdogState: 'intentional_hold',
+          },
+        }, {
+          workItemRoot,
+          now: '2026-05-30T10:08:00.000Z',
+        });
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = workItemRoot;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-intentional-hold',
+          content: '(ARCHITECT #206): Verify wi-watchdog-intentional-hold and report.',
+          sentAtMs: new Date('2026-05-30T10:08:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('suppresses response watchdog when correlated current-lane has explicit auto_proceed route state', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-current-lane-auto-proceed-'));
+      const currentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+      try {
+        fs.mkdirSync(path.dirname(currentLanePath), { recursive: true });
+        fs.writeFileSync(currentLanePath, JSON.stringify({
+          version: 1,
+          source: 'work_item',
+          status: 'active',
+          activeLane: {
+            laneId: 'app-session-389:architect-207:m-architect-current-lane-auto-proceed',
+            sourceMessageId: 'm-architect-current-lane-auto-proceed',
+            sourceRef: 'architect#207',
+            objective: 'Oracle verify current-lane auto-proceed suppression',
+            status: 'active',
+            routeHealthRequirement: {
+              required: false,
+              responseWatchdogState: 'auto_proceed',
+            },
+          },
+        }, null, 2));
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogCurrentLanePath = currentLanePath;
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-current-lane-auto-proceed',
+          content: '(ARCHITECT #207): Verify current-lane auto-proceed suppression.',
+          sentAtMs: new Date('2026-05-30T10:09:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('reports exact correlation blockers before architect-to-oracle watchdog fires', () => {
+      jest.useFakeTimers();
+      resolveRuntimeInt.mockImplementation((key, fallback) => (
+        key === 'agentResponseWatchdogMs' ? 30 * 1000 : fallback
+      ));
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-watchdog-blocker-'));
+      try {
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.commsSessionScopeId = 'app-session-389';
+        app.agentResponseWatchdogWorkItemRoot = path.join(tempRoot, 'runtime', 'work-items');
+        app.agentResponseWatchdogCurrentLanePath = path.join(tempRoot, 'handoffs', 'current-lane.json');
+
+        app.scheduleAgentResponseWatchdog({
+          senderRole: 'architect',
+          targetRole: 'oracle',
+          sourceMessageId: 'm-architect-oracle-blocked',
+          content: '(ARCHITECT #203): Verify the watchdog blocker report and reply.',
+          sentAtMs: new Date('2026-05-30T10:05:30').getTime(),
+        });
+
+        jest.advanceTimersByTime(30 * 1000);
+
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'architect',
+            expect.stringContaining('Closure correlation blockers: comms_journal:no_later_resolution; work_items:no_correlating_work_item; current_lane:missing.'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({ windowsHide: true })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('runtime lifecycle startup', () => {
+    let app;
+    let watcher;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      watcher = require('../modules/watcher');
+    });
+
+    it('awaits successful message watcher startup before reporting running', async () => {
+      watcher.startMessageWatcher.mockResolvedValueOnce({ success: true, path: '/test/queue' });
+
+      const result = await app.startRuntimeServices('test-start');
+
+      expect(watcher.startWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.startTriggerWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.startMessageWatcher).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ ok: true, state: 'running' });
+      expect(app.runtimeLifecycleState).toBe('running');
+    });
+
+    it('returns failure when message watcher startup resolves unsuccessful', async () => {
+      watcher.startMessageWatcher.mockResolvedValueOnce({ success: false, reason: 'stopped' });
+
+      const result = await app.startRuntimeServices('test-start');
+
+      expect(result).toEqual({ ok: false, state: 'stopped', error: 'stopped' });
+      expect(app.runtimeLifecycleState).toBe('stopped');
+      expect(watcher.stopMessageWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopTriggerWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopWatcher).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns failure when message watcher startup throws', async () => {
+      watcher.startMessageWatcher.mockRejectedValueOnce(new Error('watcher crashed'));
+
+      const result = await app.startRuntimeServices('test-start');
+
+      expect(result).toEqual({ ok: false, state: 'stopped', error: 'watcher crashed' });
+      expect(app.runtimeLifecycleState).toBe('stopped');
+      expect(watcher.stopMessageWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopTriggerWatcher).toHaveBeenCalledTimes(1);
+      expect(watcher.stopWatcher).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('dispatchPaneHostEnter', () => {
+    it('returns success when daemon accepts enter write', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('2');
+
+      expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
+      expect(result).toEqual({ success: true, paneId: '2' });
+    });
+
+    it('writes Codex paste terminator before enter for Codex pane commands', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: '1' });
+    });
+
+    it('falls back to persisted settings when current settings lack pane commands', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {};
+      mockManagers.settings.loadSettings.mockReturnValue({
+        paneCommands: {
+          1: 'codex',
+        },
+      });
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(mockManagers.settings.loadSettings).toHaveBeenCalled();
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: '1' });
+    });
+
+    it('uses the default Codex command for workroom panes without explicit settings', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {};
+      mockManagers.settings.loadSettings.mockReturnValue({});
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('exampleapp-app');
+
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['exampleapp-app', '\u001b[201~'],
+        ['exampleapp-app', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: 'exampleapp-app' });
+    });
+
+    it('classifies default Codex workroom exit zero as graceful completion', () => {
+      const { createRecoveryManager } = require('../modules/recovery-manager');
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {};
+      mockManagers.settings.loadSettings.mockReturnValue({});
+      createRecoveryManager.mockClear();
+
+      app.initRecoveryManager();
+
+      const recoveryOptions = createRecoveryManager.mock.calls[0][0];
+      expect(recoveryOptions.isCodexPane('exampleapp-app')).toBe(true);
+    });
+
+    it('uses persisted settings when current pane command is stale non-Codex', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'claude',
+        },
+      };
+      mockManagers.settings.loadSettings.mockReturnValue({
+        paneCommands: {
+          1: 'codex',
+        },
+      });
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(mockManagers.settings.loadSettings).toHaveBeenCalled();
+      expect(app.ctx.daemonClient.write.mock.calls).toEqual([
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual({ success: true, paneId: '1' });
+    });
+
+    it('fails closed when Codex paste terminator write is rejected', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn((_paneId, data) => data !== '\u001b[201~'),
+      };
+
+      const result = app.dispatchPaneHostEnter('1');
+
+      expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('1', '\u001b[201~');
+      expect(app.ctx.daemonClient.write).not.toHaveBeenCalledWith('1', '\r');
+      expect(result).toEqual({
+        success: false,
+        reason: 'daemon_paste_end_write_failed',
+        paneId: '1',
+      });
+    });
+
+    it('returns daemon_write_failed when daemon rejects enter write', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => false),
+      };
+
+      const result = app.dispatchPaneHostEnter('2');
+
+      expect(app.ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
+      expect(result).toEqual({ success: false, reason: 'daemon_write_failed', paneId: '2' });
+    });
+  });
+
+  describe('deliverPaneMessageViaDaemonPty', () => {
+    const withPromptReceipt = (message, id) => `${message}\n[SQUIDRUN_RECEIPT event=prompt_submit deliveryId=${id} messageId=${id}]`;
+
+    it('never presses Enter or writes a false failure from a missing receipt alone', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        const log = require('../modules/logger');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockReturnValue([]);
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['2', 0]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'missing-receipt-1',
+          paneId: '2',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(log.error).not.toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('SUBMIT UNVERIFIED')
+        );
+        expect(log.warn).toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('SUBMIT OBSERVATION PENDING')
+        );
+        expect(appendCommsJournalEntry).not.toHaveBeenCalledWith(
+          expect.objectContaining({ ackStatus: 'submit_unverified' })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('uses a later target response to disprove stuck without inventing an exact receipt', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        const log = require('../modules/logger');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockImplementation((filters = {}) => (
+          filters.senderRole === 'oracle'
+            ? [{ rowId: 44, messageId: 'oracle-replied' }]
+            : []
+        ));
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['3', 0]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'response-corroboration-1',
+          paneId: '3',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(log.info).toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('target_agent_output_after_delivery')
+        );
+        expect(appendCommsJournalEntry).not.toHaveBeenCalledWith(
+          expect.objectContaining({ ackStatus: 'prompt_submitted.receipt_verified' })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('uses later PTY output to disprove stuck without inventing an exact receipt', async () => {
+      jest.useFakeTimers();
+      try {
+        jest.setSystemTime(1_000_000);
+        const receipts = require('../modules/model-prompt-receipt');
+        const log = require('../modules/logger');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockReturnValue([]);
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['2', 999_000]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'output-corroboration-1',
+          paneId: '2',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        daemonClient.lastActivity.set('2', 1_002_000);
+        await jest.advanceTimersByTimeAsync(30);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(log.info).toHaveBeenCalledWith(
+          'PaneDelivery',
+          expect.stringContaining('pane_output_after_delivery')
+        );
+        expect(appendCommsJournalEntry).not.toHaveBeenCalledWith(
+          expect.objectContaining({ ackStatus: 'prompt_submitted.receipt_verified' })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps an actual prompt receipt as exact verified proof', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        receipts.getModelPromptReceipt.mockReturnValue({ semanticEvent: 'prompt_submit' });
+        queryCommsJournalEntries.mockImplementation((filters = {}) => (
+          filters.messageId === 'exact-receipt-1'
+            ? [{ messageId: 'exact-receipt-1', metadata: {} }]
+            : []
+        ));
+        const daemonClient = {
+          write: jest.fn(() => true),
+          lastActivity: new Map([['2', 0]]),
+        };
+
+        SquidRunApp.scheduleReceiptVerifiedSubmit({
+          receiptId: 'exact-receipt-1',
+          paneId: '2',
+          paneRuntime: 'codex',
+          daemonClient,
+          schedule: [10, 20],
+        });
+        await jest.advanceTimersByTimeAsync(10);
+
+        expect(daemonClient.write).not.toHaveBeenCalled();
+        expect(appendCommsJournalEntry).toHaveBeenCalledWith(expect.objectContaining({
+          messageId: 'exact-receipt-1',
+          ackStatus: 'prompt_submitted.receipt_verified',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('writes Codex paste terminator before Enter on the direct daemon route', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'hello architect',
+        messageId: 'direct-codex-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['1', withPromptReceipt('hello architect', 'direct-codex-1')],
+        ['1', '\u001b[201~'],
+        ['1', '\r'],
+      ]);
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
+    });
+
+    it('does not duplicate accepted direct daemon delivery through the trigger path', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockClear();
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          2: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageReliably({
+        paneId: '2',
+        message: 'short direct message',
+        fromRole: 'architect',
+        messageId: 'direct-no-duplicate-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['2', withPromptReceipt('short direct message', 'direct-no-duplicate-1')],
+        ['2', '\r'],
+      ]);
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+        paneId: '2',
+      }));
+    });
+
+    it('passes delivery metadata through the direct daemon PTY route', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'telegram inbound',
+        messageId: 'direct-meta-1',
+        meta: {
+          channel: 'telegram',
+          replyTarget: 'telegram',
+          replyTargetRequired: true,
+        },
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls[0][2]).toEqual(expect.objectContaining({
+        source: 'squidrun-app.direct-pane-delivery',
+        meta: expect.objectContaining({
+          channel: 'telegram',
+          replyTarget: 'telegram',
+          replyTargetRequired: true,
+        }),
+      }));
+    });
+
+    it('does not write Codex paste terminator for non-Codex direct daemon route', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          2: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      await app.deliverPaneMessageViaDaemonPty({
+        paneId: '2',
+        message: 'hello builder',
+        messageId: 'direct-claude-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['2', withPromptReceipt('hello builder', 'direct-claude-1')],
+        ['2', '\r'],
+      ]);
+    });
+
+    it('materializes oversized codex payloads to a marked pointer and SUBMITS (v1.1/v1.2 - the drop is dead)', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'x'.repeat(256),
+        messageId: 'direct-codex-long-1',
+      });
+
+      // v1.0 pinned skip-and-drop here; that class ate Operator's words twice.
+      // v1.1+ writes a marked pointer through the ONE submit path.
+      const calls = app.ctx.daemonClient.write.mock.calls;
+      expect(calls[0][1]).toContain('FULL MSG AT');
+      expect(calls[0][1]).toContain('SQUIDRUN_RECEIPT'); // v1.2 marker
+      expect(calls.some((call) => call[1] === '\r')).toBe(true); // the Enter
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        accepted: true,
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
+    });
+
+    it('uses exactly one Enter for an oversized Codex pointer even when no receipt appears', async () => {
+      jest.useFakeTimers();
+      try {
+        const receipts = require('../modules/model-prompt-receipt');
+        receipts.getModelPromptReceipt.mockReturnValue(null);
+        queryCommsJournalEntries.mockReturnValue([]);
+        const app = new SquidRunApp(mockAppContext, mockManagers);
+        app.ctx.currentSettings = {
+          paneCommands: {
+            1: 'codex --yolo',
+          },
+        };
+        app.ctx.daemonClient = {
+          connected: true,
+          write: jest.fn(() => true),
+          lastActivity: new Map([['1', 0]]),
+        };
+
+        const pending = app.deliverPaneMessageViaDaemonPty({
+          paneId: '1',
+          message: 'x'.repeat(256),
+          messageId: 'direct-codex-long-one-enter',
+        });
+        await jest.advanceTimersByTimeAsync(250);
+        await pending;
+        await jest.advanceTimersByTimeAsync(10_000);
+
+        const enterWrites = app.ctx.daemonClient.write.mock.calls
+          .filter((call) => call[1] === '\r');
+        expect(enterWrites).toHaveLength(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('materializes oversized Claude payloads to a marked pointer and SUBMITS (v1.1/v1.2)', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'x'.repeat(256),
+        messageId: 'direct-claude-long-1',
+      });
+
+      const calls = app.ctx.daemonClient.write.mock.calls;
+      expect(calls[0][1]).toContain('FULL MSG AT');
+      expect(calls[0][1]).toContain('SQUIDRUN_RECEIPT');
+      expect(calls.some((call) => call[1] === '\r')).toBe(true);
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        accepted: true,
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
+    });
+
+    it('routes long Claude pane messages through the verified trigger path instead of direct PTY', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockClear();
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'claude',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn(() => true),
+      };
+      const message = 'x'.repeat(256);
+
+      const result = await app.deliverPaneMessageReliably({
+        paneId: '1',
+        message,
+        fromRole: 'oracle',
+        messageId: 'claude-long-fallback-1',
+      });
+
+      // v1.1/v1.2: the daemon-pty path no longer refuses long payloads - it
+      // materializes a marked pointer and submits, so the reliable path can
+      // succeed without falling through to the trigger path at all.
+      const wrote = app.ctx.daemonClient.write.mock.calls;
+      if (wrote.length > 0) {
+        expect(wrote[0][1]).toContain('FULL MSG AT');
+        expect(result).toEqual(expect.objectContaining({ ok: true, accepted: true }));
+      } else {
+        expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+          ['1'],
+          message,
+          'oracle',
+          expect.objectContaining({ awaitDelivery: true })
+        );
+        expect(result).toEqual(expect.objectContaining({
+          accepted: true,
+          verified: true,
+          status: 'delivered.verified',
+        }));
+      }
+    });
+
+    it('fails closed when direct Codex paste terminator write is rejected', async () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      app.ctx.currentSettings = {
+        paneCommands: {
+          1: 'codex --yolo',
+        },
+      };
+      app.ctx.daemonClient = {
+        connected: true,
+        write: jest.fn((_paneId, data) => data !== '\u001b[201~'),
+      };
+
+      const result = await app.deliverPaneMessageViaDaemonPty({
+        paneId: '1',
+        message: 'hello architect',
+        messageId: 'direct-codex-reject-1',
+      });
+
+      expect(app.ctx.daemonClient.write.mock.calls.map((call) => call.slice(0, 2))).toEqual([
+        ['1', withPromptReceipt('hello architect', 'direct-codex-reject-1')],
+        ['1', '\u001b[201~'],
+      ]);
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        verified: false,
+        status: 'daemon_paste_end_failed',
+        mode: 'daemon-pty',
+        paneId: '1',
+      }));
+    });
+  });
+
+  describe('initializeStartupSessionScope', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('records next evidence-ledger session at startup and snapshots it', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce([{ sessionNumber: 128, sessionId: 'ses-128' }])
+        .mockResolvedValueOnce({ ok: true, sessionId: 'ses-129' })
+        .mockResolvedValueOnce({ ok: true, snapshotId: 'snp-129' });
+
+      const result = await app.initializeStartupSessionScope();
+
+      expect(result).toEqual({ sessionId: 'ses-129', sessionNumber: 129 });
+      expect(app.commsSessionScopeId).toBe('app-session-129-ses-129');
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        1,
+        'list-sessions',
+        expect.objectContaining({ limit: 1, order: 'desc' }),
+        expect.objectContaining({
+          source: expect.objectContaining({ via: 'app-startup' }),
+        })
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        2,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 129, mode: 'APP' }),
+        expect.any(Object)
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        3,
+        'snapshot-context',
+        expect.objectContaining({ sessionId: 'ses-129', trigger: 'session_start' }),
+        expect.any(Object)
+      );
+    });
+
+    it('uses provided session number from app-status when available', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce({ ok: true, sessionId: 'ses-147' })
+        .mockResolvedValueOnce({ ok: true, snapshotId: 'snp-147' });
+
+      const result = await app.initializeStartupSessionScope({ sessionNumber: 147 });
+
+      expect(result).toEqual({ sessionId: 'ses-147', sessionNumber: 147 });
+      expect(app.commsSessionScopeId).toBe('app-session-147');
+      expect(executeEvidenceLedgerOperation).toHaveBeenCalledTimes(2);
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        1,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 147, mode: 'APP' }),
+        expect.any(Object)
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        2,
+        'snapshot-context',
+        expect.objectContaining({ sessionId: 'ses-147', trigger: 'session_start' }),
+        expect.any(Object)
+      );
+    });
+
+    it('keeps provided app-status scope when startup session number conflicts', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce({ ok: false, reason: 'conflict' });
+
+      const result = await app.initializeStartupSessionScope({ sessionNumber: 186 });
+
+      expect(result).toEqual({ sessionId: null, sessionNumber: 186 });
+      expect(app.commsSessionScopeId).toBe('app-session-186');
+      expect(executeEvidenceLedgerOperation).toHaveBeenCalledTimes(1);
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        1,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 186, mode: 'APP' }),
+        expect.any(Object)
+      );
+    });
+
+    it('retries startup session numbers on conflict', async () => {
+      const { executeEvidenceLedgerOperation } = require('../modules/ipc/evidence-ledger-handlers');
+      executeEvidenceLedgerOperation
+        .mockResolvedValueOnce([{ sessionNumber: 128 }])
+        .mockResolvedValueOnce({ ok: false, reason: 'conflict' })
+        .mockResolvedValueOnce({ ok: true, sessionId: 'ses-130' })
+        .mockResolvedValueOnce({ ok: true, snapshotId: 'snp-130' });
+
+      const result = await app.initializeStartupSessionScope();
+
+      expect(result).toEqual({ sessionId: 'ses-130', sessionNumber: 130 });
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        2,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 129 }),
+        expect.any(Object)
+      );
+      expect(executeEvidenceLedgerOperation).toHaveBeenNthCalledWith(
+        3,
+        'record-session-start',
+        expect.objectContaining({ sessionNumber: 130 }),
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe('evidence ledger prune housekeeping', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('runs prune through evidence-ledger worker routing with housekeeping source', async () => {
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValueOnce({
+        ok: true,
+        status: 'pruned',
+        removedTotal: 2,
+        reclaim: { attempted: true, ok: true },
+      });
+      app.evidenceLedgerPruneHousekeeping.enabled = true;
+
+      const result = await app.evidenceLedgerPruneHousekeeping.run('unit-test', {
+        maxRows: 10,
+        reclaim: false,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'pruned',
+      }));
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'prune',
+        expect.objectContaining({
+          maxRows: 10,
+          reclaim: false,
+          reason: 'unit-test',
+        }),
+        expect.objectContaining({
+          source: {
+            via: 'evidence-ledger-housekeeping',
+            role: 'system',
+            paneId: null,
+          },
+        })
+      );
+    });
+
+    it('starts startup prune and daily timer only when enabled', () => {
+      jest.useFakeTimers();
+      app.evidenceLedgerPruneHousekeeping.enabled = true;
+      const runSpy = jest.spyOn(app.evidenceLedgerPruneHousekeeping, 'run').mockResolvedValue({ ok: true });
+
+      try {
+        app.evidenceLedgerPruneHousekeeping.start();
+
+        expect(runSpy).toHaveBeenCalledWith('startup');
+        expect(app.evidenceLedgerPruneHousekeeping.timer).not.toBeNull();
+
+        jest.advanceTimersByTime(24 * 60 * 60 * 1000);
+
+        expect(runSpy).toHaveBeenCalledWith('timer');
+        app.evidenceLedgerPruneHousekeeping.stop();
+        expect(app.evidenceLedgerPruneHousekeeping.timer).toBeNull();
+      } finally {
+        app.evidenceLedgerPruneHousekeeping.stop();
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('resolveTargetToPane', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('should return null for null/undefined input', () => {
+      expect(app.resolveTargetToPane(null)).toBeNull();
+      expect(app.resolveTargetToPane(undefined)).toBeNull();
+    });
+
+    it('should return paneId for direct numeric strings 1, 2, 3', () => {
+      expect(app.resolveTargetToPane('1')).toBe('1');
+      expect(app.resolveTargetToPane('2')).toBe('2');
+      expect(app.resolveTargetToPane('3')).toBe('3');
+    });
+
+    it('should resolve role names to paneIds', () => {
+      expect(app.resolveTargetToPane('architect')).toBe('1');
+      expect(app.resolveTargetToPane('builder')).toBe('2');
+      expect(app.resolveTargetToPane('backend')).toBe('2');
+      expect(app.resolveTargetToPane('oracle')).toBe('3');
+    });
+
+    it('should be case-insensitive for role names', () => {
+      expect(app.resolveTargetToPane('ARCHITECT')).toBe('1');
+      expect(app.resolveTargetToPane('Architect')).toBe('1');
+      expect(app.resolveTargetToPane('BACKEND')).toBe('2');
+    });
+
+    it('should resolve legacy aliases', () => {
+      expect(app.resolveTargetToPane('lead')).toBe('1');
+      expect(app.resolveTargetToPane('orchestrator')).toBe('2');
+      expect(app.resolveTargetToPane('worker-b')).toBe('2');
+      expect(app.resolveTargetToPane('investigator')).toBe('3');
+    });
+
+    it('should resolve background builder aliases and synthetic pane ids', () => {
+      expect(app.resolveTargetToPane('builder-bg-1')).toBe('bg-2-1');
+      expect(app.resolveTargetToPane('builder-bg-2')).toBe('bg-2-2');
+      expect(app.resolveTargetToPane('bg-2-3')).toBe('bg-2-3');
+    });
+
+    it('should return null for invalid targets', () => {
+      expect(app.resolveTargetToPane('invalid')).toBeNull();
+      expect(app.resolveTargetToPane('7')).toBeNull();
+      expect(app.resolveTargetToPane('0')).toBeNull();
+      expect(app.resolveTargetToPane('')).toBeNull();
+    });
+  });
+
+  describe('shutdown', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('should not throw when called', async () => {
+      await expect(app.shutdown()).resolves.toBeUndefined();
+    });
+
+    it('should call cleanup functions', async () => {
+      const websocketServer = require('../modules/websocket-server');
+      const watcher = require('../modules/watcher');
+      const smsPoller = require('../modules/sms-poller');
+      const telegramPoller = require('../modules/telegram-poller');
+      const { closeSharedRuntime } = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
+      const experiment = require('../modules/experiment');
+
+      await app.shutdown();
+
+      expect(closeSharedRuntime).toHaveBeenCalled();
+      expect(experiment.closeExperimentRuntime).toHaveBeenCalled();
+      expect(teamMemory.stopIntegritySweep).toHaveBeenCalled();
+      expect(teamMemory.stopPatternMiningSweep).toHaveBeenCalled();
+      expect(teamMemory.closeTeamMemoryRuntime).toHaveBeenCalled();
+      expect(websocketServer.stop).toHaveBeenCalled();
+      expect(smsPoller.stop).toHaveBeenCalled();
+      expect(telegramPoller.stop).toHaveBeenCalled();
+      expect(watcher.stopWatcher).toHaveBeenCalled();
+      expect(watcher.stopTriggerWatcher).toHaveBeenCalled();
+      expect(watcher.stopMessageWatcher).toHaveBeenCalled();
+    });
+
+    it('should disconnect daemon client if present', async () => {
+      const mockDaemonClient = { disconnect: jest.fn() };
+      mockAppContext.daemonClient = mockDaemonClient;
+      app = new SquidRunApp(mockAppContext, mockManagers);
+
+      await app.shutdown();
+
+      expect(mockDaemonClient.disconnect).toHaveBeenCalled();
+    });
+
+    it('shuts down cleanly in PTY mode', async () => {
+      await expect(app.shutdown()).resolves.toBeUndefined();
+    });
+
+    it('captures session-end state before tearing down runtimes', async () => {
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      const teamMemory = require('../modules/team-memory');
+      const { generateSessionSummary } = require('../scripts/hm-session-summary');
+      app.teamMemoryInitialized = true;
+      app.ledgerAppSession = {
+        sessionId: 'ses-147',
+        sessionNumber: 147,
+      };
+      app.commsSessionScopeId = 'app-session-147';
+      mockManagers.settings.readAppStatus.mockReturnValue({ session: 147 });
+      evidenceLedger.executeEvidenceLedgerOperation.mockImplementation(async (action, payload) => {
+        if (action === 'record-session-end') {
+          return { ok: true, sessionId: payload.sessionId };
+        }
+        if (action === 'snapshot-context') {
+          return { ok: true, snapshotId: 'snap-147' };
+        }
+        if (action === 'list-sessions') {
+          return [{ sessionId: 'ses-147', sessionNumber: 147 }];
+        }
+        return { ok: true };
+      });
+
+      await app.shutdown();
+
+      expect(generateSessionSummary).toHaveBeenCalledWith(expect.objectContaining({
+        sessionNumber: 147,
+        includeSummaryText: true,
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'capture-precompact-memory',
+        expect.objectContaining({
+          session_id: 'app-session-147',
+          session_ordinal: 147,
+          reason: 'session_end',
+        })
+      );
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'record-session-end',
+        expect.objectContaining({
+          sessionId: 'ses-147',
+          summary: 'Session 147 captured 3 messages before shutdown.',
+          stats: {
+            messageCount: 3,
+          },
+        }),
+        expect.any(Object)
+      );
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'snapshot-context',
+        expect.objectContaining({
+          sessionId: 'ses-147',
+          trigger: 'session_end',
+          content: expect.objectContaining({
+            summary: 'Session 147 captured 3 messages before shutdown.',
+            summaryMarkdown: '# Session 147 Summary\n\n## Findings\n- Shipped continuity fix.\n',
+            sessionSummary: expect.objectContaining({
+              sessionNumber: 147,
+              messageCount: 3,
+            }),
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('performFullShutdown drains shutdown and stops the supervisor pid before exit', async () => {
+      const electron = require('electron');
+      electron.app.exit = jest.fn();
+      const supervisorPid = 6543;
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+      const shutdownSpy = jest.spyOn(app, 'shutdown').mockResolvedValue();
+      const killSpy = jest.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+        if (signal === 0) {
+          throw new Error('process_gone');
+        }
+        return true;
+      });
+      jest.spyOn(app, 'readTextFileSafe').mockReturnValue(JSON.stringify({ pid: supervisorPid }));
+
+      const result = await app.performFullShutdown('test-full-restart');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        supervisorStopResult: expect.objectContaining({
+          ok: true,
+          pid: supervisorPid,
+        }),
+      }));
+      expect(shutdownSpy).toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(supervisorPid, 'SIGTERM');
+      expect(electron.app.exit).toHaveBeenCalledWith(0);
+
+      killSpy.mockRestore();
+    });
+  });
+
+  describe('handleTeamMemoryGuardExperiment', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      app.experimentInitialized = true;
+    });
+
+    it('queues experiment and marks contested claim as pending_proof for block guards', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const experiment = require('../modules/experiment');
+
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'block',
+        guardId: 'grd_1',
+        event: {
+          claimId: 'clm_1',
+          status: 'contested',
+          session: 's_1',
+          scope: 'ui/modules/triggers.js',
+          agent: 'oracle',
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(experiment.executeExperimentOperation).toHaveBeenCalledWith(
+        'run-experiment',
+        expect.objectContaining({
+          claimId: 'clm_1',
+          profileId: expect.any(String),
+          guardContext: expect.objectContaining({
+            guardId: 'grd_1',
+            action: 'block',
+            blocking: true,
+          }),
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'update-claim-status',
+        expect.objectContaining({
+          claimId: 'clm_1',
+          status: 'pending_proof',
+        })
+      );
+    });
+
+    it('ignores non-block actions', async () => {
+      const experiment = require('../modules/experiment');
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'warn',
+        event: { claimId: 'clm_1', status: 'contested' },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.reason).toBe('not_block_action');
+      expect(experiment.executeExperimentOperation).not.toHaveBeenCalled();
+    });
+
+    it('accepts pending_proof claims for block-guard experiment dispatch', async () => {
+      const experiment = require('../modules/experiment');
+      const teamMemory = require('../modules/team-memory');
+
+      const result = await app.handleTeamMemoryGuardExperiment({
+        action: 'block',
+        guardId: 'grd_2',
+        event: {
+          claimId: 'clm_2',
+          status: 'pending_proof',
+          session: 's_2',
+          scope: 'ui/modules/injection.js',
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(experiment.executeExperimentOperation).toHaveBeenCalledWith(
+        'run-experiment',
+        expect.objectContaining({
+          claimId: 'clm_2',
+          guardContext: expect.objectContaining({
+            guardId: 'grd_2',
+            action: 'block',
+            blocking: true,
+          }),
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'update-claim-status',
+        expect.objectContaining({
+          claimId: 'clm_2',
+          status: 'pending_proof',
+        })
+      );
+    });
+  });
+
+  describe('team memory daily integration hooks', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      app.teamMemoryInitialized = true;
+    });
+
+    it('preflight evaluation reports blocked guards', async () => {
+      const teamMemory = require('../modules/team-memory');
+      teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+        ok: true,
+        blocked: true,
+        actions: [
+          {
+            guardId: 'grd_block',
+            action: 'block',
+            scope: 'ui/modules/triggers.js',
+            message: 'Blocked by guard',
+            event: { status: 'preflight' },
+          },
+        ],
+      });
+
+      const result = await app.evaluateTeamMemoryGuardPreflight({
+        target: 'builder',
+        content: 'run risky operation',
+        fromRole: 'architect',
+      });
+
+      expect(result.blocked).toBe(true);
+      expect(result.actions).toHaveLength(1);
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'evaluate-guards',
+        expect.objectContaining({
+          events: expect.any(Array),
+        })
+      );
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalled();
+    });
+
+    it('records delivery failure patterns for unverified sends', async () => {
+      const teamMemory = require('../modules/team-memory');
+      await app.recordDeliveryFailurePattern({
+        channel: 'send',
+        target: '2',
+        fromRole: 'architect',
+        result: {
+          accepted: true,
+          queued: true,
+          verified: false,
+          status: 'routed_unverified_timeout',
+          notified: ['2'],
+        },
+      });
+
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delivery.failed',
+          channel: 'send',
+          target: '2',
+        })
+      );
+    });
+
+    it('records delivery outcome patterns for verified sends', async () => {
+      const teamMemory = require('../modules/team-memory');
+      await app.recordDeliveryOutcomePattern({
+        channel: 'send',
+        target: '1',
+        fromRole: 'builder',
+        result: {
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'delivered.verified',
+          notified: ['1'],
+        },
+      });
+
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delivery.outcome',
+          channel: 'send',
+          target: '1',
+          outcome: 'delivered',
+        })
+      );
+      expect(teamMemory.appendPatternHookEvent).not.toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'delivery.failed',
+          channel: 'send',
+          target: '1',
+        })
+      );
+    });
+
+    it('records session lifecycle events without firing rollover injection on started', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const triggerProactiveMemoryInjection = jest
+        .spyOn(app, 'triggerProactiveMemoryInjection')
+        .mockResolvedValue({ ok: true });
+      await app.recordSessionLifecyclePattern({
+        paneId: '2',
+        status: 'started',
+        reason: 'spawn_requested',
+      });
+
+      expect(teamMemory.appendPatternHookEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'session.lifecycle',
+          paneId: '2',
+          status: 'started',
+        })
+      );
+      expect(triggerProactiveMemoryInjection).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('initDaemonClient', () => {
+    it('waits for PTY kernel classification before visible fanout and flushes visible output before exit', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getDaemonClient } = require('../daemon-client');
+        const sharedDaemonClient = {
+          on: jest.fn(),
+          off: jest.fn(),
+          connect: jest.fn().mockResolvedValue(),
+          disconnect: jest.fn(),
+        };
+        getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+        const mainWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+
+        const ctx = {
+          ...mockAppContext,
+          mainWindow,
+          daemonClient: sharedDaemonClient,
+          agentRunning: new Map([['1', 'running']]),
+          getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+          getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+        };
+        const app = new SquidRunApp(ctx, mockManagers);
+
+        await app.initDaemonClient();
+
+        const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+        const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+        const kernelListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'kernel-event')?.[1];
+
+        expect(typeof dataListener).toBe('function');
+        expect(typeof exitListener).toBe('function');
+        expect(typeof kernelListener).toBe('function');
+
+        mainWindow.webContents.send.mockClear();
+
+        dataListener('1', 'hel');
+        dataListener('1', 'lo');
+        dataListener('2', 'x');
+
+        expect(mainWindow.webContents.send).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(16);
+
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-1', 'hello');
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-2', 'x');
+
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '1',
+          payload: { paneId: '1', byteLen: Buffer.byteLength('hello', 'utf8') },
+          kernelMeta: null,
+        });
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '2',
+          payload: { paneId: '2', byteLen: Buffer.byteLength('x', 'utf8') },
+          kernelMeta: null,
+        });
+
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-1', 'hello');
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'x');
+
+        mainWindow.webContents.send.mockClear();
+
+        dataListener('1', 'secret');
+        jest.advanceTimersByTime(16);
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '1',
+          payload: { paneId: '1', byteLen: Buffer.byteLength('secret', 'utf8') },
+          kernelMeta: { meta: { visibility: 'internal' } },
+        });
+
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-1', 'secret');
+
+        mainWindow.webContents.send.mockClear();
+
+        dataListener('1', 'tail');
+        exitListener('1', 0);
+
+        const ptyDataCallIndex = mainWindow.webContents.send.mock.calls.findIndex(
+          ([channel, payload]) => channel === 'pty-data-1' && payload === 'tail'
+        );
+        const ptyExitCallIndex = mainWindow.webContents.send.mock.calls.findIndex(
+          ([channel, payload]) => channel === 'pty-exit-1' && payload === 0
+        );
+
+        expect(ptyDataCallIndex).toBeGreaterThanOrEqual(0);
+        expect(ptyExitCallIndex).toBeGreaterThan(ptyDataCallIndex);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('routes Squid Room pty data and exits to owning visible windows', async () => {
+      jest.useFakeTimers();
+      try {
+        const { getDaemonClient } = require('../daemon-client');
+        const sharedDaemonClient = {
+          on: jest.fn(),
+          off: jest.fn(),
+          connect: jest.fn().mockResolvedValue(),
+          disconnect: jest.fn(),
+          getTerminal: jest.fn().mockReturnValue(null),
+        };
+        getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+        const mainWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+        const squidRoomWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+        const windows = new Map([
+          ['main', mainWindow],
+          ['squid-room', squidRoomWindow],
+        ]);
+        const ctx = {
+          ...mockAppContext,
+          mainWindow,
+          daemonClient: sharedDaemonClient,
+          agentRunning: new Map(),
+          getWindow: jest.fn((key = 'main') => windows.get(key) || null),
+          getWindows: jest.fn(() => new Map(windows)),
+        };
+        const app = new SquidRunApp(ctx, mockManagers);
+
+        await app.initDaemonClient();
+
+        const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+        const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+        const kernelListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'kernel-event')?.[1];
+
+        dataListener('2', 'builder-live-output');
+        jest.advanceTimersByTime(16);
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: '2',
+          payload: { paneId: '2', byteLen: Buffer.byteLength('builder-live-output', 'utf8') },
+          kernelMeta: null,
+        });
+        exitListener('2', 0);
+
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'builder-live-output');
+        expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty-exit-2', 0);
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-data-2', 'builder-live-output');
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-exit-2', 0);
+
+        mainWindow.webContents.send.mockClear();
+        squidRoomWindow.webContents.send.mockClear();
+
+        dataListener('exampleapp-app', 'arm-live-output');
+        jest.advanceTimersByTime(16);
+        kernelListener({
+          type: 'pty.data.received',
+          paneId: 'exampleapp-app',
+          payload: { paneId: 'exampleapp-app', byteLen: Buffer.byteLength('arm-live-output', 'utf8') },
+          kernelMeta: null,
+        });
+        exitListener('exampleapp-app', 0);
+
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-data-exampleapp-app', 'arm-live-output');
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-exit-exampleapp-app', 0);
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-exampleapp-app', 'arm-live-output');
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-exit-exampleapp-app', 0);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('feeds daemon data, exit, and spawn events into the pane failure monitor', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const currentTerminal = { paneId: '1', pid: 321, createdAt: '2026-07-09T20:00:00.000Z' };
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn().mockReturnValue(currentTerminal),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['1', 'running']]),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      const exitListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'exit')?.[1];
+      const spawnedListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'spawned')?.[1];
+      const exitMetadata = { paneId: '1', pid: 321, createdAt: currentTerminal.createdAt };
+      const spawnMetadata = { paneId: '1', pid: 654, createdAt: '2026-07-09T21:00:00.000Z' };
+
+      dataListener('1', "You've hit your usage limit.");
+      exitListener('1', 17, exitMetadata);
+      spawnedListener('1', 654, false, spawnMetadata);
+
+      expect(mockManagers.paneFailureMonitor.handlePtyData).toHaveBeenCalledWith(
+        '1',
+        "You've hit your usage limit.",
+        currentTerminal
+      );
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledWith(
+        '1',
+        17,
+        exitMetadata,
+        currentTerminal
+      );
+      expect(mockManagers.paneFailureMonitor.handlePtySpawn).toHaveBeenCalledWith('1', spawnMetadata);
+
+      ctx.recoveryManager = {
+        handleExit: jest.fn().mockReturnValue({ status: 'expected', reason: 'manual' }),
+      };
+      exitListener('1', 0, exitMetadata);
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
+
+      app.startupReadyBuffers.set('1', 'current-generation-ready-prefix');
+      app.backgroundAgentManager.handleDaemonExit.mockClear();
+      exitListener('1', 1, { ...exitMetadata, pid: 999 });
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
+      expect(app.startupReadyBuffers.get('1')).toBe('current-generation-ready-prefix');
+      expect(app.backgroundAgentManager.handleDaemonExit).not.toHaveBeenCalled();
+
+      app.shuttingDown = true;
+      exitListener('1', 0, exitMetadata);
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes Team Room CLI bindings from an exact current-generation pane restart', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn().mockReturnValue(null),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['3', 'starting']]),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const refreshCliBindings = jest
+        .spyOn(app.teamRoomController, 'refreshCliBindings')
+        .mockReturnValue({ ok: true, changedRoles: ['oracle'] });
+
+      await app.initDaemonClient();
+      const spawnedListener = sharedDaemonClient.on.mock.calls
+        .find(([eventName]) => eventName === 'spawned')?.[1];
+      expect(typeof spawnedListener).toBe('function');
+
+      const exact = {
+        paneId: '3',
+        pid: 7654,
+        paneLaunchId: `pl_${'d'.repeat(32)}`,
+        appGeneration: app.commsSessionScopeId,
+        spawnRequestId: 'pane-spawn-current-1',
+      };
+      spawnedListener('3', 7654, false, exact);
+      expect(refreshCliBindings).toHaveBeenCalledTimes(1);
+
+      spawnedListener('3', 7655, false, {
+        ...exact,
+        pid: 7655,
+        appGeneration: 'app-session-older',
+      });
+      spawnedListener('3', 7656, false, {
+        paneId: '3',
+        pid: 7656,
+        appGeneration: app.commsSessionScopeId,
+      });
+      spawnedListener('3', 7657, false, {
+        paneId: '3',
+        pid: 7657,
+        paneLaunchId: `pl_${'e'.repeat(32)}`,
+        appGeneration: app.commsSessionScopeId,
+      });
+      expect(refreshCliBindings).toHaveBeenCalledTimes(1);
+    });
+
+    it('never recovers an exact current-session Computer Use verifier exit or dead reconnect', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const paneId = 'cua-verifier-11111111-1111-4111-8111-111111111111';
+      const exactVerifier = {
+        paneId,
+        pid: 51999,
+        alive: false,
+        createdAt: 2001,
+        durableAddress:
+          `arm://main/dcb5c1a396802917/computer-use-proof/${paneId}`,
+        spawnLeaseId: 'lease-cua-1',
+        leaseOwner: 'squidrun-current-session-cua-controller',
+        recoveryEvent: 'current_session_computer_use_proof',
+        expectedResponseClass: 'computer_use.list_windows.attestation',
+      };
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+        getTerminal: jest.fn().mockReturnValue(exactVerifier),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const recoveryManager = {
+        handleExit: jest.fn().mockReturnValue({
+          status: 'scheduled',
+          reason: 'unexpected_exit',
+        }),
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        daemonClient: sharedDaemonClient,
+        recoveryManager,
+        agentRunning: new Map([[paneId, 'running']]),
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const recordSessionLifecyclePattern = jest
+        .spyOn(app, 'recordSessionLifecyclePattern')
+        .mockResolvedValue({ ok: true });
+
+      await app.initDaemonClient();
+      const exitListener = sharedDaemonClient.on.mock.calls
+        .find(([eventName]) => eventName === 'exit')?.[1];
+      const connectedListener = sharedDaemonClient.on.mock.calls
+        .find(([eventName]) => eventName === 'connected')?.[1];
+      expect(typeof exitListener).toBe('function');
+      expect(typeof connectedListener).toBe('function');
+      expect(SquidRunApp.isCurrentSessionComputerUseVerifierTerminal(
+        paneId,
+        exactVerifier
+      )).toBe(true);
+      expect(SquidRunApp.isCurrentSessionComputerUseVerifierTerminal(
+        paneId,
+        {
+          ...exactVerifier,
+          durableAddress:
+            `arm://client/dcb5c1a396802917/computer-use-proof/${paneId}`,
+        }
+      )).toBe(false);
+
+      mainWindow.webContents.send.mockClear();
+      app.backgroundAgentManager.handleDaemonExit.mockClear();
+      exitListener(paneId, 1, exactVerifier);
+      connectedListener([{ ...exactVerifier, alive: false }]);
+
+      expect(recoveryManager.handleExit).not.toHaveBeenCalled();
+      expect(mockManagers.usage.recordSessionEnd).not.toHaveBeenCalled();
+      expect(recordSessionLifecyclePattern).not.toHaveBeenCalled();
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).not.toHaveBeenCalled();
+      expect(app.backgroundAgentManager.handleDaemonExit).not.toHaveBeenCalled();
+      expect(ctx.agentRunning.get(paneId)).toBe('running');
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        `pty-exit-${paneId}`,
+        expect.anything()
+      );
+
+      const nearMiss = {
+        ...exactVerifier,
+        recoveryEvent: 'ordinary_unexpected_exit',
+      };
+      sharedDaemonClient.getTerminal.mockReturnValue(nearMiss);
+      mainWindow.webContents.send.mockClear();
+      exitListener(paneId, 1, nearMiss);
+
+      expect(recoveryManager.handleExit).toHaveBeenCalledWith(paneId, 1);
+      expect(mockManagers.usage.recordSessionEnd).toHaveBeenCalledWith(paneId);
+      expect(recordSessionLifecyclePattern).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId,
+          status: 'ended',
+          exitCode: 1,
+        })
+      );
+      expect(mockManagers.paneFailureMonitor.handlePtyExit).toHaveBeenCalledWith(
+        paneId,
+        1,
+        nearMiss,
+        nearMiss
+      );
+      expect(mainWindow.webContents.send).toHaveBeenCalledWith(
+        `pty-exit-${paneId}`,
+        1
+      );
+    });
+
+    it('cleans up existing daemon client listeners before re-attaching on re-init', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const ipcHandlers = require('../modules/ipc-handlers');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map(),
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+
+      await app.initDaemonClient();
+      const firstAttachCount = sharedDaemonClient.on.mock.calls.length;
+      expect(firstAttachCount).toBeGreaterThanOrEqual(10);
+      expect(ipcHandlers.setDaemonClient).toHaveBeenCalled();
+
+      await app.initDaemonClient();
+
+      expect(sharedDaemonClient.off).toHaveBeenCalledTimes(firstAttachCount);
+      expect(sharedDaemonClient.on.mock.calls.length).toBe(firstAttachCount * 2);
+    });
+
+    it('fires session rollover injection only after the pane reaches running', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['2', 'starting']]),
+        pluginManager: {
+          hasHook: jest.fn().mockReturnValue(false),
+          dispatch: jest.fn().mockResolvedValue(),
+        },
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const triggerProactiveMemoryInjection = jest
+        .spyOn(app, 'triggerProactiveMemoryInjection')
+        .mockResolvedValue({ ok: true, delivered: true });
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      expect(typeof dataListener).toBe('function');
+
+      dataListener('2', 'codex> ready');
+
+      expect(ctx.agentRunning.get('2')).toBe('running');
+      expect(triggerProactiveMemoryInjection).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '2',
+        triggerType: 'session_rollover',
+        payload: expect.objectContaining({
+          session_ordinal: 147,
+          trigger_event_id: expect.stringContaining('session-rollover:2:'),
+        }),
+      }));
+    });
+
+    it('does not treat a shell-echoed launch command as prompt-ready', async () => {
+      const { getDaemonClient } = require('../daemon-client');
+      const sharedDaemonClient = {
+        on: jest.fn(),
+        off: jest.fn(),
+        connect: jest.fn().mockResolvedValue(),
+        disconnect: jest.fn(),
+      };
+      getDaemonClient.mockReturnValue(sharedDaemonClient);
+
+      const ctx = {
+        ...mockAppContext,
+        daemonClient: sharedDaemonClient,
+        agentRunning: new Map([['1', 'starting']]),
+        pluginManager: {
+          hasHook: jest.fn().mockReturnValue(false),
+          dispatch: jest.fn().mockResolvedValue(),
+        },
+      };
+      const app = new SquidRunApp(ctx, mockManagers);
+      const triggerProactiveMemoryInjection = jest
+        .spyOn(app, 'triggerProactiveMemoryInjection')
+        .mockResolvedValue({ ok: true, delivered: true });
+
+      await app.initDaemonClient();
+
+      const dataListener = sharedDaemonClient.on.mock.calls.find(([eventName]) => eventName === 'data')?.[1];
+      expect(typeof dataListener).toBe('function');
+
+      dataListener('1', 'PS D:\\projects\\squidrun> claude --model opus --permission-mode acceptEdits');
+
+      expect(ctx.agentRunning.get('1')).toBe('starting');
+      expect(triggerProactiveMemoryInjection).not.toHaveBeenCalled();
+
+      dataListener('1', '\n> ');
+
+      expect(ctx.agentRunning.get('1')).toBe('running');
+      expect(triggerProactiveMemoryInjection).toHaveBeenCalledTimes(1);
+    });
+
+  });
+
+  describe('smoke test - full module loads', () => {
+    it('should export SquidRunApp class', () => {
+      expect(SquidRunApp).toBeDefined();
+      expect(typeof SquidRunApp).toBe('function');
+    });
+
+    it('should have expected methods', () => {
+      const app = new SquidRunApp(mockAppContext, mockManagers);
+
+      expect(typeof app.init).toBe('function');
+      expect(typeof app.shutdown).toBe('function');
+      expect(typeof app.resolveTargetToPane).toBe('function');
+    });
+  });
+
+  describe('SMS poller wiring', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('wires inbound SMS callback to reliable pane delivery', async () => {
+      const smsPoller = require('../modules/sms-poller');
+      smsPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      app.startSmsPoller();
+
+      expect(smsPoller.start).toHaveBeenCalledTimes(1);
+      const options = smsPoller.start.mock.calls[0][0];
+      expect(typeof options.onMessage).toBe('function');
+
+      options.onMessage('build passed', '+15557654321');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        '[SMS from +15557654321]: build passed',
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          channel: 'sms',
+          sender: '+15557654321',
+        }),
+        'SMS'
+      );
+    });
+  });
+
+  describe('Telegram poller wiring', () => {
+    let app;
+
+    function forceTriggerDeliveryPath(targetApp) {
+      jest.spyOn(targetApp, 'deliverPaneMessageViaDaemonPty').mockResolvedValue({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_unavailable',
+      });
+    }
+
+    beforeEach(() => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockReset();
+      triggers.sendDirectMessage.mockReturnValue({ success: true });
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      // AFTER construction: the constructor publishes this process's app
+      // generation, and the transport claim joins on exactly that value.
+      seedPaneLaunchForCurrentGeneration();
+      seedPaneReadinessForApp(app);
+      forceTriggerDeliveryPath(app);
+    });
+
+    describe('Telegram freshness watch (Stage B)', () => {
+      const armWatch = (targetApp, freshness, workerPhase = 'ready', workerReason = null) => {
+        targetApp.activeProfileName = 'main';
+        targetApp.telegramFreshnessInspector = jest.fn(() => freshness);
+        targetApp.inboundPollerService.getTelegramWorkerState = jest.fn(() => ({
+          phase: workerPhase, ready: workerPhase === 'ready', reason: workerReason,
+        }));
+        targetApp.restartTelegramPoller = jest.fn().mockResolvedValue({ success: true, accepted: true });
+        return targetApp;
+      };
+
+      // A REAL installed deployment, so buildTelegramPollerEnv derives the
+      // installed data root for itself. Faking the env would keep this green
+      // even if the watch skipped installed deployments outright.
+      const INSTALLED_ROOT = 'C:\\ProgramData\\SquidRun';
+      const makeInstalled = (targetApp) => {
+        targetApp.installedDeployment = { active: true, dataRoot: INSTALLED_ROOT };
+        return targetApp;
+      };
+
+      it('INSTALLED healthy worker => NO restart, and the inspector gets the exact installed root', async () => {
+        makeInstalled(armWatch(app, { ok: true, status: 'fresh', wedged: false }));
+
+        const result = await app.runTelegramFreshnessWatchTick();
+
+        expect(result).toMatchObject({ restarted: false });
+        expect(app.restartTelegramPoller).not.toHaveBeenCalled();
+        // Inspecting the SOURCE tree while the INSTALLED build runs would
+        // report a healthy poller that is not the one actually polling.
+        const [args] = app.telegramFreshnessInspector.mock.calls[0];
+        expect(args.appUp).toBe(true);
+        expect(args.projectRoot).toBe(INSTALLED_ROOT);
+        expect(args.statePath.startsWith(INSTALLED_ROOT)).toBe(true);
+        expect(args.statePath).toBe(
+          app.buildTelegramPollerEnv(process.env).TELEGRAM_POLLER_STATE_PATH
+        );
+      });
+
+      it('INSTALLED failed worker => safe restart', async () => {
+        makeInstalled(armWatch(app, { ok: true, status: 'fresh', wedged: false }, 'failed'));
+
+        const result = await app.runTelegramFreshnessWatchTick();
+
+        expect(app.restartTelegramPoller).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: 'freshness-watch' })
+        );
+        expect(result).toMatchObject({ restarted: true });
+        // The installed root is what was inspected, not the source tree.
+        expect(app.telegramFreshnessInspector.mock.calls[0][0].projectRoot).toBe(INSTALLED_ROOT);
+      });
+
+      it('SOURCE stale => exactly one safe restart; healthy => none', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        await app.runTelegramFreshnessWatchTick();
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+
+        const other = new SquidRunApp(mockAppContext, mockManagers);
+        armWatch(other, { ok: true, status: 'fresh', wedged: false });
+        await other.runTelegramFreshnessWatchTick();
+        expect(other.restartTelegramPoller).not.toHaveBeenCalled();
+      });
+
+      it('MISSING CONFIG IS NEVER A RESTART HAMMER, TICK AFTER TICK', async () => {
+        // No bot token means restarting cannot possibly help. Recovering on it
+        // fights a user who simply has not configured Telegram, forever.
+        armWatch(app, { ok: false, status: 'state_missing', wedged: true }, 'failed', 'missing_config');
+
+        for (let i = 0; i < 5; i += 1) {
+          const result = await app.runTelegramFreshnessWatchTick();
+          expect(result).toMatchObject({ restarted: false, reason: 'missing_config' });
+        }
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(0);
+      });
+
+      it('A READY WORKER WHOSE STATE FILE NEVER APPEARED IS RECOVERED', async () => {
+        // The inspector reports state_missing as wedged on purpose. A worker
+        // claiming ready with no state file is the silent death this watches
+        // for — suppressing it wholesale would blind the watch.
+        armWatch(app, { ok: false, status: 'state_missing', wedged: true }, 'ready');
+        const result = await app.runTelegramFreshnessWatchTick();
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({ restarted: true });
+      });
+
+      it('AN UNREADABLE STATE FILE STAYS CONSERVATIVE', async () => {
+        armWatch(app, { ok: false, status: 'state_read_error', wedged: true }, 'ready');
+        await app.runTelegramFreshnessWatchTick();
+        expect(app.restartTelegramPoller).not.toHaveBeenCalled();
+      });
+
+      it('AN ABORTED RESTART IS NOT REPORTED AS RECOVERED', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        app.restartTelegramPoller = jest.fn().mockResolvedValue({
+          success: false, aborted: true, startupReason: 'stop_not_observed',
+        });
+
+        const result = await app.runTelegramFreshnessWatchTick();
+
+        // "attempted" and "recovered" are different facts; conflating them
+        // tells the next reader the poller is back when it is not.
+        expect(result).toMatchObject({
+          attempted: true, restarted: false, reason: 'stop_not_observed',
+        });
+      });
+
+      it('A MAIN->SIDE RE-ARM LEAVES NO TIMER AND CANCELS THE OLD GENERATION', () => {
+        jest.useFakeTimers();
+        try {
+          app.activeProfileName = 'main';
+          app.startTelegramFreshnessWatch();
+          expect(jest.getTimerCount()).toBe(1);
+          const oldGeneration = app.telegramFreshnessWatchGeneration;
+
+          app.activeProfileName = 'client';
+          expect(app.startTelegramFreshnessWatch()).toMatchObject({ started: false });
+
+          expect(app.telegramFreshnessWatchTimer).toBe(null);
+          expect(jest.getTimerCount()).toBe(0);
+          // The old generation must read as cancelled, or a tick still in
+          // flight could fork under a schedule that no longer exists.
+          expect(app.telegramFreshnessWatchGeneration).not.toBe(oldGeneration);
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      it('A SIDE PROFILE ARMS NOTHING AND INSPECTS NOTHING', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        app.activeProfileName = 'client';
+
+        expect(app.startTelegramFreshnessWatch()).toMatchObject({
+          started: false, reason: 'not_main_profile',
+        });
+        expect(app.telegramFreshnessWatchTimer).toBe(null);
+        expect(app.telegramFreshnessInspector).not.toHaveBeenCalled();
+        expect(app.restartTelegramPoller).not.toHaveBeenCalled();
+      });
+
+      it('STARTING TWICE LEAVES ONE TIMER, AND THE INTERVAL IS CLAMPED', () => {
+        jest.useFakeTimers();
+        try {
+          app.activeProfileName = 'main';
+          app.startTelegramFreshnessWatch();
+          const first = app.telegramFreshnessWatchTimer;
+          app.startTelegramFreshnessWatch();
+
+          expect(app.telegramFreshnessWatchTimer).not.toBe(first);
+          expect(jest.getTimerCount()).toBe(1);
+          expect(app.telegramFreshnessWatchIntervalMs).toBe(5 * 60 * 1000);
+
+          expect(app.startTelegramFreshnessWatch({ intervalMs: 1 }).intervalMs).toBe(60 * 1000);
+          expect(app.startTelegramFreshnessWatch({ intervalMs: 99 * 60 * 1000 }).intervalMs)
+            .toBe(10 * 60 * 1000);
+          expect(jest.getTimerCount()).toBe(1);
+        } finally {
+          jest.useRealTimers();
+        }
+      });
+
+      it('THE WATCH TIMER IS UNREF-ED so it cannot hold the process open', () => {
+        app.activeProfileName = 'main';
+        const unref = jest.fn();
+        const spy = jest.spyOn(global, 'setInterval').mockReturnValue({ unref });
+        try {
+          app.startTelegramFreshnessWatch();
+          expect(unref).toHaveBeenCalledTimes(1);
+        } finally {
+          spy.mockRestore();
+          app.telegramFreshnessWatchTimer = null;
+        }
+      });
+
+      it('AN OVERLAPPING TICK IS SKIPPED, and a throw does not kill later ticks', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        let release;
+        app.restartTelegramPoller = jest.fn(() => new Promise((r) => { release = r; }));
+
+        const a = app.runTelegramFreshnessWatchTick();
+        const b = app.runTelegramFreshnessWatchTick();
+        expect(b).toBe(a);
+
+        release({ accepted: true });
+        await a;
+        expect(app.telegramFreshnessInspector).toHaveBeenCalledTimes(1);
+        expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+
+        // A throwing tick must settle and free the slot, not wedge the watch.
+        app.telegramFreshnessInspector = jest.fn(() => { throw new Error('inspect blew up'); });
+        await expect(app.runTelegramFreshnessWatchTick()).resolves.toMatchObject({
+          restarted: false, reason: 'tick_failed',
+        });
+        expect(app.telegramFreshnessWatchTick).toBe(null);
+
+        app.telegramFreshnessInspector = jest.fn(() => ({ ok: true, status: 'fresh', wedged: false }));
+        await expect(app.runTelegramFreshnessWatchTick()).resolves.toMatchObject({ restarted: false });
+      });
+
+      it('STOP WAITS FOR AN IN-FLIGHT TICK AND CANCELS ITS REPLACEMENT', async () => {
+        armWatch(app, { ok: true, status: 'stale', wedged: true });
+        let release;
+        let capturedIsCancelled;
+        app.restartTelegramPoller = jest.fn((payload) => {
+          capturedIsCancelled = payload.isCancelled;
+          return new Promise((r) => { release = r; });
+        });
+
+        const tick = app.runTelegramFreshnessWatchTick();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        let stopped = false;
+        const stopping = app.stopTelegramFreshnessWatch().then(() => { stopped = true; });
+        await Promise.resolve();
+
+        // Stop is a JOIN: it must not return while the tick is still running.
+        expect(stopped).toBe(false);
+        // And the restart already in flight must not fork after we stopped.
+        expect(capturedIsCancelled()).toBe(true);
+
+        release({ accepted: true });
+        await stopping;
+        await tick;
+        expect(stopped).toBe(true);
+        expect(app.telegramFreshnessWatchTimer).toBe(null);
+
+        // No tick survives the stop.
+        const after = await app.runTelegramFreshnessWatchTick({ generation: 0 });
+        expect(after).toMatchObject({ skipped: true, reason: 'stopped' });
+      });
+
+      it('PLAIN SHUTDOWN AWAITS THE WATCH STOP BEFORE QUIESCE AND stopAll', async () => {
+        const order = [];
+        let releaseWatchStop;
+        app.stopTelegramFreshnessWatch = jest.fn(() => new Promise((resolve) => {
+          releaseWatchStop = () => { order.push('stop_watch'); resolve(); };
+        }));
+        app.quiesceTelegramIngressDrain = jest.fn(async () => { order.push('quiesce'); return { ok: true }; });
+        app.inboundPollerService.stopAll = jest.fn(async () => { order.push('stop_all'); });
+
+        const shutting = app.shutdown();
+        for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+        // A watch tick mid-flight here would race the poller stop below and
+        // could fork a replacement behind it.
+        expect(order).toEqual([]);
+        expect(app.quiesceTelegramIngressDrain).not.toHaveBeenCalled();
+        expect(app.inboundPollerService.stopAll).not.toHaveBeenCalled();
+
+        releaseWatchStop();
+        await shutting;
+
+        expect(order[0]).toBe('stop_watch');
+        expect(order.indexOf('stop_watch')).toBeLessThan(order.indexOf('quiesce'));
+        expect(order.indexOf('stop_watch')).toBeLessThan(order.indexOf('stop_all'));
+      });
+
+      it('FULL SHUTDOWN HOLDS AT THE WATCH JOIN BEFORE THE NOTICE AND TEARDOWN', async () => {
+        const order = [];
+        let releaseWatchStop;
+        app.quiesceTelegramIngressDrain = jest.fn(async () => { order.push('quiesce'); return { ok: true }; });
+        // HELD, not resolved: a mock that settles immediately would let a
+        // fire-and-forget stop still push stop_watch before the notice, so the
+        // missing await would go unnoticed.
+        app.stopTelegramFreshnessWatch = jest.fn(() => new Promise((resolve) => {
+          releaseWatchStop = () => { order.push('stop_watch'); resolve(); };
+        }));
+        app.sendQuitTelegramNotice = jest.fn(async () => { order.push('notice'); return { ok: true }; });
+        app.shutdown = jest.fn(async () => { order.push('shutdown'); });
+        jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+        // Without a configured exit seam a mutated ordering merely CRASHES the
+        // harness, and a crash is not evidence that this assertion bites.
+        require('electron').app.exit = jest.fn(() => order.push('app-exit'));
+
+        const running = app.performFullShutdown('test');
+        for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+        // Quiesce is done; everything downstream must be waiting on the join.
+        expect(order).toEqual(['quiesce']);
+        expect(app.sendQuitTelegramNotice).not.toHaveBeenCalled();
+        expect(app.shutdown).not.toHaveBeenCalled();
+        expect(require('electron').app.exit).not.toHaveBeenCalled();
+
+        releaseWatchStop();
+        await running;
+
+        expect(order.indexOf('quiesce')).toBeLessThan(order.indexOf('stop_watch'));
+        expect(order.indexOf('stop_watch')).toBeLessThan(order.indexOf('notice'));
+        expect(order.indexOf('notice')).toBeLessThan(order.indexOf('shutdown'));
+      });
+
+      it('A FAILED QUIESCE STOPS BEFORE THE WATCH, THE NOTICE AND TEARDOWN', async () => {
+        app.quiesceTelegramIngressDrain = jest.fn().mockResolvedValue({ ok: false, reason: 'busy' });
+        app.stopTelegramFreshnessWatch = jest.fn();
+        app.sendQuitTelegramNotice = jest.fn();
+
+        const result = await app.performFullShutdown('test');
+
+        expect(result).toMatchObject({ ok: false, aborted: true, stage: 'telegram_drain_quiesce' });
+        expect(app.stopTelegramFreshnessWatch).not.toHaveBeenCalled();
+        expect(app.sendQuitTelegramNotice).not.toHaveBeenCalled();
+      });
+
+      it('END TO END: THE REAL TIMER CALLBACK RECOVERS AN INSTALLED DEAD WORKER', async () => {
+        // Every other installed test calls the tick DIRECTLY, so a watch that
+        // skipped installed deployments outright — or whose interval callback
+        // was a no-op — would keep them all green. This drives the actual
+        // setInterval callback end to end.
+        jest.useFakeTimers();
+        try {
+          makeInstalled(armWatch(app, { ok: true, status: 'stale', wedged: true }, 'dead'));
+
+          const armed = app.startTelegramFreshnessWatch({ intervalMs: 60 * 1000 });
+          expect(armed).toMatchObject({ started: true, intervalMs: 60 * 1000 });
+          expect(jest.getTimerCount()).toBe(1);
+
+          // Nothing may have happened before the first interval elapses.
+          expect(app.telegramFreshnessInspector).not.toHaveBeenCalled();
+
+          await jest.advanceTimersByTimeAsync(60 * 1000);
+
+          expect(app.telegramFreshnessInspector).toHaveBeenCalledTimes(1);
+          expect(app.telegramFreshnessInspector.mock.calls[0][0]).toMatchObject({
+            projectRoot: INSTALLED_ROOT,
+            appUp: true,
+          });
+          expect(app.restartTelegramPoller).toHaveBeenCalledTimes(1);
+          expect(app.restartTelegramPoller).toHaveBeenCalledWith(
+            expect.objectContaining({ reason: 'freshness-watch' })
+          );
+        } finally {
+          await app.stopTelegramFreshnessWatch();
+          jest.useRealTimers();
+        }
+      });
+
+      it('THE SHIPPED INIT STARTS THE POLLER BEFORE THE WATCH', () => {
+        // Reads the SOURCE that actually ships. Replaying the sequence by hand
+        // in the test would pass no matter what init really does.
+        const src = fs.readFileSync(
+          path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+          'utf8'
+        );
+        const step13 = src.indexOf('init:step-13:pollers-and-bridge');
+        expect(step13).toBeGreaterThan(-1);
+
+        const region = src.slice(step13, step13 + 2000);
+        const pollerAt = region.indexOf('this.startTelegramPoller();');
+        const watchAt = region.indexOf('this.startTelegramFreshnessWatch();');
+
+        // Present at all...
+        expect(pollerAt).toBeGreaterThan(-1);
+        expect(watchAt).toBeGreaterThan(-1);
+        // ...and in the only safe order: judging a worker that was never
+        // started would recover a poller into existence on a path that
+        // deliberately did not want one.
+        expect(pollerAt).toBeLessThan(watchAt);
+      });
+
+      it('THE WATCH CONTAINS NO PROCESS-LEVEL OR STANDALONE SEAMS', () => {
+        const src = [
+          app.startTelegramFreshnessWatch,
+          app.stopTelegramFreshnessWatch,
+          app.stopTelegramFreshnessWatchTimer,
+          app.runTelegramFreshnessWatchTick,
+        ].map((fn) => fn.toString()).join('\n');
+
+        for (const forbidden of [
+          'runStartupHealthTelegramPollerAutoRecover',
+          'checkAndRecoverTelegramPoller',
+          'recoverWedgedTelegramPoller',
+          'isMainTelegramWorkerAlive',
+          'listMainTelegramWorkerProcesses',
+          'spawn',
+          'execFile',
+          'execSync',
+          'child_process',
+          'taskkill',
+          'process.kill',
+        ]) {
+          expect(src).not.toContain(forbidden);
+        }
+      });
+    });
+
+    it('wires Telegram command callbacks to pane 1 trigger injection', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      expect(telegramPoller.start).toHaveBeenCalledTimes(1);
+      const options = telegramPoller.start.mock.calls[0][0];
+      expect(typeof options.onMessage).toBe('function');
+
+      options.onMessage('/task build passed', 'operator', {
+        chatId: 7000000001,
+        updateId: 700100020,
+        messageId: 20580,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(deliverySpy).toHaveBeenCalledWith(
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from operator]: /task build passed'),
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          channel: 'telegram',
+          sender: 'operator',
+          metadata: expect.objectContaining({
+            windowKey: 'main',
+          }),
+        }),
+        'Telegram'
+      );
+      expect(app.telegramInboundContext).toEqual(
+        expect.objectContaining({
+          sender: 'operator',
+          messageId: 'telegram-in-700100020',
+          inboundMessageId: 'telegram-in-700100020',
+          updateId: 700100020,
+          telegramMessageId: 20580,
+          chatId: '7000000001',
+          windowKey: 'main',
+        })
+      );
+      expect(app.telegramInboundContext.lastInboundAtMs).toBeGreaterThan(0);
+    });
+
+    it('does not start Telegram polling from a secondary profile', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      app.activeProfileName = 'scoped';
+
+      app.startTelegramPoller();
+
+      expect(telegramPoller.start).not.toHaveBeenCalled();
+    });
+
+    it('starts the main Telegram owner with scoped chat routing enabled', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      expect(options.env).toEqual(expect.objectContaining({
+        SQUIDRUN_PROFILE: 'main',
+        SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+        TELEGRAM_SCOPED_CHAT_IDS: '2222222222',
+      }));
+    });
+
+    it('does not capture scoped inbound Telegram chatId for main reply routing', () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+      const previousContext = { ...app.telegramInboundContext };
+
+      app.registerAppWindow('scoped', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('hi there', 'scoped', { chatId: 2222222222 });
+
+      expect(app.telegramInboundContext).toEqual(previousContext);
+    });
+
+    it('routes main Telegram chat inbound to the active Architect lane by default, not Mira live', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+      delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+
+      try {
+        app.startTelegramPoller();
+
+        const options = telegramPoller.start.mock.calls[0][0];
+        options.onMessage('main hello', 'operator', { chatId: 7000000001, updateId: 101 });
+
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(deliverySpy).toHaveBeenCalledWith(
+          // The pane receives the DECORATED, MARKED bytes; the message is a substring
+          // of them, and the marker being absent would itself be the defect.
+          expect.stringContaining('[Telegram from operator]: main hello'),
+          expect.objectContaining({
+            paneId: '1',
+            role: 'architect',
+            windowKey: 'main',
+            channel: 'telegram',
+            sender: 'operator',
+            messageId: 'telegram-in-101',
+            chatId: 7000000001,
+            telegramChatId: 7000000001,
+          }),
+          'Telegram'
+        );
+        expect(app.telegramInboundContext).toEqual(expect.objectContaining({
+          sender: 'operator',
+          chatId: '7000000001',
+          windowKey: 'main',
+          profile: 'main',
+          lastInboundBody: 'main hello',
+        }));
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+        } else {
+          process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = previousFlag;
+        }
+      }
+    });
+
+    it('compares current Mira Live and New Mira dry-run candidates for allowed owner Telegram text without sending', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+      process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = '1';
+      const body = 'what are we doing next?';
+      const metadata = { chatId: '7000000001', updateId: 167, messageId: 7001 };
+      const sessionId = 'app-session-377:main';
+
+      try {
+        const inboundRoute = app.resolveTelegramInboundRoute(metadata.chatId);
+        expect(inboundRoute).toEqual(expect.objectContaining({
+          ok: true,
+          chatId: '7000000001',
+          windowKey: 'main',
+          profile: 'main',
+          reason: 'owner_chat',
+        }));
+        expect(app.shouldRouteMainTelegramInboundToMira({
+          body,
+          inboundWindowKey: 'main',
+        })).toBe(true);
+
+        const currentMiraLiveReply = await app.buildTelegramMiraLiveReply(body, {
+          sessionId,
+          sender: 'operator',
+          metadata,
+          inboundMessageId: 'telegram-in-167',
+        });
+        const newMiraCandidate = buildNewMiraTelegramTurnCandidate({
+          body,
+          sender: 'operator',
+          metadata,
+          inboundRoute,
+          inboundSessionScopeId: sessionId,
+        });
+
+        expect(currentMiraLiveReply).toEqual(expect.objectContaining({
+          ok: true,
+          state: 'ready',
+          message: 'Mira visible reply from Telegram.',
+        }));
+        expect(sendMiraLivePrompt).toHaveBeenCalledTimes(1);
+        expect(sendMiraLivePrompt).toHaveBeenCalledWith(
+          {
+            prompt: body,
+            sessionId,
+            source: 'telegram-mira-live',
+          },
+          expect.objectContaining({
+            invoke: expect.any(Function),
+          })
+        );
+
+        expect(newMiraCandidate).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'new_mira_telegram_turn_candidate_ready',
+          dryRun: true,
+        }));
+        expect(newMiraCandidate.route).toEqual(expect.objectContaining({
+          currentOwner: 'squidrun-telegram-guard-stack',
+          routeOwnerChange: false,
+          liveRouteChanged: false,
+        }));
+        expect(newMiraCandidate.candidate).toEqual({
+          endpoint: '/turn',
+          method: 'POST',
+          body: {
+            text: body,
+            sessionId,
+            messageId: 'telegram-in-167',
+            requestId: 'telegram-in-167-new-mira-dry-run',
+            useModel: false,
+          },
+        });
+        expect(newMiraCandidate.sideEffects).toEqual(expect.objectContaining({
+          telegramSendFunctionCall: false,
+          liveTelegramSend: false,
+          routeOwnerChange: false,
+          runtimeExecutes: false,
+          runtimeActions: false,
+          toolsEnabled: false,
+          sendsEnabled: false,
+          store: false,
+          modelInvoked: false,
+          modelProviderCall: false,
+          telegramRouteControl: false,
+          uiSurfaceControl: false,
+        }));
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+        } else {
+          process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = previousFlag;
+        }
+      }
+    });
+
+    it('answers Telegram status prompts from direct-channel evidence without model or pane confusion', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      const triggers = require('../modules/triggers');
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+      queryCommsJournalEntries.mockReturnValue([
+        {
+          messageId: 'architect-160',
+          sessionId: 'app-session-382',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          direction: 'outbound',
+          status: 'routed',
+          brokeredAtMs: Date.parse('2026-05-27T09:09:00.000Z'),
+          rawBody: '(ARCHITECT #160): ACK Builder #38. No Builder action pending unless Oracle objects.',
+          metadata: { windowKey: 'main' },
+        },
+        {
+          messageId: 'architect-161',
+          sessionId: 'app-session-382',
+          senderRole: 'architect',
+          targetRole: 'builder',
+          direction: 'outbound',
+          status: 'routed',
+          brokeredAtMs: Date.parse('2026-05-27T09:10:00.000Z'),
+          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: make the current Operator-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker.',
+          metadata: { windowKey: 'main' },
+        },
+      ]);
+
+      const result = await app.routeMainTelegramInboundToMira({
+        body: 'status',
+        sender: 'operator',
+        metadata: { chatId: '7000000001', updateId: 201, messageId: 9001 },
+        inboundMessageId: 'telegram-in-201',
+        inboundSessionScopeId: 'app-session-382',
+        nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+        progressReport: {
+          computed_total_percent: 73,
+          status: 'BLOCKED',
+          warnings: [],
+          source_refs: {
+            head: { short_sha: '84d70b21' },
+            progress_proof_inputs: {
+              source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json',
+              status: 'loaded',
+            },
+          },
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        handled: true,
+        status: 'telegram_delivered',
+      }));
+      expect(result.reply).toEqual(expect.objectContaining({
+        source: 'mira_direct_channel_status_v0',
+      }));
+      expect(result.directChannelStatusAnswer).toEqual(expect.objectContaining({
+        ok: true,
+        operator_action_line_count: 1,
+        route: expect.objectContaining({
+          currentOwner: 'squidrun-telegram-guard-stack',
+          miraOwnsTelegram: false,
+          routeOwnerChange: false,
+          liveRouteChanged: false,
+        }),
+      }));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      const sentText = sendRoutedTelegramMessage.mock.calls[0][0];
+      expect(sentText).toContain('Direct channel: Telegram is reachable through squidrun-telegram-guard-stack');
+      expect(sentText).toContain('official progress 73% BLOCKED at HEAD 84d70b21');
+      expect(sentText).toContain('Current lane: Direct Channel Reachability checkpoint');
+      expect(sentText).toContain('source architect#161');
+      expect(sentText).toContain('OPERATOR ACTION: NONE');
+      expect(sentText).not.toMatch(/\[(?:AGENT MSG|CURRENT PROJECT)\]|\((?:ARCHITECT|BUILDER|ORACLE)\s+#\d+\):|\[Telegram from/i);
+      expect(sendRoutedTelegramMessage.mock.calls[0][2]).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-201-mira-direct-status-reply',
+        senderRole: 'mira',
+        chatId: '7000000001',
+        metadata: expect.objectContaining({
+          routeKind: 'telegram',
+          windowKey: 'main',
+          profile: 'main',
+        }),
+      }));
+    });
+
+    it('suppresses duplicate direct-channel status replies and keeps scoped status off the main Mira route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+      queryCommsJournalEntries.mockReturnValue([]);
+
+      const first = await app.routeMainTelegramInboundToMira({
+        body: 'continue',
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
+        inboundMessageId: 'telegram-in-continue-1',
+        inboundSessionScopeId: 'app-session-382',
+        nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+        progressReport: {
+          computed_total_percent: 73,
+          status: 'BLOCKED',
+          warnings: [],
+          source_refs: {
+            head: { short_sha: '84d70b21' },
+            progress_proof_inputs: { source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json', status: 'loaded' },
+          },
+        },
+      });
+      const duplicate = await app.routeMainTelegramInboundToMira({
+        body: 'continue',
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
+        inboundMessageId: 'telegram-in-continue-2',
+        inboundSessionScopeId: 'app-session-382',
+        nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
+        progressReport: {
+          computed_total_percent: 73,
+          status: 'BLOCKED',
+          warnings: [],
+          source_refs: {
+            head: { short_sha: '84d70b21' },
+            progress_proof_inputs: { source_ref: '.squidrun/runtime/mira-progress-proof-inputs-v0.json', status: 'loaded' },
+          },
+        },
+      });
+
+      expect(first.status).toBe('telegram_delivered');
+      expect(duplicate.status).toBe('telegram_duplicate_suppressed');
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+
+      const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+      process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = '1';
+      telegramPoller.start.mockReturnValue(true);
+      sendRoutedTelegramMessage.mockClear();
+      const scopedDelivery = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+
+      try {
+        app.startTelegramPoller();
+        const options = telegramPoller.start.mock.calls[0][0];
+        options.onMessage('status', 'scoped', { chatId: 2222222222, updateId: 202 });
+        await flushTelegramDrain(app);
+
+        // THE POINT OF THIS HALF IS THE ROUTE, NOT THE DELIVERY: a scoped
+        // `status` must not be answered by main's Mira egress even with the
+        // live flag on. It is now refused rather than handed to the far
+        // process, and neither of those is a Telegram reply.
+        expect(scopedDelivery).not.toHaveBeenCalled();
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+        expectScopedSourceOnlyRefusal({
+          updateId: 202, routeKey: 'scoped', chatId: 2222222222,
+        });
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
+        } else {
+          process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = previousFlag;
+        }
+      }
+    });
+
+    it('contains angry Telegram meta-repair replies before egress', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+      sendMiraLivePrompt.mockResolvedValueOnce({
+        ok: true,
+        state: 'ready',
+        message: 'Yeah. Fair. I just said "no machinery" and then pointed at the machinery in nicer clothes. Bad turn. I should have said it sooner instead of wasting your time.',
+      });
+
+      await app.routeMainTelegramInboundToMira({
+        body: 'wtf worthless chat gpt output again',
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
+        inboundMessageId: 'telegram-in-meta-loop',
+      });
+
+      const sentText = sendRoutedTelegramMessage.mock.calls[0][0];
+      expect(sentText).toBe("No. I'm stopping here.");
+      expect(sentText).not.toMatch(/yeah|fair|model|persona|output|voice|machinery|assistant|chat\s*gpt|team|routing|rules|because|failed|should have/i);
+    });
+
+    it('does not repeat Mira Telegram first-contact orientation after channel state is marked', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+
+      await app.routeMainTelegramInboundToMira({
+        body: 'second hello',
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
+        inboundMessageId: 'telegram-in-102',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Mira visible reply from Telegram.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-in-102-mira-reply',
+          senderRole: 'mira',
+          chatId: '7000000001',
+        })
+      );
+    });
+
+    it('suppresses duplicate successful Telegram replies without suppressing failed retries', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.spyOn(app, 'shouldOrientMiraTelegramChannel').mockReturnValue(false);
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Same reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-dedupe-1',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Same reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-dedupe-2',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_duplicate_suppressed',
+        queued: false,
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+
+      sendRoutedTelegramMessage.mockClear();
+      app.telegramReplyDedupe.clear();
+      sendRoutedTelegramMessage
+        .mockResolvedValueOnce({ ok: false, error: 'read ECONNRESET' })
+        .mockResolvedValueOnce({
+          ok: true,
+          chatId: 7000000001,
+          messageId: 42,
+          method: 'hm-send-telegram',
+        });
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Retryable reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-retry-1',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_send_failed',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Retryable reply.',
+        fromRole: 'mira',
+        messageId: 'telegram-retry-2',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('coalesces stale clarify and verdict replies after a short stray Telegram negation', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: nowMs,
+        chatId: '7000000001',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'wtf idk why it said Blake Keller',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I got "Blake Keller." Send me the action or context for that name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-clarify',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_clarification_suppressed',
+        queued: false,
+      }));
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction. I will check the inbound route so it does not become a ghost action.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-contain',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text, not a stale replay or wrong-window route. Looks upstream of SquidRun, so I am treating it as stray and taking no action on the name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-verdict',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_correction_coalesced',
+        queued: false,
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(1);
+      expect(sendRoutedTelegramMessage.mock.calls[0][0]).toContain('Got it.');
+    });
+
+    it('does not coalesce urgent Telegram replies after a short stray negation', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: nowMs,
+        chatId: '7000000001',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'wtf idk why it said Blake Keller',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I got "Blake Keller." Send me the action or context for that name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-request-clarify',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_clarification_suppressed',
+        queued: false,
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-urgent-state',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Urgent: the Telegram route shows a security issue and you need to act now.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-urgent',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not coalesce replies when Operator explicitly asks for the stray-route result', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: nowMs,
+        chatId: '7000000001',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'wtf idk why it said Blake Keller, can you check and tell me?',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-request-state',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-request-result',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not coalesce when Operator asks what happened without can-you-check phrasing', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: nowMs,
+        chatId: '7000000001',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'I need you to check what happened.',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I got "Blake Keller." Send me the action or context for that name.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-what-happened-clarify',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_stray_clarification_suppressed',
+        queued: false,
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-what-happened-state',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-what-happened-result',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not coalesce a neutral result when the latest stray correction flags risk', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.now();
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: nowMs,
+        chatId: '7000000001',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundBody: 'Is this a security issue?',
+        previousInboundBody: 'Blake Keller',
+        previousInboundAtMs: nowMs - 10000,
+      };
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-risk-state',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      await expect(app.routeTelegramReply({
+        target: 'telegram',
+        content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
+        fromRole: 'architect',
+        messageId: 'telegram-stray-risk-result',
+        chatId: '7000000001',
+      })).resolves.toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+      }));
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
+    });
+
+    it('keeps Telegram commands on the existing Architect pane route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('/task fix the route', 'operator', { chatId: 7000000001, updateId: 108 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(deliverySpy).toHaveBeenCalledWith(
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from operator]: /task fix the route'),
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          channel: 'telegram',
+          messageId: 'telegram-in-108',
+        }),
+        'Telegram'
+      );
+    });
+
+    it('keeps Telegram agent ops envelopes on the existing Architect pane route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const { sendMiraLivePrompt } = require('../modules/mira-live-entrypoint');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('(ARCHITECT #1): route Builder this check', 'operator', { chatId: 7000000001, updateId: 109 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(sendMiraLivePrompt).not.toHaveBeenCalled();
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(deliverySpy).toHaveBeenCalledWith(
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from operator]: (ARCHITECT #1): route Builder this check'),
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          windowKey: 'main',
+          channel: 'telegram',
+          messageId: 'telegram-in-109',
+        }),
+        'Telegram'
+      );
+    });
+
+    it('records the scoped source and refuses before the far-process WebSocket, even when a side window is registered', async () => {
+      // A REGISTERED SIDE WINDOW IS NOT FAR-SIDE AUTHORITY (Oracle #10). It is
+      // the case that looks most like "we can obviously deliver this" and is
+      // exactly the one that cannot be proved: that window belongs to another
+      // process, renders its own pane, and returns an ACK carrying no chatId,
+      // no generation and no proof timestamp. The presence of the window must
+      // not move the refusal.
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.daemon_pty',
+      });
+
+      app.registerAppWindow('scoped', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('side hello', 'scoped', { chatId: 2222222222, updateId: 102 });
+
+      await flushTelegramDrain(app);
+      // The scoped delivery method is where the far WebSocket is constructed.
+      // Not called at all is the whole point: the refusal is BEFORE it, not a
+      // failure inside it.
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expectScopedSourceOnlyRefusal({ updateId: 102, routeKey: 'scoped', chatId: 2222222222 });
+    });
+
+    it('refuses standalone scoped Telegram inbound without inventing a trigger-file fallback', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('standalone hello', 'scoped', { chatId: 2222222222, updateId: 103 });
+
+      await flushTelegramDrain(app);
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      // AND NOT THE OTHER DOOR EITHER. A refusal that quietly reached for the
+      // fixed trigger file would be the same undeliverable message dressed as a
+      // delivery, in a file two updates in one batch overwrite.
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expectScopedSourceOnlyRefusal({ updateId: 103, routeKey: 'scoped', chatId: 2222222222 });
+    });
+
+    it('scoped Telegram inbound appends durably BEFORE delivery and returns exact durable acceptance', async () => {
+      // The behavioural seam Architect #54 required. A SOURCE check on return
+      // shape cannot prove this: the parent releases the Telegram cursor on the
+      // value this callback resolves to, so the value has to be exercised.
+      const spool = require('../modules/main/telegram-ingress-spool');
+      spool.acceptInbound.mockClear();
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      const order = [];
+      const realAccept = spool.acceptInbound.getMockImplementation();
+      spool.acceptInbound.mockImplementationOnce((input) => {
+        order.push('append');
+        return realAccept(input);
+      });
+      const scopedRuntimeSpy = jest
+        .spyOn(app, 'deliverScopedTelegramInboundWithRetry')
+        .mockImplementation(async () => {
+          order.push('deliver');
+          return { verified: true, userVisible: true, status: 'delivered.verified' };
+        });
+
+      app.startTelegramPoller();
+      const options = telegramPoller.start.mock.calls[0][0];
+      const result = await options.onMessage('scoped body', 'scoped', {
+        chatId: 2222222222,
+        updateId: 4103,
+      });
+
+      // The callback returns durable acceptance — that is what releases the
+      // Telegram cursor — and the append is what earns it. That contract did
+      // NOT change with the scoped cutover, and this is the test that proves it
+      // did not: the record is still made durable first, so a scoped message
+      // that cannot be delivered is still ordered, still visible, and still
+      // recoverable. What changed is what happens after the append.
+      expect(result).toEqual({ ok: true, durable: true, updateId: 4103 });
+      expect(order[0]).toBe('append');
+
+      await flushTelegramDrain(app);
+
+      expect(spool.acceptInbound).toHaveBeenCalledTimes(1);
+      // NEVER DELIVERED, AND NOT SILENTLY DROPPED EITHER. The source row can
+      // only have been written by the drain, i.e. strictly after the append —
+      // so the ordering the old 'deliver' marker used to prove is still proved,
+      // by the durable artifact instead of by a mocked call.
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      expect(order).toEqual(['append']);
+      expectScopedSourceOnlyRefusal({ updateId: 4103, routeKey: 'scoped', chatId: 2222222222 });
+    });
+
+    it('scoped Telegram inbound reports non-durable and schedules NO delivery when the append is refused', async () => {
+      const spool = require('../modules/main/telegram-ingress-spool');
+      spool.acceptInbound.mockClear();
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+
+      spool.acceptInbound.mockImplementationOnce(() => ({ ok: false, reason: 'disk_full' }));
+      const scopedRuntimeSpy = jest
+        .spyOn(app, 'deliverScopedTelegramInboundWithRetry')
+        .mockResolvedValue({ verified: true, userVisible: true });
+
+      app.startTelegramPoller();
+      const options = telegramPoller.start.mock.calls[0][0];
+      const result = await options.onMessage('scoped body', 'scoped', {
+        chatId: 2222222222,
+        updateId: 4104,
+      });
+
+      await flushTelegramDrain(app);
+
+      // Not durable => parent NACKs => cursor holds => Telegram replays it.
+      // Nothing was spooled, so the drain has nothing to deliver either.
+      expect(result).toEqual({ ok: false, reason: 'disk_full' });
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps configured non-owner Telegram inbound off the main Architect pane and refuses its scoped delivery', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('hello client lane', '@ClientProfile', { chatId: 3333333333, updateId: 104 });
+
+      await flushTelegramDrain(app);
+      // THE ROUTING DECISION IS STILL THE POINT, and the source row is where it
+      // is now visible: this message resolved to `client-profile`, so it never
+      // had any business on the main Architect pane — and it is refused there
+      // rather than being answered by the wrong lane.
+      expectScopedSourceOnlyRefusal({
+        updateId: 104, routeKey: 'client-profile', chatId: 3333333333,
+      });
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(app.telegramInboundContext).toEqual(expect.objectContaining({
+        lastInboundAtMs: 0,
+        chatId: null,
+      }));
+    });
+
+    it('does NOT write a scoped trigger when pane runtime delivery is unverified; the record stays queued', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('fallback hello', 'scoped', { chatId: 2222222222, updateId: 107 });
+
+      await flushTelegramDrain(app);
+      // The fixed-trigger write is loss site #1: two updates in one batch
+      // overwrite each other. The drain must never reach for it. An unverified
+      // scoped delivery leaves the record PENDING so it can be retried or
+      // retired on proof, instead of being papered over with a trigger file.
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('does not write scoped Telegram fallback triggers after terminal accepted runtime delivery', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        userVisible: false,
+        status: 'accepted.daemon_pty_unverified',
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('accepted no fallback', 'scoped', { chatId: 2222222222, updateId: 108 });
+
+      await flushTelegramDrain(app);
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+    });
+
+    it('refuses Client Telegram inbound at the scoped cutover without disturbing main reply context', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-telegram-context-'));
+      const contextPath = path.join(tempRoot, 'telegram-reply-context.json');
+      const previousPersistedContext = {
+        chatId: '1111111111',
+        defaultChatId: '1111111111',
+        sender: 'operator',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+        lastInboundAtMs: 1700000000000,
+        updatedAt: '2026-05-07T00:00:00.000Z',
+      };
+      fs.writeFileSync(contextPath, JSON.stringify(previousPersistedContext, null, 2));
+      jest.spyOn(app, 'getTelegramReplyContextPath').mockReturnValue(contextPath);
+      app.telegramInboundContext = {
+        lastInboundAtMs: previousPersistedContext.lastInboundAtMs,
+        sender: previousPersistedContext.sender,
+        chatId: previousPersistedContext.chatId,
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: previousPersistedContext.sessionScopeId,
+      };
+      const previousContext = { ...app.telegramInboundContext };
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.daemon_pty',
+      });
+      const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
+      app.registerAppWindow('client', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
+
+      try {
+        app.startTelegramPoller();
+
+        const options = telegramPoller.start.mock.calls[0][0];
+        options.onMessage('hello Client lane', '@Client', { chatId: 4444444444, updateId: 106 });
+
+        await flushTelegramDrain(app);
+        expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+        expectScopedSourceOnlyRefusal({
+          updateId: 106, routeKey: 'client', chatId: 4444444444,
+        });
+        expect(forwardSpy).not.toHaveBeenCalled();
+        expect(deliverySpy).not.toHaveBeenCalled();
+        expect(launchSpy).not.toHaveBeenCalled();
+        expect(app.telegramInboundContext).toEqual(previousContext);
+        expect(JSON.parse(fs.readFileSync(contextPath, 'utf8'))).toEqual(previousPersistedContext);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('fails closed for unknown non-owner Telegram chats before updating reply context', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const forwardSpy = jest.spyOn(app, 'forwardScopedTelegramInboundToProfileWindow').mockReturnValue(true);
+      const previousContext = app.telegramInboundContext;
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('private message', '@Unknown', { chatId: 9999999999, updateId: 105 });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(forwardSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      expect(app.telegramInboundContext).toEqual(previousContext);
+    });
+
+    it('appends standalone scoped Telegram forwarding into scoped profile and compatibility trigger roots', () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-root-'));
+      const compatRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-compat-'));
+      const scopedTriggerPath = path.join(tempRoot, '.squidrun', 'triggers-scoped', 'architect.txt');
+      const compatTriggerPath = path.join(compatRoot, '.squidrun', 'triggers-scoped', 'architect.txt');
+      jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([scopedTriggerPath, compatTriggerPath]);
+
+      try {
+        const forwarded = app.forwardScopedTelegramInboundToProfileWindow(
+          'scoped',
+          '[Telegram from scoped]: root test 1'
+        );
+        const forwardedAgain = app.forwardScopedTelegramInboundToProfileWindow(
+          'scoped',
+          '[Telegram from scoped]: root test 2'
+        );
+
+        expect(forwarded).toBe(true);
+        expect(forwardedAgain).toBe(true);
+        expect(fs.readFileSync(scopedTriggerPath, 'utf8')).toBe(
+          '[Telegram from scoped]: root test 1\n[Telegram from scoped]: root test 2\n'
+        );
+        expect(fs.readFileSync(compatTriggerPath, 'utf8')).toBe(
+          '[Telegram from scoped]: root test 1\n[Telegram from scoped]: root test 2\n'
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        fs.rmSync(compatRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('keeps scoped Telegram trigger overwrite mode behind the hardening rollback flag', () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-scoped-overwrite-'));
+      const previousHardening = process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING;
+      process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING = '0';
+      const triggerPath = path.join(tempRoot, '.squidrun', 'triggers-scoped', 'architect.txt');
+      jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
+
+      try {
+        expect(app.forwardScopedTelegramInboundToProfileWindow('scoped', 'first')).toBe(true);
+        expect(app.forwardScopedTelegramInboundToProfileWindow('scoped', 'second')).toBe(true);
+        expect(fs.readFileSync(triggerPath, 'utf8')).toBe('second');
+      } finally {
+        if (previousHardening === undefined) {
+          delete process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING;
+        } else {
+          process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING = previousHardening;
+        }
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('retries scoped Telegram runtime delivery until user-visible verification after unavailable results', async () => {
+      jest.useFakeTimers();
+      const previousAttempts = process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS;
+      const previousBackoff = process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS;
+      process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS = '3';
+      process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS = '1';
+      const firstFailure = {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+      };
+      const success = {
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.daemon_pty',
+      };
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .mockResolvedValueOnce(firstFailure)
+        .mockResolvedValueOnce(firstFailure)
+        .mockResolvedValueOnce(success);
+
+      try {
+        const delivery = app.deliverScopedTelegramInboundWithRetry('scoped', 'retry payload', { messageId: 'telegram-in-retry' });
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(250);
+        await Promise.resolve();
+        await jest.advanceTimersByTimeAsync(500);
+
+        await expect(delivery).resolves.toBe(success);
+        expect(scopedRuntimeSpy).toHaveBeenCalledTimes(3);
+      } finally {
+        if (previousAttempts === undefined) {
+          delete process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS;
+        } else {
+          process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS = previousAttempts;
+        }
+        if (previousBackoff === undefined) {
+          delete process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS;
+        } else {
+          process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS = previousBackoff;
+        }
+        jest.useRealTimers();
+      }
+    });
+
+    it.each([
+      'accepted.unverified',
+      'accepted.daemon_pty_unverified',
+      'submit_pending_input',
+    ])('does not retry scoped Telegram runtime delivery after terminal %s status', async (status) => {
+      const acceptedResult = {
+        ok: false,
+        accepted: true,
+        queued: true,
+        verified: false,
+        userVisible: false,
+        status,
+      };
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow')
+        .mockResolvedValue(acceptedResult);
+
+      await expect(
+        app.deliverScopedTelegramInboundWithRetry('scoped', 'retry payload', { messageId: 'telegram-in-accepted' })
+      ).resolves.toBe(acceptedResult);
+      expect(scopedRuntimeSpy).toHaveBeenCalledTimes(1);
+    });
+
+    // The display-text properties these two used to assert — the synthesized
+    // `[Photo received]` body and the ` | saved: <path>` suffix — are proven on
+    // the route where that text actually reaches a pane, by the video test
+    // below. On a scoped route no text is rendered at all now, so asserting it
+    // here would be asserting a string nobody receives. What is still true and
+    // still worth defending is that the media identity is bound into the
+    // immutable source row before the refusal.
+    it('binds media identity into the scoped source row for inbound Telegram photos and refuses delivery', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const admissionSpy = jest.spyOn(app, 'deliverTelegramInboundJob');
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+
+      app.registerAppWindow('scoped', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('[Photo received]', '@ScopedContact', {
+        chatId: 2222222222,
+        updateId: 700100001,
+        media: {
+          kind: 'photo',
+          localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
+          latestScreenshotPath: 'D:\\projects\\squidrun\\.squidrun\\screenshots\\latest.png',
+        },
+      });
+
+      await flushTelegramDrain(app);
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      const source = expectScopedSourceOnlyRefusal({
+        updateId: 700100001, routeKey: 'scoped', chatId: 2222222222,
+      });
+      // A PHOTO'S IDENTITY IS NOT ITS CAPTION, and the row proves that through
+      // its CANONICAL PAYLOAD digest, which is computed over the whole queued
+      // record — media included — by canonicalQueuedPayloadDigest.
+      //
+      // NAMED HONESTLY (Oracle #16): `media_identity_sha256` is NOT bound here.
+      // buildAdmissionJob does not carry a media digest, so the store hashes
+      // the empty string. An earlier version of this test asserted only that
+      // the column was a non-empty string, which the digest of "" satisfies —
+      // a check shaped to pass rather than to catch. Asserting the exact
+      // empty-input digest makes the gap visible instead of papering it.
+      const { sha256, canonicalQueuedPayloadDigest } = require('../modules/main/telegram-consumed-proof');
+      expect(source.media_identity_sha256).toBe(sha256(''));
+
+      expect(admissionSpy).toHaveBeenCalledTimes(1);
+      const admittedRecord = admissionSpy.mock.calls[0][0].record;
+      expect(admittedRecord.media).toEqual(expect.objectContaining({
+        kind: 'photo',
+        localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
+      }));
+      expect(source.canonical_payload_sha256).toBe(canonicalQueuedPayloadDigest(admittedRecord));
+      // AND IT IS ACTUALLY MEDIA-BOUND: the same record without its media
+      // hashes differently, so the assertion above is not satisfied by any
+      // record that merely shares an update id.
+      expect(canonicalQueuedPayloadDigest({ ...admittedRecord, media: null }))
+        .not.toBe(source.canonical_payload_sha256);
+      // `source_only` is a loud delivery refusal, not a queue lock. The drain
+      // retires it and continues under the current no-hold contract.
+      expect(readScopedPendingRecord(700100001)).toBeNull();
+    });
+
+    it('records an empty-body photo as a scoped source with its own identity and refuses delivery', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+      const scopedRuntimeSpy = jest.spyOn(app, 'deliverScopedTelegramInboundToProfileWindow').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        userVisible: true,
+        status: 'delivered.verified',
+      });
+
+      app.registerAppWindow('scoped', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          send: jest.fn(),
+        },
+      });
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('', '@ScopedContact', {
+        updateId: 700100002,
+        messageId: 555,
+        chatId: 2222222222,
+        photo: {
+          file_id: 'photo-xyz',
+        },
+      });
+
+      await flushTelegramDrain(app);
+      expect(scopedRuntimeSpy).not.toHaveBeenCalled();
+      expect(deliverySpy).not.toHaveBeenCalled();
+      // AN EMPTY BODY IS NOT AN EMPTY MESSAGE. A photo with no caption still
+      // gets one immutable row, and it is the row a recovery has to find.
+      expectScopedSourceOnlyRefusal({
+        updateId: 700100002, routeKey: 'scoped', chatId: 2222222222,
+      });
+    });
+
+    /**
+     * THE PHOTO BRANCH, ON A ROUTE THAT ACTUALLY RENDERS IT (Oracle #16).
+     *
+     * When the two scoped photo tests above moved to the refusal, they stopped
+     * asserting the synthesized `[Photo received]` body and the
+     * ` | saved: <path>` suffix. The video test below covers the VIDEO branch,
+     * which is a different branch — claiming it preserved photo coverage was
+     * wrong. This puts an empty-body photo down the main Architect route, where
+     * the text is composed and written, and asserts the exact bytes.
+     */
+    it('synthesizes photo display text and the saved path on the main pane route', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('', '@PhotoSender', {
+        updateId: 700100004,
+        messageId: 557,
+        chatId: 7000000001,
+        photo: { file_id: 'photo-abc' },
+        media: {
+          kind: 'photo',
+          telegramKind: 'photo',
+          fileId: 'photo-abc',
+          localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\photo-557.jpg',
+        },
+      });
+
+      await flushTelegramDrain(app);
+      // The pane receives the DECORATED, MARKED bytes; the synthesized body is
+      // a substring of them.
+      expect(deliverySpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '[Telegram from @PhotoSender]: [Photo received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\photo-557.jpg'
+        ),
+        expect.objectContaining({ paneId: '1', role: 'architect', channel: 'telegram' }),
+        'Telegram'
+      );
+    });
+
+    it('synthesizes video display text and includes saved file path for inbound Telegram videos', async () => {
+      const telegramPoller = require('../modules/telegram-poller');
+      telegramPoller.start.mockReturnValue(true);
+      const deliverySpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true,
+        queued: true,
+        verified: true,
+      });
+
+      app.startTelegramPoller();
+
+      const options = telegramPoller.start.mock.calls[0][0];
+      options.onMessage('', '@VideoSender', {
+        updateId: 700100003,
+        messageId: 556,
+        chatId: 7000000001,
+        video: {
+          file_id: 'video-xyz',
+        },
+        media: {
+          kind: 'video',
+          telegramKind: 'video',
+          fileId: 'video-xyz',
+          mimeType: 'video/mp4',
+          localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4',
+        },
+      });
+
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(deliverySpy).toHaveBeenCalledWith(
+        // The pane receives the DECORATED, MARKED bytes; the message is a substring
+        // of them, and the marker being absent would itself be the defect.
+        expect.stringContaining('[Telegram from @VideoSender]: [Video received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4'),
+        expect.objectContaining({
+          paneId: '1',
+          role: 'architect',
+          channel: 'telegram',
+          sender: '@VideoSender',
+          metadata: expect.objectContaining({
+            media: expect.objectContaining({
+              kind: 'video',
+              fileId: 'video-xyz',
+              localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-556.mp4',
+            }),
+          }),
+        }),
+        'Telegram'
+      );
+    });
+
+    it('SHUTDOWN DOES NOT ADVANCE PAST THE POLLER STOP UNTIL IT SETTLES', async () => {
+      // Returning to app.exit while the Telegram child may still be alive
+      // orphans the getUpdates owner on Windows, and the next start races it.
+      const order = [];
+      let releaseStop;
+      let sawStopCall;
+      const stopCalled = new Promise((resolve) => { sawStopCall = resolve; });
+      app.inboundPollerService.stopAll = jest.fn(() => {
+        sawStopCall();
+        return new Promise((resolve) => {
+          releaseStop = () => { order.push('poller_stopped'); resolve(); };
+        });
+      });
+
+      const shutdown = app.shutdown().then(() => { order.push('shutdown_returned'); });
+      await stopCalled;
+      // Let anything downstream of the stop run if it is going to.
+      for (let i = 0; i < 10; i += 1) await Promise.resolve();
+
+      expect(order).toEqual([]);
+      releaseStop();
+      await shutdown;
+
+      expect(order).toEqual(['poller_stopped', 'shutdown_returned']);
+    });
+
+    it('A RESOLVED ok:false STOP IS LOGGED, NOT SWALLOWED', async () => {
+      // The child's exit was NOT observed. Teardown proceeds, but silence here
+      // would read as confirmation that nothing is left running.
+      app.inboundPollerService.stopAll = jest.fn()
+        .mockResolvedValue({ ok: false, exited: false, reason: 'exit_not_observed' });
+      const log = require('../modules/logger');
+      const warn = jest.spyOn(log, 'warn');
+
+      await app.shutdown();
+
+      expect(warn).toHaveBeenCalledWith(
+        'Telegram',
+        expect.stringContaining('did not confirm exit')
+      );
+      warn.mockRestore();
+    });
+
+    it('A POLLER STOP REJECTION DOES NOT HANG OR ABORT SHUTDOWN', async () => {
+      app.inboundPollerService.stopAll = jest.fn(() => Promise.reject(new Error('worker gone rogue')));
+      await expect(app.shutdown()).resolves.not.toThrow();
+      expect(app.inboundPollerService.stopAll).toHaveBeenCalledTimes(1);
+    });
+
+    it('restarts the Telegram poller without reloading app panes', async () => {
+      // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
+      // worker's exit was actually seen, which is the precondition for forking.
+      app.inboundPollerService.stopTelegram = jest.fn()
+        .mockResolvedValue({ ok: true, exited: true });
+      app.startTelegramPoller = jest.fn(() => true);
+      const reloadClient = jest.fn();
+      const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
+      const createWindowSpy = jest.spyOn(app, 'createWindow').mockResolvedValue();
+      app.registerAppWindow('client', {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          reloadIgnoringCache: reloadClient,
+          send: jest.fn(),
+        },
+      });
+
+      const result = await app.restartTelegramPoller({ reason: 'test-reload' });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        started: true,
+        reason: 'test-reload',
+        note: 'Telegram poller restart requested without reloading panes.',
+      }));
+      // The restart now uses the OBSERVED-EXIT primitive, not the fire-and-
+      // forget stop: forking after an unobserved stop is how two getUpdates
+      // children end up alive at once.
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
+      expect(reloadClient).not.toHaveBeenCalled();
+      expect(launchSpy).not.toHaveBeenCalled();
+      expect(createWindowSpy).not.toHaveBeenCalled();
+    });
+
+    it('reports worker launch acceptance without claiming readiness before worker IPC', async () => {
+      const log = require('../modules/logger');
+      app.inboundPollerService.startTelegram = jest.fn(() => true);
+      // Stub the OBSERVED-EXIT primitive: a resolved {ok:true} means the old
+      // worker's exit was actually seen, which is the precondition for forking.
+      app.inboundPollerService.stopTelegram = jest.fn()
+        .mockResolvedValue({ ok: true, exited: true });
+      app.inboundPollerService.getTelegramWorkerState = jest.fn(() => ({
+        phase: 'standalone_lane_handoff',
+        ready: false,
+        reason: null,
+      }));
+      log.info.mockClear();
+
+      const startStatus = app.startTelegramPoller();
+
+      expect(startStatus).toEqual({
+        accepted: true,
+        phase: 'standalone_lane_handoff',
+        ready: false,
+        reason: null,
+        started: false,
+      });
+      expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled');
+      expect(log.info).toHaveBeenCalledWith(
+        'Telegram',
+        'Inbound Telegram worker launch accepted; awaiting readiness (phase=standalone_lane_handoff)'
+      );
+
+      const restartStatus = await app.restartTelegramPoller({ reason: 'readiness-test' });
+
+      expect(restartStatus).toEqual({
+        success: true,
+        accepted: true,
+        phase: 'standalone_lane_handoff',
+        ready: false,
+        started: false,
+        startupReason: null,
+        reason: 'readiness-test',
+        note: 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
+      });
+      // The restart now uses the OBSERVED-EXIT primitive, not the fire-and-
+      // forget stop: forking after an unobserved stop is how two getUpdates
+      // children end up alive at once.
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      expect(app.inboundPollerService.startTelegram).toHaveBeenCalledTimes(2);
+      expect(log.info).not.toHaveBeenCalledWith('Telegram', 'Inbound Telegram bridge enabled');
+    });
+
+    it('does not queue accepted-unverified Telegram inbound for replay', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'routed_unverified_timeout',
+      });
+
+      try {
+        const result = await app.deliverHumanMessageWithRecall(
+          '[Telegram from scoped]: hello',
+          {
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'scoped',
+            messageId: 'telegram-in-123',
+          },
+          'Telegram'
+        );
+
+        expect(result).toEqual(expect.objectContaining({
+          accepted: true,
+          queued: true,
+          verified: false,
+          status: 'routed_unverified_timeout',
+        }));
+        expect(result.pendingQueued).not.toBe(true);
+        expect(fs.existsSync(queuePath)).toBe(false);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('queues Telegram inbound delivery for replay on hard pane delivery failure', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-pane-hard-failure-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
+      });
+
+      try {
+        const result = await app.deliverHumanMessageWithRecall(
+          '[Telegram from scoped]: hello',
+          {
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'scoped',
+            messageId: 'telegram-in-123',
+          },
+          'Telegram'
+        );
+
+        expect(result).toEqual(expect.objectContaining({
+          pendingQueued: true,
+          pendingFailureReason: 'window_unavailable',
+        }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([
+          expect.objectContaining({
+            messageId: 'telegram-in-123',
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'scoped',
+            lastFailureReason: 'window_unavailable',
+          }),
+        ]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('does not crash when the pending delivery queue directory is unwritable', async () => {
+      const triggers = require('../modules/triggers');
+      const queuePath = path.join('/test/workspace/.squidrun/runtime', 'pending-pane-deliveries.json');
+      const realMkdirSync = fs.mkdirSync.bind(fs);
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation((targetPath, options) => {
+        if (String(targetPath).includes('test') && String(targetPath).includes('runtime')) {
+          const err = new Error(`EACCES: permission denied, mkdir '${targetPath}'`);
+          err.code = 'EACCES';
+          throw err;
+        }
+        return realMkdirSync(targetPath, options);
+      });
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
+      });
+
+      try {
+        const result = await app.deliverHumanMessageWithRecall(
+          '[Telegram from scoped]: hello',
+          {
+            paneId: '1',
+            channel: 'telegram',
+            sender: 'scoped',
+            messageId: 'telegram-in-123',
+          },
+          'Telegram'
+        );
+
+        expect(result).toEqual(expect.objectContaining({
+          pendingQueued: false,
+          pendingFailureReason: 'window_unavailable',
+        }));
+      } finally {
+        mkdirSpy.mockRestore();
+      }
+    });
+
+    it('delivers pane-1 human messages without injecting recall blocks', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      const result = await app.deliverHumanMessageWithRecall(
+        '[Telegram from operator]: plain inbound message',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'operator',
+          messageId: 'telegram-in-plain-1',
+        },
+        'Telegram'
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        verified: true,
+      }));
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        expect.stringContaining('[Telegram from operator]: plain inbound message'),
+        null,
+        expect.any(Object)
+      );
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]');
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).toContain('Do not answer only in this pane');
+      expect(triggers.sendDirectMessage.mock.calls[0][1]).not.toContain('[SQUIDRUN RECALL START]');
+    });
+
+    it('carries actionable Telegram reply-target metadata on pane delivery', async () => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        '[Telegram from operator]: route this back',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'operator',
+          messageId: 'telegram-in-reply-target-1',
+          chatId: '1111111111',
+          metadata: {
+            source: 'telegram-poller',
+            updateId: 123,
+          },
+        },
+        'Telegram'
+      );
+
+      expect(triggers.sendDirectMessage.mock.calls[0][3]).toEqual(expect.objectContaining({
+        meta: expect.objectContaining({
+          source: 'telegram-poller',
+          channel: 'telegram',
+          replyTarget: 'telegram',
+          reply_target: 'telegram',
+          replyTargetRequired: true,
+          replyTargetReason: 'telegram_origin_user_message',
+          telegramRequiresEgress: true,
+          chatId: '1111111111',
+          telegramChatId: '1111111111',
+          replyToMessageId: 'telegram-in-reply-target-1',
+        }),
+      }));
+      expect(app.pendingTelegramReplyGuards.get('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-reply-target-1',
+        chatId: '1111111111',
+        status: 'pending_telegram_egress',
+        requiresTelegramEgress: true,
+        durableObligationOk: true,
+        durableObligationId: 'telegram-reply-test',
+      }));
+      expect(openTelegramReplyObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inboundMessageId: 'telegram-in-reply-target-1',
+          chatId: '1111111111',
+          sessionId: expect.any(String),
+          paneId: '1',
+          windowKey: 'main',
+          profileName: 'main',
+          senderRole: 'operator',
+          targetRole: 'architect',
+          metadata: expect.objectContaining({
+            source: 'squidrun-app.telegram-reply-guard',
+            requiresTelegramEgress: true,
+            status: 'pending_telegram_egress',
+          }),
+        }),
+        expect.objectContaining({
+          nowMs: expect.any(Number),
+        })
+      );
+    });
+
+    it('hydrates pending Telegram reply guards from durable open obligations without auto-nagging', () => {
+      const nowMs = Date.now();
+      app.commsSessionScopeId = 'app-session-hydrate';
+      queryTelegramReplyObligations.mockReturnValue([
+        {
+          obligationId: 'telegram-reply-hydrate-1',
+          inboundMessageId: 'telegram-in-hydrate-1',
+          chatId: '1111111111',
+          sessionId: 'app-session-hydrate',
+          paneId: '2',
+          windowKey: 'main',
+          profileName: 'main',
+          senderRole: 'operator',
+          status: 'open',
+          openedAtMs: nowMs - 1000,
+          deadlineAtMs: nowMs + 60_000,
+        },
+        {
+          obligationId: 'telegram-reply-expired-1',
+          inboundMessageId: 'telegram-in-expired-1',
+          chatId: '1111111111',
+          sessionId: 'app-session-hydrate',
+          paneId: '3',
+          windowKey: 'main',
+          profileName: 'main',
+          senderRole: 'operator',
+          status: 'open',
+          openedAtMs: nowMs - 120_000,
+          deadlineAtMs: nowMs - 1,
+        },
+      ]);
+
+      const result = app.hydratePendingTelegramReplyGuardsFromObligations({ nowMs });
+
+      expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'open',
+        sessionId: 'app-session-hydrate',
+        order: 'asc',
+      }));
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_obligations_hydrated',
+        hydratedCount: 2,
+        skippedCount: 0,
+        sessionId: 'app-session-hydrate',
+        autoEscalationScheduledCount: 0,
+        autoEscalationSuppressedCount: 2,
+      }));
+      expect(app.pendingTelegramReplyGuards.get('2')).toEqual(expect.objectContaining({
+        paneId: '2',
+        messageId: 'telegram-in-hydrate-1',
+        chatId: '1111111111',
+        sessionScopeId: 'app-session-hydrate',
+        status: 'pending_telegram_egress',
+        requiresTelegramEgress: true,
+        durableObligationOk: true,
+        durableObligationId: 'telegram-reply-hydrate-1',
+        hydratedFromDurableObligation: true,
+        autoEscalationSuppressed: true,
+        durableDeadlineElapsedAtHydration: false,
+      }));
+      expect(app.pendingTelegramReplyGuards.get('3')).toEqual(expect.objectContaining({
+        paneId: '3',
+        messageId: 'telegram-in-expired-1',
+        sessionScopeId: 'app-session-hydrate',
+        status: 'pending_telegram_egress',
+        hydratedFromDurableObligation: true,
+        autoEscalationSuppressed: true,
+        durableDeadlineElapsedAtHydration: true,
+      }));
+      expect(app.pendingTelegramReplyGuardTimers.size).toBe(0);
+      expect(spawn).not.toHaveBeenCalled();
+      expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+        'agent_response_debt',
+        expect.any(String),
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.any(Object)
+      );
+    });
+
+    it('does not auto-alert after restart hydration even when the rebuilt guard deadline passes', async () => {
+      const nowMs = Date.parse('2026-06-06T12:00:00.000Z');
+      jest.useFakeTimers({ now: nowMs });
+      try {
+        app.commsSessionScopeId = 'app-session-restart-no-nag';
+        queryTelegramReplyObligations.mockReturnValue([
+          {
+            obligationId: 'telegram-reply-restart-no-nag-1',
+            inboundMessageId: 'telegram-in-restart-no-nag-1',
+            chatId: '1111111111',
+            sessionId: 'app-session-restart-no-nag',
+            paneId: '1',
+            windowKey: 'main',
+            profileName: 'main',
+            senderRole: 'operator',
+            status: 'open',
+            openedAtMs: nowMs - 30_000,
+            deadlineAtMs: nowMs + 1000,
+          },
+        ]);
+
+        const result = app.hydratePendingTelegramReplyGuardsFromObligations({ nowMs });
+        mockManagers.activity.logActivity.mockClear();
+        spawn.mockClear();
+
+        jest.advanceTimersByTime(2000);
+        await Promise.resolve();
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          hydratedCount: 1,
+          autoEscalationScheduledCount: 0,
+          autoEscalationSuppressedCount: 1,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-restart-no-nag-1',
+          status: 'pending_telegram_egress',
+          autoEscalationSuppressed: true,
+        }));
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+        expect(spawn).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('prepends unified memory broker recall when ranked context exists', async () => {
+      const triggers = require('../modules/triggers');
+      mockManagers.memoryBroker = {
+        recall: jest.fn(async () => ({
+          ok: true,
+          results: [
+            {
+              rank: 1,
+              sourceKind: 'vector_cognitive',
+              title: 'Communication preference',
+              excerpt: 'Operator wants non-jargon plain English updates.',
+              ref: 'memory:plain-english',
+            },
+          ],
+        })),
+      };
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        '[Telegram from operator]: what did you do?',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'operator',
+          messageId: 'telegram-in-recall-1',
+        },
+        'Telegram'
+      );
+
+      expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
+        '[Telegram from operator]: what did you do?',
+        expect.objectContaining({
+          channel: 'telegram',
+          paneId: '1',
+          windowKey: 'main',
+          profileName: 'main',
+          sessionScopeId: null,
+        }),
+        expect.objectContaining({ limit: 4, providerLimit: 3 })
+      );
+      const deliveredMessage = triggers.sendDirectMessage.mock.calls[0][1];
+      expect(deliveredMessage).toContain('[SQUIDRUN MEMORY RECALL]');
+      expect(deliveredMessage).toContain('Operator wants non-jargon plain English updates.');
+      expect(deliveredMessage).toContain('[Telegram from operator]: what did you do?');
+      expect(deliveredMessage.indexOf('[Telegram from operator]: what did you do?'))
+        .toBeLessThan(deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]'));
+    });
+
+    it('keeps Telegram body inside first injection window before long recall context', async () => {
+      const triggers = require('../modules/triggers');
+      const telegramBody = '[Telegram from operator]: synthetic emergency update body that must be visible before any recall context or large header.';
+      mockManagers.memoryBroker = {
+        recall: jest.fn(async () => ({
+          ok: true,
+          results: Array.from({ length: 8 }, (_, index) => ({
+            rank: index + 1,
+            sourceKind: 'vector_cognitive',
+            title: `Long recall title ${index} ${'x'.repeat(100)}`,
+            excerpt: `Long recall excerpt ${index} ${'y'.repeat(600)}`,
+            ref: `memory:telegram-body-first:${index}:${'z'.repeat(200)}`,
+          })),
+        })),
+      };
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        telegramBody,
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'operator',
+          messageId: 'telegram-in-body-first-1',
+          recallLimit: 8,
+        },
+        'Telegram'
+      );
+
+      const deliveredMessage = triggers.sendDirectMessage.mock.calls[0][1];
+      const headerEndIndex = deliveredMessage.indexOf('\n\n');
+      const headerText = deliveredMessage.slice(0, headerEndIndex);
+      const bodyIndex = deliveredMessage.indexOf(telegramBody);
+      const recallIndex = deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]');
+
+      expect(deliveredMessage.startsWith('[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]')).toBe(true);
+      expect(headerText.length).toBeLessThan(512);
+      expect(bodyIndex).toBeGreaterThan(headerEndIndex);
+      expect(bodyIndex).toBeLessThan(1024);
+      expect(Buffer.byteLength(deliveredMessage.slice(0, bodyIndex), 'utf8')).toBeLessThan(1024);
+      expect(bodyIndex).toBeLessThan(recallIndex);
+      expect(deliveredMessage).toContain('memory recall capped');
+    });
+
+    it('passes profile scope into recall and delivery metadata for scoped human messages', async () => {
+      const triggers = require('../modules/triggers');
+      mockManagers.memoryBroker = {
+        recall: jest.fn(async () => ({
+          ok: true,
+          results: [
+            {
+              rank: 1,
+              sourceKind: 'graph_team',
+              title: 'Scoped context',
+              excerpt: 'Only visible when profile scope matches.',
+              ref: 'memory:scoped',
+            },
+          ],
+        })),
+      };
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      forceTriggerDeliveryPath(app);
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      await app.deliverHumanMessageWithRecall(
+        '[Telegram from client]: status?',
+        {
+          paneId: '1',
+          channel: 'telegram',
+          sender: 'client',
+          messageId: 'telegram-in-client-1',
+          windowKey: 'client',
+          profileName: 'client',
+          sessionScopeId: 'app-test:client',
+        },
+        'Telegram'
+      );
+
+      expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
+        '[Telegram from client]: status?',
+        expect.objectContaining({
+          channel: 'telegram',
+          paneId: '1',
+          windowKey: 'client',
+          profileName: 'client',
+          sessionScopeId: 'app-test:client',
+        }),
+        expect.objectContaining({ limit: 4, providerLimit: 3 })
+      );
+      expect(triggers.sendDirectMessage.mock.calls[0][3]).toEqual(expect.objectContaining({
+        meta: expect.objectContaining({
+          windowKey: 'client',
+          profileName: 'client',
+          sessionScopeId: 'app-test:client',
+        }),
+      }));
+    });
+
+    it('keeps Telegram reply requirements unresolved when a pane answers without Telegram egress', () => {
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const guardedApp = new SquidRunApp(ctx, mockManagers);
+      guardedApp.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-visible-output-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+
+      jest.useFakeTimers();
+      const result = guardedApp.inspectPaneOutputForReplyGuards('1', 'I answered in the pane only.', {
+        outputKind: 'agent_visible_output',
+      });
+
+      // The nag is deferred a grace window (so a quick Telegram reply suppresses it).
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_pending_grace',
+        guard: expect.objectContaining({
+          status: 'telegram_reply_required_unresolved',
+          violationCount: 1,
+          lastPaneOutputPreview: 'I answered in the pane only.',
+        }),
+      }));
+      expect(mockManagers.activity.logActivity).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(91000);
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          debtKind: 'telegram_reply_required',
+          agentSideOnly: true,
+          userFacingNoticeSuppressed: true,
+          messageId: 'telegram-in-visible-output-1',
+          chatId: '1111111111',
+          status: 'telegram_reply_required_unresolved',
+          requiresTelegramEgress: true,
+          agentAlert: expect.objectContaining({
+            ok: true,
+            targetRoles: ['architect'],
+          }),
+        })
+      );
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        'project-warning',
+        expect.anything()
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM RESPONSE-DEBT): TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-visible-output-1',
+        status: 'telegram_reply_required_unresolved',
+        violationCount: 1,
+        agentDebtNoticeTargetRoles: ['architect'],
+      }));
+      jest.useRealTimers();
+    });
+
+    it('emits a single deferred nag for repeated pane output on the same inbound (no multi-fire)', () => {
+      jest.useFakeTimers();
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-throttled-unresolved-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+      const emitSpy = jest.spyOn(app, 'emitTelegramReplyRequirementNotice');
+
+      app.inspectPaneOutputForReplyGuards('1', 'first pane-only answer', {
+        outputKind: 'agent_visible_output',
+      });
+      const result = app.inspectPaneOutputForReplyGuards('1', 'second pane-only answer', {
+        outputKind: 'agent_visible_output',
+      });
+
+      // Both calls defer; the second does not schedule a second timer.
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_pending_grace',
+        guard: expect.objectContaining({
+          messageId: 'telegram-in-throttled-unresolved-1',
+          status: 'telegram_reply_required_unresolved',
+          violationCount: 2,
+          lastPaneOutputPreview: 'second pane-only answer',
+        }),
+      }));
+      expect(emitSpy).not.toHaveBeenCalled();
+      jest.advanceTimersByTime(91000);
+      expect(emitSpy).toHaveBeenCalledTimes(1); // one inbound -> one nag, despite two output lines
+      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-throttled-unresolved-1',
+        status: 'telegram_reply_required_unresolved',
+        violationCount: 2,
+      }));
+      jest.useRealTimers();
+    });
+
+    it('routes unanswered Telegram reply requirements to agent lanes instead of Operator-facing notices', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.useFakeTimers({ now: 1700000000000 });
+      try {
+        const mainWindow = {
+          isDestroyed: jest.fn().mockReturnValue(false),
+          webContents: {
+            send: jest.fn(),
+            isDestroyed: jest.fn().mockReturnValue(false),
+          },
+        };
+        const ctx = {
+          ...mockAppContext,
+          mainWindow,
+          getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+          getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+        };
+        const guardedApp = new SquidRunApp(ctx, mockManagers);
+        guardedApp.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-expire-1',
+          chatId: '1111111111',
+          sender: 'operator',
+        });
+        guardedApp.inspectPaneOutputForReplyGuards('1', 'RAW PANE HALF THOUGHT - do not text this', {
+          outputKind: 'agent_visible_output',
+        });
+
+        jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        // Ceremony purge SHRINK (S468): ONE agent alert per inbound, then the
+        // ledger holds it - the old contract pinned the 2-alert barrage
+        // (nag + expiry) this choke exists to kill.
+        expect(guardedApp.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-expire-1',
+          status: 'telegram_reply_required_expired_unresolved',
+          unresolvedReason: 'reply_window_expired',
+          agentDebtNoticeAttemptCount: 1,
+          agentDebtNoticeTargetRoles: ['architect'],
+          agentDebtNoticeError: null,
+          requiresTelegramEgress: true,
+        }));
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        // The expiry still writes its ledger row (nothing lost) - but its
+        // AGENT ALERT is suppressed (agentAlert: null): the ledger holds it.
+        expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.objectContaining({
+            source: 'telegram-reply-requirement',
+            debtKind: 'telegram_reply_required',
+            agentSideOnly: true,
+            userFacingNoticeSuppressed: true,
+            messageId: 'telegram-in-expire-1',
+            status: 'telegram_reply_required_expired_unresolved',
+            reason: 'reply_window_expired',
+            requiresTelegramEgress: true,
+            agentAlert: null,
+          })
+        );
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+          'project-warning',
+          expect.anything()
+        );
+        // The ONE alert that fires is the first (the deferred pane-output
+        // nag); the expiry alert is choked - its text never hits the wire.
+        expect(spawn).toHaveBeenCalledWith(
+          'node',
+          expect.arrayContaining([
+            expect.stringContaining(path.join('scripts', 'hm-send.js')),
+            'architect',
+            expect.stringContaining('telegram-in-expire-1'),
+            '--role',
+            'system',
+          ]),
+          expect.objectContaining({
+            windowsHide: true,
+          })
+        );
+        const spawnedTexts = spawn.mock.calls
+          .filter((call) => Array.isArray(call[1]) && call[1].some((arg) => String(arg).includes('telegram-in-expire-1')))
+          .map((call) => call[1].join(' '));
+        expect(spawnedTexts.some((text) => text.includes('still owes Telegram egress'))).toBe(false);
+        const laterPaneOutput = guardedApp.inspectPaneOutputForReplyGuards('1', 'still pane-only later', {
+          outputKind: 'agent_visible_output',
+        });
+        expect(laterPaneOutput).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_expired_unresolved',
+          guard: expect.objectContaining({
+            status: 'telegram_reply_required_expired_unresolved',
+            // SHRINK: still exactly ONE alert even after later pane output.
+            agentDebtNoticeAttemptCount: 1,
+          }),
+        }));
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('stops periodic journal reconciliation after an unanswered Telegram guard expires without pane output', async () => {
+      const createdAtMs = Date.parse('2026-06-01T20:40:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        queryCommsJournalEntries.mockReturnValue([]);
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-expire-zero-output-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: 'app-session-expire-zero-output',
+        });
+        expect(app.pendingTelegramReplyGuardJournalReconcileTimer).not.toBeNull();
+
+        jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-expire-zero-output-1',
+          status: 'telegram_reply_required_expired_unresolved',
+          unresolvedReason: 'reply_window_expired',
+          requiresTelegramEgress: true,
+        }));
+        expect(app.pendingTelegramReplyGuardJournalReconcileTimer).toBeNull();
+        expect(queryCommsJournalEntries).toHaveBeenCalled();
+
+        queryCommsJournalEntries.mockClear();
+        mockManagers.activity.logActivity.mockClear();
+        jest.advanceTimersByTime(60 * 1000);
+        await Promise.resolve();
+
+        expect(queryCommsJournalEntries).not.toHaveBeenCalled();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalled();
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-expire-zero-output-1',
+          status: 'telegram_reply_required_expired_unresolved',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not repeat agent-side response-debt alert spam for the same unresolved Telegram debt', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-no-spam-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+
+      const first = await app.sendTelegramReplyRequirementAgentEscalation('1');
+      const second = await app.sendTelegramReplyRequirementAgentEscalation('1');
+
+      expect(first).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alerted',
+      }));
+      expect(second).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alert_already_sent',
+      }));
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-no-spam-1',
+        status: 'telegram_reply_required_agent_alerted',
+        agentDebtNoticeAttemptCount: 1,
+        agentDebtNoticeTargetRoles: ['architect'],
+        requiresTelegramEgress: true,
+      }));
+    });
+
+    it('keeps the Telegram reply debt visible when agent-side alert routing fails', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '2',
+        messageId: 'telegram-in-agent-alert-fail-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+      jest.spyOn(app, 'sendInternalHmMessage').mockReturnValue(false);
+
+      const result = await app.sendTelegramReplyRequirementAgentEscalation('2');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_agent_alert_failed',
+        error: 'agent_route_unavailable',
+      }));
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(app.getPendingTelegramReplyRequirement('2')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-agent-alert-fail-1',
+        status: 'telegram_reply_required_agent_alert_failed',
+        agentDebtNoticeAttemptCount: 1,
+        agentDebtNoticeError: 'agent_route_unavailable',
+        requiresTelegramEgress: true,
+      }));
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '2',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          messageId: 'telegram-in-agent-alert-fail-1',
+          status: 'telegram_reply_required_agent_alerted',
+          agentAlert: expect.objectContaining({
+            ok: false,
+            error: 'agent_route_unavailable',
+            targetRoles: ['builder', 'architect'],
+          }),
+          requiresTelegramEgress: true,
+        })
+      );
+    });
+
+    it('routes scoped Telegram reply debt to agent lanes without sending user-facing phone notices', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '2',
+        messageId: 'telegram-in-scoped-agent-alert-1',
+        chatId: '2222222222',
+        sender: 'scoped',
+        windowKey: 'scoped',
+        profileName: 'scoped',
+      });
+
+      const result = await app.sendTelegramReplyRequirementAgentEscalation('2');
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alerted',
+      }));
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'builder',
+          expect.stringContaining('(SYSTEM RESPONSE-DEBT): TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(spawn).toHaveBeenCalledWith(
+        'node',
+        expect.arrayContaining([
+          expect.stringContaining(path.join('scripts', 'hm-send.js')),
+          'architect',
+          expect.stringContaining('(SYSTEM RESPONSE-DEBT): TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          '--role',
+          'system',
+        ]),
+        expect.objectContaining({
+          windowsHide: true,
+        })
+      );
+      expect(app.getPendingTelegramReplyRequirement('2')).toEqual(expect.objectContaining({
+        messageId: 'telegram-in-scoped-agent-alert-1',
+        status: 'telegram_reply_required_agent_alerted',
+        agentDebtNoticeTargetRoles: ['builder', 'architect'],
+        requiresTelegramEgress: true,
+      }));
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '2',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          messageId: 'telegram-in-scoped-agent-alert-1',
+          agentSideOnly: true,
+          userFacingNoticeSuppressed: true,
+          agentAlert: expect.objectContaining({
+            targetRoles: ['builder', 'architect'],
+          }),
+          requiresTelegramEgress: true,
+        })
+      );
+    });
+
+    it('does not agent-alert a Telegram reply debt after real Telegram egress clears it', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      jest.useFakeTimers({ now: 1700000000000 });
+      try {
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-clear-before-phone-1',
+          chatId: '1111111111',
+          sender: 'operator',
+        });
+
+        const result = await app.routeTelegramReply({
+          target: 'telegram',
+          content: 'Actual answer through Telegram.',
+          messageId: 'telegram-in-clear-before-phone-1-reply',
+          chatId: '1111111111',
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_delivered',
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        sendRoutedTelegramMessage.mockClear();
+
+        jest.advanceTimersByTime((5 * 60 * 1000) + 1);
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+        expect(spawn).not.toHaveBeenCalled();
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('ignores metadata-classified SquidRun injected Telegram prompt echoes for the response-side guard', () => {
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-echo-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+
+      const result = app.inspectPaneOutputForReplyGuards(
+        '1',
+        '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]\n\n[Telegram from operator]: hello',
+        { outputKind: 'squidrun_injected_echo' }
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'injected_echo_ignored',
+      }));
+      expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+        'warning',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.any(Object)
+      );
+      expect(app.pendingTelegramReplyGuards.has('1')).toBe(true);
+    });
+
+    it('classifies injected Telegram echoes from kernel metadata only', () => {
+      expect(app.hasOnlySquidRunInjectedKernelMeta([
+        {
+          source: 'injection.js',
+          meta: {
+            replyTargetRequired: true,
+            replyTarget: 'telegram',
+          },
+        },
+      ])).toBe(true);
+      expect(app.hasOnlySquidRunInjectedKernelMeta([
+        {
+          source: 'squidrun-app.direct-pane-delivery',
+          meta: {
+            replyTargetRequired: true,
+            channel: 'telegram',
+          },
+        },
+      ])).toBe(true);
+      expect(app.hasOnlySquidRunInjectedKernelMeta([
+        {
+          source: 'injection.js',
+          meta: {},
+        },
+      ])).toBe(false);
+      expect(app.hasOnlySquidRunInjectedKernelMeta([])).toBe(false);
+    });
+
+    it('routes response debt when quoted inbound text lacks injected-echo metadata', () => {
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const guardedApp = new SquidRunApp(ctx, mockManagers);
+      guardedApp.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-marker-text-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+
+      jest.useFakeTimers();
+      const result = guardedApp.inspectPaneOutputForReplyGuards(
+        '1',
+        '[Telegram from Operator]: yes, fixed it, deploying',
+        { outputKind: 'agent_visible_output' }
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_pending_grace',
+      }));
+      jest.advanceTimersByTime(91000);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        'project-warning',
+        expect.anything()
+      );
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          agentSideOnly: true,
+        })
+      );
+      jest.useRealTimers();
+    });
+
+    it('routes response debt when quoted reply-target marker text lacks injected-echo metadata', () => {
+      const mainWindow = {
+        isDestroyed: jest.fn().mockReturnValue(false),
+        webContents: {
+          send: jest.fn(),
+          isDestroyed: jest.fn().mockReturnValue(false),
+        },
+      };
+      const ctx = {
+        ...mockAppContext,
+        mainWindow,
+        getWindow: jest.fn((key = 'main') => (key === 'main' ? mainWindow : null)),
+        getWindows: jest.fn(() => new Map([['main', mainWindow]])),
+      };
+      const guardedApp = new SquidRunApp(ctx, mockManagers);
+      guardedApp.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-marker-quote-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+
+      jest.useFakeTimers();
+      const result = guardedApp.inspectPaneOutputForReplyGuards(
+        '1',
+        'Noting [SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]; the answer is X',
+        { outputKind: 'agent_visible_output' }
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_pending_grace',
+      }));
+      jest.advanceTimersByTime(91000);
+      expect(mainWindow.webContents.send).not.toHaveBeenCalledWith(
+        'project-warning',
+        expect.anything()
+      );
+      expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+        'agent_response_debt',
+        '1',
+        expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+        expect.objectContaining({
+          source: 'telegram-reply-requirement',
+          agentSideOnly: true,
+        })
+      );
+      jest.useRealTimers();
+    });
+
+    it('clears the pending Telegram reply guard after real Telegram egress', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markPendingTelegramReplyGuard({
+        paneId: '1',
+        messageId: 'telegram-in-clear-1',
+        chatId: '1111111111',
+        sender: 'operator',
+      });
+      expect(app.inspectPaneOutputForReplyGuards('1', 'pane-only does not clear first', {
+        outputKind: 'agent_visible_output',
+      })).toEqual(expect.objectContaining({
+        ok: false,
+        status: 'telegram_reply_requirement_pending_grace',
+      }));
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Back through Telegram.',
+        messageId: 'telegram-in-clear-1-reply',
+        chatId: '1111111111',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'telegram_delivered',
+        durableSatisfaction: expect.objectContaining({
+          ok: true,
+          status: 'satisfied',
+        }),
+      }));
+      expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inboundMessageId: 'telegram-in-clear-1',
+          satisfiedByMessageId: 'telegram-in-clear-1-reply',
+          satisfactionSource: 'squidrun-app.route-telegram-reply',
+          satisfaction: expect.objectContaining({
+            reason: 'telegram_delivery_confirmed',
+            chatId: '1111111111',
+          }),
+        }),
+        expect.any(Object)
+      );
+      expect(app.pendingTelegramReplyGuards.has('1')).toBe(false);
+      expect(app.inspectPaneOutputForReplyGuards('1', 'later pane output', {
+        outputKind: 'agent_visible_output',
+      })).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'no_pending_guard',
+      }));
+    });
+
+    it('satisfies the latest durable Telegram reply obligation even if the live guard was lost', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      const nowMs = Date.parse('2026-06-14T08:40:00.000Z');
+      jest.useFakeTimers({ now: nowMs });
+      try {
+        queryTelegramReplyObligations.mockReturnValue([
+          {
+            obligationId: 'telegram-reply-lost-guard-1',
+            inboundMessageId: 'telegram-in-lost-guard-1',
+            chatId: '1111111111',
+            sessionId: 'app-session-before',
+            paneId: '1',
+            status: 'open',
+            openedAtMs: nowMs - 10_000,
+          },
+        ]);
+
+        const result = await app.routeTelegramReply({
+          target: 'telegram',
+          content: 'Back through Telegram.',
+          messageId: 'telegram-out-lost-guard-1',
+          chatId: '1111111111',
+        });
+
+        expect(sendRoutedTelegramMessage).toHaveBeenCalled();
+        expect(queryTelegramReplyObligations).toHaveBeenCalledWith(expect.objectContaining({
+          status: 'open',
+          chatId: '1111111111',
+          untilMs: nowMs,
+          order: 'desc',
+        }));
+        expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            obligationId: 'telegram-reply-lost-guard-1',
+            inboundMessageId: 'telegram-in-lost-guard-1',
+            satisfiedAtMs: nowMs,
+            satisfiedByMessageId: 'telegram-out-lost-guard-1',
+            satisfactionSource: 'squidrun-app.route-telegram-reply',
+            satisfaction: expect.objectContaining({
+              reason: 'same_chat_telegram_delivery_confirmed',
+              chatId: '1111111111',
+            }),
+          }),
+          expect.any(Object)
+        );
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_delivered',
+          durableSatisfaction: expect.objectContaining({
+            ok: true,
+            status: 'satisfied',
+          }),
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('clears pending Telegram reply debt from an acked hm-send Telegram journal row', () => {
+      const sessionId = 'app-session-telegram-dedupe';
+      const createdAtMs = Date.parse('2026-05-31T20:35:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-dedupe-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-acked-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              routeMethod: 'hm-send-telegram-direct',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'later pane output after real Telegram ack', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: createdAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_requirement_satisfied_by_journal',
+          satisfaction: expect.objectContaining({
+            inboundMessageId: 'telegram-in-dedupe-1',
+            egressMessageId: 'hm-telegram-acked-1',
+            chatId: '1111111111',
+            sessionScopeId: sessionId,
+            durableSatisfaction: expect.objectContaining({
+              ok: true,
+              status: 'satisfied',
+            }),
+          }),
+        }));
+        expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            inboundMessageId: 'telegram-in-dedupe-1',
+            satisfiedAtMs: createdAtMs + 1000,
+            satisfiedByMessageId: 'hm-telegram-acked-1',
+            satisfactionSource: 'squidrun-app.journal-reconcile',
+            satisfaction: expect.objectContaining({
+              reason: 'matched',
+              chatId: '1111111111',
+              sessionId,
+            }),
+          }),
+          expect.any(Object)
+        );
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('rebuilds a pending Telegram reply guard from durable state and satisfies it from journal egress', () => {
+      const sessionId = 'app-session-telegram-restart-rebuild';
+      const createdAtMs = Date.parse('2026-06-06T12:15:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        queryTelegramReplyObligations.mockReturnValue([
+          {
+            obligationId: 'telegram-reply-restart-rebuild-1',
+            inboundMessageId: 'telegram-in-restart-rebuild-1',
+            chatId: '1111111111',
+            sessionId,
+            paneId: '1',
+            windowKey: 'main',
+            profileName: 'main',
+            senderRole: 'operator',
+            status: 'open',
+            openedAtMs: createdAtMs - 20_000,
+            deadlineAtMs: createdAtMs + 60_000,
+          },
+        ]);
+
+        const hydration = app.hydratePendingTelegramReplyGuardsFromObligations({ nowMs: createdAtMs });
+        expect(hydration).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_obligations_hydrated',
+          hydratedCount: 1,
+          autoEscalationSuppressedCount: 1,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-restart-rebuild-1',
+          durableObligationId: 'telegram-reply-restart-rebuild-1',
+          hydratedFromDurableObligation: true,
+          autoEscalationSuppressed: true,
+        }));
+
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 67890,
+            messageId: 'hm-telegram-restart-rebuild-egress-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              replyToMessageId: 'telegram-in-restart-rebuild-1',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test-restart-rebuild',
+          logMisses: false,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-restart-rebuild-1',
+              egressMessageId: 'hm-telegram-restart-rebuild-egress-1',
+              chatId: '1111111111',
+              sessionScopeId: sessionId,
+              durableSatisfaction: expect.objectContaining({
+                ok: true,
+                status: 'satisfied',
+              }),
+            }),
+          ],
+        }));
+        expect(satisfyTelegramReplyObligation).toHaveBeenCalledWith(
+          expect.objectContaining({
+            inboundMessageId: 'telegram-in-restart-rebuild-1',
+            satisfiedByMessageId: 'hm-telegram-restart-rebuild-egress-1',
+            satisfiedByRowId: 67890,
+            satisfactionSource: 'squidrun-app.journal-reconcile',
+            satisfaction: expect.objectContaining({
+              reason: 'matched',
+              replyToMessageId: 'telegram-in-restart-rebuild-1',
+            }),
+          }),
+          expect.any(Object)
+        );
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps rebuilt Telegram reply debt open when journal reconciliation query fails', () => {
+      const sessionId = 'app-session-telegram-query-fail';
+      const createdAtMs = Date.parse('2026-06-06T12:20:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-query-fail-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+          persistDurable: false,
+        });
+        queryCommsJournalEntries.mockImplementation(() => {
+          throw new Error('ledger temporarily unavailable');
+        });
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test-query-failure',
+          logMisses: true,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_checked_from_journal',
+          reconciledCount: 0,
+          pendingCount: 1,
+          nonTerminalPendingCount: 1,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-query-fail-1',
+          status: 'pending_telegram_egress',
+          lastJournalReconcileReason: 'query_failed',
+          lastJournalReconcileCandidateRowCount: 0,
+        }));
+        expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('credits delivered target=user Telegram egress rows against pending reply debt', () => {
+      const sessionId = 'app-session-telegram-target-user-row';
+      const createdAtMs = Date.parse('2026-06-02T10:53:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-target-user-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-target-user-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              chatId: '1111111111',
+            },
+          },
+        ]);
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test',
+          logMisses: false,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-target-user-1',
+              egressMessageId: 'hm-telegram-target-user-1',
+              chatId: '1111111111',
+              sessionScopeId: sessionId,
+            }),
+          ],
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('credits the raw delivered hm-send telegram row shape from session 399', () => {
+      const sessionId = 'app-session-399';
+      const guardCreatedAtMs = 1780422913433;
+      jest.useFakeTimers({ now: guardCreatedAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-700100020',
+          chatId: '7000000001',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 67315,
+            messageId: 'hm-1780422928508-4rxl3m',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: 1780422928536,
+            brokeredAtMs: null,
+            rawBody: 'Quiet and clean.',
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            attempt: 1,
+            metadata: {
+              envelope_version: 'hm-envelope-v1',
+              envelope: {
+                version: 'hm-envelope-v1',
+                message_id: 'hm-1780422928508-4rxl3m',
+                timestamp_ms: 1780422928535,
+                sent_at: '2026-06-02T17:55:28.535Z',
+                session_id: sessionId,
+                sender: { role: 'architect' },
+                target: { raw: 'telegram', role: 'telegram', pane_id: null },
+              },
+              session_id: sessionId,
+              sender: { role: 'architect' },
+              target: { raw: 'telegram', role: 'telegram', pane_id: null },
+              directTarget: 'telegram',
+              routeMethod: 'hm-send-telegram-direct',
+              source: 'hm-telegram',
+              mode: 'message',
+              telegramMessageId: 20581,
+              chatId: 7000000001,
+            },
+            updatedAtMs: 1780422929186,
+          },
+        ]);
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          reason: 'unit-test-raw-session-399-row',
+          logMisses: false,
+        });
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: guardCreatedAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-700100020',
+              egressMessageId: 'hm-1780422928508-4rxl3m',
+              chatId: '7000000001',
+              sessionScopeId: sessionId,
+            }),
+          ],
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('credits same-chat delivered Telegram egress from the session 400 rapid-burst shape', () => {
+      const sessionId = 'app-session-400';
+      const guardCreatedAtMs = 1780431576869;
+      jest.useFakeTimers({ now: guardCreatedAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-700100022',
+          chatId: '7000000001',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            rowId: 67373,
+            messageId: 'hm-1780431576782-bst8n4',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: 1780431576810,
+            rawBody: 'You are putting your finger right on the gap.',
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              telegramMessageId: 20598,
+              replyToMessageId: 'telegram-in-700100021',
+              inboundMessageId: 'telegram-in-700100021',
+              chatId: 7000000001,
+              source: 'hm-telegram',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram', pane_id: null },
+              },
+            },
+            updatedAtMs: 1780431577469,
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'pane output after rapid Telegram burst', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: guardCreatedAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_requirement_satisfied_by_journal',
+          guard: null,
+          satisfaction: expect.objectContaining({
+            inboundMessageId: 'telegram-in-700100022',
+            egressMessageId: 'hm-1780431576782-bst8n4',
+            chatId: '7000000001',
+            sessionScopeId: sessionId,
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('reconciles a pending Telegram guard with an injected matching journal query', () => {
+      const sessionId = 'app-session-telegram-injected-query';
+      const createdAtMs = Date.parse('2026-05-31T20:35:30.000Z');
+      const queryFn = jest.fn(() => [
+        {
+          messageId: 'hm-telegram-injected-query-1',
+          sessionId,
+          senderRole: 'architect',
+          targetRole: 'user',
+          channel: 'telegram',
+          direction: 'outbound',
+          sentAtMs: createdAtMs + 1000,
+          status: 'acked',
+          ackStatus: 'telegram_delivered',
+          metadata: {
+            directTarget: 'telegram',
+            chatId: '1111111111',
+            envelope: {
+              session_id: sessionId,
+              target: { raw: 'telegram', role: 'telegram' },
+            },
+          },
+        },
+      ]);
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-injected-query-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          queryCommsJournalEntries: queryFn,
+          reason: 'unit-test',
+          logMisses: false,
+        });
+
+        expect(queryFn).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: createdAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+          reconciled: [
+            expect.objectContaining({
+              inboundMessageId: 'telegram-in-injected-query-1',
+              egressMessageId: 'hm-telegram-injected-query-1',
+              chatId: '1111111111',
+              sessionScopeId: sessionId,
+            }),
+          ],
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('reconciles a pending Telegram guard without a guard chat id when the journal row has one', () => {
+      const sessionId = 'app-session-telegram-null-guard-chat';
+      const createdAtMs = Date.parse('2026-05-31T20:35:45.000Z');
+      const queryFn = jest.fn(() => [
+        {
+          messageId: 'hm-telegram-null-guard-chat-1',
+          sessionId,
+          senderRole: 'architect',
+          targetRole: 'user',
+          channel: 'telegram',
+          direction: 'outbound',
+          sentAtMs: createdAtMs + 1000,
+          status: 'acked',
+          ackStatus: 'telegram_delivered',
+          metadata: {
+            directTarget: 'telegram',
+            chatId: '1111111111',
+            envelope: {
+              session_id: sessionId,
+              target: { raw: 'telegram', role: 'telegram' },
+            },
+          },
+        },
+      ]);
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-null-guard-chat-1',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+
+        const result = app.reconcilePendingTelegramReplyGuardsWithJournal({
+          queryCommsJournalEntries: queryFn,
+          reason: 'unit-test',
+          logMisses: false,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_guards_reconciled_from_journal',
+          reconciledCount: 1,
+          pendingCount: 0,
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('periodically clears pending Telegram reply debt from an hm-send journal row without pane output', () => {
+      const sessionId = 'app-session-telegram-periodic-reconcile';
+      const createdAtMs = Date.parse('2026-05-31T20:35:55.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-periodic-reconcile-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-periodic-reconcile-1',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        jest.advanceTimersByTime(5000);
+
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith({
+          sessionId,
+          channel: 'telegram',
+          direction: 'outbound',
+          sinceMs: createdAtMs - 5000,
+          order: 'asc',
+          limit: 500,
+        });
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+        expect(mockManagers.activity.logActivity).not.toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.any(Object)
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps reply debt unresolved when the acked Telegram journal row is for another chat', () => {
+      const sessionId = 'app-session-telegram-cross-chat';
+      const createdAtMs = Date.parse('2026-05-31T20:36:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-cross-chat-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-other-chat',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '2222222222',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'pane-only answer still owes Telegram', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_pending_grace',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-cross-chat-1',
+            status: 'telegram_reply_required_unresolved',
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-cross-chat-1',
+        }));
+        jest.advanceTimersByTime(91000); // the cross-chat egress does not satisfy -> nag fires once
+        expect(mockManagers.activity.logActivity).toHaveBeenCalledWith(
+          'agent_response_debt',
+          '1',
+          expect.stringContaining('TELEGRAM REPLY REQUIREMENT UNRESOLVED'),
+          expect.objectContaining({
+            source: 'telegram-reply-requirement',
+            reason: 'pane_output_without_telegram_egress',
+          })
+        );
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps reply debt unresolved when the acked Telegram journal row predates the inbound guard', () => {
+      const sessionId = 'app-session-telegram-pre-inbound';
+      const createdAtMs = Date.parse('2026-05-31T20:37:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-pre-inbound-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-before-inbound',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs - 6000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'fresh inbound still needs an answer', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_pending_grace',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-pre-inbound-1',
+            status: 'telegram_reply_required_unresolved',
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-pre-inbound-1',
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('keeps reply debt unresolved when the acked Telegram journal row is for another session', () => {
+      const sessionId = 'app-session-telegram-current-session';
+      const otherSessionId = 'app-session-telegram-other-session';
+      const createdAtMs = Date.parse('2026-05-31T20:37:30.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-wrong-session-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-other-session',
+            sessionId: otherSessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              chatId: '1111111111',
+              envelope: {
+                session_id: otherSessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'wrong session still owes Telegram', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: false,
+          status: 'telegram_reply_requirement_pending_grace',
+          guard: expect.objectContaining({
+            messageId: 'telegram-in-wrong-session-1',
+            status: 'telegram_reply_required_unresolved',
+          }),
+        }));
+        expect(satisfyTelegramReplyObligation).not.toHaveBeenCalled();
+        expect(app.getPendingTelegramReplyRequirement('1')).toEqual(expect.objectContaining({
+          messageId: 'telegram-in-wrong-session-1',
+          sessionScopeId: sessionId,
+        }));
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('clears reply debt when a same-chat delivered Telegram row is tied to an adjacent inbound', () => {
+      const sessionId = 'app-session-telegram-cross-inbound';
+      const createdAtMs = Date.parse('2026-05-31T20:38:00.000Z');
+      jest.useFakeTimers({ now: createdAtMs });
+      try {
+        app.commsSessionScopeId = sessionId;
+        app.markPendingTelegramReplyGuard({
+          paneId: '1',
+          messageId: 'telegram-in-current-1',
+          chatId: '1111111111',
+          sender: 'operator',
+          sessionScopeId: sessionId,
+        });
+        queryCommsJournalEntries.mockReturnValue([
+          {
+            messageId: 'hm-telegram-other-inbound',
+            sessionId,
+            senderRole: 'architect',
+            targetRole: 'user',
+            channel: 'telegram',
+            direction: 'outbound',
+            sentAtMs: createdAtMs + 1000,
+            status: 'acked',
+            ackStatus: 'telegram_delivered',
+            metadata: {
+              directTarget: 'telegram',
+              replyToMessageId: 'telegram-in-previous-1',
+              chatId: '1111111111',
+              envelope: {
+                session_id: sessionId,
+                target: { raw: 'telegram', role: 'telegram' },
+              },
+            },
+          },
+        ]);
+
+        const result = app.inspectPaneOutputForReplyGuards('1', 'current inbound was answered on Telegram', {
+          outputKind: 'agent_visible_output',
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          status: 'telegram_reply_requirement_satisfied_by_journal',
+          guard: null,
+          satisfaction: expect.objectContaining({
+            inboundMessageId: 'telegram-in-current-1',
+            egressMessageId: 'hm-telegram-other-inbound',
+            chatId: '1111111111',
+          }),
+        }));
+        expect(app.getPendingTelegramReplyRequirement('1')).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
+    it('replays queued pane deliveries and clears them once pane delivery verifies', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-replay-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-123',
+            paneId: '1',
+            message: '[Telegram from scoped]: hello',
+            messageId: 'telegram-in-123',
+            channel: 'telegram',
+            sender: 'scoped',
+          },
+        ],
+      }));
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'delivered.verified',
+      });
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-replay' });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 1,
+          remainingCount: 0,
+        }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('clears queued pane deliveries once pane delivery is terminal accepted', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-accepted-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-accepted-replay',
+            paneId: '1',
+            message: '[Telegram from scoped]: accepted replay',
+            messageId: 'telegram-in-accepted-replay',
+            channel: 'telegram',
+            sender: 'scoped',
+            attemptCount: 1,
+          },
+        ],
+      }));
+      triggers.sendDirectMessage.mockResolvedValueOnce({
+        accepted: true,
+        queued: false,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+      });
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-accepted-replay' });
+
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 1,
+          remainingCount: 0,
+        }));
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves accepted-unverified Telegram pending state without replaying it', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-resolved-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-147';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-123',
+            paneId: '1',
+            message: '[Telegram from scoped]: hello',
+            messageId: 'telegram-in-123',
+            channel: 'telegram',
+            sender: 'scoped',
+            createdAt: '2026-05-16T07:26:50.776Z',
+            lastFailureReason: 'routed_unverified_timeout',
+            attemptCount: 1,
+            meta: {
+              updateId: 123,
+              windowKey: 'main',
+              sessionScopeId: 'app-session-147',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-resolve' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'telegram-in-123' }),
+          expect.objectContaining({
+            reason: 'accepted_unverified_telegram_delivery_resolved',
+            resolved: true,
+            lastFailureReason: 'routed_unverified_timeout',
+          })
+        );
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves non-Telegram reassembled pending state without replaying it', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-reassembled-resolved-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-147';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'hm-reassembled-1',
+            paneId: '1',
+            message: '[AGENT MSG - reply via hm-send.js] FULL MSG AT .squidrun/coord/full-agent-messages/hm-reassembled-1.txt',
+            messageId: 'hm-reassembled-1',
+            channel: 'ws',
+            sender: 'builder',
+            createdAt: '2026-05-16T07:26:50.776Z',
+            lastFailureReason: 'verification_failed',
+            attemptCount: 1,
+            meta: {
+              windowKey: 'main',
+              sessionScopeId: 'app-session-147',
+              reassembled: true,
+              fullPayloadPath: '.squidrun/coord/full-agent-messages/hm-reassembled-1.txt',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-resolve-reassembled' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'hm-reassembled-1' }),
+          expect.objectContaining({
+            reason: 'accepted_unverified_pending_delivery_resolved',
+            resolved: true,
+            resolutionEvidence: expect.objectContaining({
+              reason: 'reassembled_payload_evidence',
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('resolves non-Telegram pending state when comms journal has routed proof', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-journal-resolved-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-147';
+      queryCommsJournalEntries.mockImplementation((filters = {}) => (
+        filters.messageId === 'hm-journal-routed-1'
+          ? [{
+            rowId: 777,
+            messageId: 'hm-journal-routed-1',
+            status: 'routed',
+            ackStatus: 'accepted.unverified',
+            metadata: {
+              deliveryAccepted: true,
+              finalOutcome: 'accepted.unverified',
+            },
+          }]
+          : []
+      ));
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'hm-journal-routed-1',
+            paneId: '1',
+            message: '(BUILDER #12): already routed but verifier timed out',
+            messageId: 'hm-journal-routed-1',
+            channel: 'ws',
+            sender: 'builder',
+            createdAt: '2026-05-16T07:26:50.776Z',
+            lastFailureReason: 'delivery_failed',
+            attemptCount: 2,
+            meta: {
+              windowKey: 'main',
+              sessionScopeId: 'app-session-147',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'test-resolve-journal' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(queryCommsJournalEntries).toHaveBeenCalledWith(expect.objectContaining({
+          messageId: 'hm-journal-routed-1',
+          order: 'desc',
+          limit: 1,
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'hm-journal-routed-1' }),
+          expect.objectContaining({
+            reason: 'comms_journal_pending_delivery_resolved',
+            resolved: true,
+            resolutionEvidence: expect.objectContaining({
+              reason: 'comms_journal_delivery_proof',
+              rowId: 777,
+              status: 'routed',
+            }),
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('drops prior-session non-Telegram pending deliveries instead of replaying them', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-non-telegram-stale-session-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-330';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'hm-stale-session-1',
+            paneId: '1',
+            message: '(BUILDER #9): stale retry',
+            messageId: 'hm-stale-session-1',
+            channel: 'ws',
+            sender: 'builder',
+            createdAt: '2026-05-08T00:45:48.915Z',
+            lastFailureReason: 'delivery_failed',
+            attemptCount: 3,
+            meta: {
+              windowKey: 'main',
+              sessionScopeId: 'app-session-329',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'startup-replay' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'hm-stale-session-1' }),
+          expect.objectContaining({
+            reason: 'stale_pending_session_scope',
+            expectedSessionScopeId: 'app-session-330',
+            itemSessionScopeId: 'app-session-329',
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('drops prior-session Telegram pending deliveries instead of flushing them into the current session', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-stale-session-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      app.commsSessionScopeId = 'app-session-330';
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-700100011',
+            paneId: '1',
+            message: '[Telegram from @example_sender]: stale task',
+            messageId: 'telegram-in-700100011',
+            channel: 'telegram',
+            sender: '@example_sender',
+            createdAt: '2026-05-08T00:45:48.915Z',
+            attemptCount: 3,
+            meta: {
+              updateId: 700100011,
+              messageId: 17488,
+              windowKey: 'main',
+              sessionScopeId: 'app-session-329',
+              media: {
+                kind: 'photo',
+                fileId: 'photo-file-id',
+              },
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'startup-replay' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'telegram-in-700100011' }),
+          expect.objectContaining({
+            reason: 'stale_telegram_pending_session_scope',
+            expectedSessionScopeId: 'app-session-330',
+            itemSessionScopeId: 'app-session-329',
+          })
+        );
+        const persisted = JSON.parse(fs.readFileSync(queuePath, 'utf8'));
+        expect(persisted.items).toEqual([]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('drops old Telegram pending deliveries without session metadata before startup replay', async () => {
+      const triggers = require('../modules/triggers');
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-pending-stale-age-'));
+      const queuePath = path.join(tempRoot, 'pending-pane-deliveries.json');
+      jest.spyOn(app, 'getPendingPaneDeliveryQueuePath').mockReturnValue(queuePath);
+      jest.spyOn(app, 'recordPendingPaneDeliveryDrop').mockImplementation(() => {});
+      mockManagers.settings.readAppStatus.mockReturnValue({
+        session: 330,
+        started: '2026-05-08T04:00:00.000Z',
+      });
+      fs.writeFileSync(queuePath, JSON.stringify({
+        items: [
+          {
+            queueKey: 'telegram-in-no-scope',
+            paneId: '1',
+            message: '[Telegram from @example_sender]: stale no-scope task',
+            messageId: 'telegram-in-no-scope',
+            channel: 'telegram',
+            sender: '@example_sender',
+            createdAt: '2026-05-08T03:00:00.000Z',
+            attemptCount: 1,
+            meta: {
+              updateId: 700100010,
+              windowKey: 'main',
+            },
+          },
+        ],
+      }));
+
+      try {
+        const result = await app.flushPendingPaneDeliveries({ paneId: '1', reason: 'startup-replay' });
+
+        expect(triggers.sendDirectMessage).not.toHaveBeenCalled();
+        expect(result).toEqual(expect.objectContaining({
+          deliveredCount: 0,
+          droppedCount: 1,
+          remainingCount: 0,
+        }));
+        expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
+          expect.objectContaining({ queueKey: 'telegram-in-no-scope' }),
+          expect.objectContaining({
+            reason: 'stale_telegram_pending_before_current_start',
+          })
+        );
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('stores pending pane deliveries in the canonical runtime directory', () => {
+      expect(app.getPendingPaneDeliveryQueuePath()).toBe('/test/workspace/runtime/pending-pane-deliveries.json');
+      expect(app.getPendingPaneDeliveryQueuePath()).not.toContain('/.squidrun/runtime/');
+    });
+  });
+
+  describe('Telegram reply-debt nag (deferred, grace-suppressed, at-most-once)', () => {
+    let app;
+
+    beforeEach(() => {
+      jest.useFakeTimers();
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    afterEach(() => {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    });
+
+    function seedGuard() {
+      const now = Date.now();
+      const guard = {
+        paneId: '1',
+        messageId: 'tg-in-1',
+        sender: 'user',
+        chatId: '111',
+        telegramChatId: '111',
+        windowKey: 'main',
+        profileName: 'main',
+        sessionScopeId: 'app-session-1',
+        createdAtMs: now,
+        expiresAtMs: now + 5 * 60 * 1000,
+        status: 'pending_telegram_egress',
+        requiresTelegramEgress: true,
+        violationCount: 0,
+        warningCount: 0,
+        lastWarningAtMs: 0,
+      };
+      app.pendingTelegramReplyGuards.set('1', guard);
+      return guard;
+    }
+
+    it('emits exactly ONE nag once the pane goes idle, even across multiple output lines', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      app.inspectPaneOutputForReplyGuards('1', 'reading the config module', { outputKind: 'agent_visible_output' });
+      app.inspectPaneOutputForReplyGuards('1', 'editing the handler now', { outputKind: 'agent_visible_output' });
+      app.inspectPaneOutputForReplyGuards('1', 'running the test suite', { outputKind: 'agent_visible_output' });
+
+      // Deferred — nothing emitted synchronously (this is what kills the race).
+      expect(emit).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(91_000); // past the 90s idle window
+      expect(emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('does NOT nag seconds after output while the pane is still actively replying (S425 regression)', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      app.inspectPaneOutputForReplyGuards('1', 'starting on your question', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(7_000); // the old 6s grace would have fired here
+      expect(emit).not.toHaveBeenCalled();
+
+      // Meaningful output keeps re-arming the idle window — mid-reply is not debt.
+      jest.advanceTimersByTime(53_000); // t = 60s
+      app.inspectPaneOutputForReplyGuards('1', 'checking the journal rows', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(60_000); // t = 120s, only 60s since last output
+      app.inspectPaneOutputForReplyGuards('1', 'composing the answer', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(89_000); // t = 209s: 89s of quiet, inside the idle window and under the 240s cap
+      expect(emit).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(2_000); // 91s of quiet — NOW the debt asserts
+      expect(emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('caps the deferral: continuous novel output cannot dodge the debt past the max-defer window', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      const phrases = ['alpha sweep', 'beta sweep', 'gamma sweep', 'delta sweep', 'epsilon sweep'];
+      app.inspectPaneOutputForReplyGuards('1', 'opening burst of work', { outputKind: 'agent_visible_output' });
+      for (const phrase of phrases) {
+        jest.advanceTimersByTime(60_000);
+        app.inspectPaneOutputForReplyGuards('1', `still streaming ${phrase}`, { outputKind: 'agent_visible_output' });
+      }
+      // 5 re-arms x 60s = 300s elapsed; the 240s cap fired mid-stream despite
+      // the pane never being 90s idle.
+      expect(emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores TUI repaint noise: control-only frames and spinner ticks do not re-arm the idle window', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      app.inspectPaneOutputForReplyGuards('1', 'final pane-only answer', { outputKind: 'agent_visible_output' });
+
+      // Spinner tick frames differ only by their timer digits — the first one
+      // re-arms (new payload vs the answer line), subsequent ticks must not.
+      app.inspectPaneOutputForReplyGuards(
+        '1',
+        '\u001b[2K\r\u001b[36m* Simmering... 1s\u001b[0m',
+        { outputKind: 'agent_visible_output' }
+      );
+      for (let tick = 2; tick <= 8; tick += 1) {
+        jest.advanceTimersByTime(10_000);
+        app.inspectPaneOutputForReplyGuards(
+          '1',
+          `\u001b[2K\r\u001b[36m* Simmering... ${tick}s\u001b[0m`,
+          { outputKind: 'agent_visible_output' }
+        );
+        // Pure control frames carry no printable payload at all.
+        app.inspectPaneOutputForReplyGuards(
+          '1',
+          '\u001b[2K\u001b[1G\u001b[?25l\r',
+          { outputKind: 'agent_visible_output' }
+        );
+      }
+      // 70s of repaint noise so far — idle window armed at the first tick must
+      // still be running, untouched by the noise.
+      expect(emit).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(21_000); // 91s after the only meaningful re-arm
+      expect(emit).toHaveBeenCalledTimes(1);
+    });
+
+    it('emits ZERO nags when a telegram reply lands within the idle window', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      // not satisfied at output time, but a matching egress is found on the deferred re-check
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal')
+        .mockReturnValueOnce(null)
+        .mockReturnValue({ ok: true, status: 'telegram_reply_requirement_satisfied_by_journal' });
+
+      app.inspectPaneOutputForReplyGuards('1', 'pane-only answer to Operator', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(91_000);
+
+      expect(emit).not.toHaveBeenCalled();
+    });
+
+    it('does not re-fire after the single nag for the same inbound', () => {
+      seedGuard();
+      const emit = jest.spyOn(app, 'emitTelegramReplyRequirementNotice').mockReturnValue(true);
+      jest.spyOn(app, 'reconcilePendingTelegramReplyGuardWithJournal').mockReturnValue(null);
+
+      app.inspectPaneOutputForReplyGuards('1', 'answering in the pane only', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(91_000);
+      expect(emit).toHaveBeenCalledTimes(1);
+
+      // more output for the SAME inbound after the nag -> no second nag
+      app.inspectPaneOutputForReplyGuards('1', 'an unrelated later remark', { outputKind: 'agent_visible_output' });
+      jest.advanceTimersByTime(91_000);
+      expect(emit).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Telegram auto-reply routing', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+
+    it('routes user target to Telegram when inbound context is recent', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.markTelegramInboundContext('operator');
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+        messageId: 'telegram-route-1',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Build passed.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-route-1',
+          senderRole: 'system',
+          sessionId: expect.any(String),
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'user',
+            windowKey: 'main',
+            profile: 'main',
+            chatId: null,
+            telegramChatId: null,
+            sessionScopeId: expect.any(String),
+          }),
+        })
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+          routeMethod: 'hm-send-telegram',
+          windowKey: 'main',
+          profile: 'main',
+          sessionScopeId: expect.any(String),
+        })
+      );
+    });
+
+    it('fails closed for user target when inherited reply context belongs to a scoped profile', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: '@Client',
+        lastInboundAtMs: Date.now(),
+        chatId: '4444444444',
+        windowKey: 'client',
+        profile: 'client',
+        sessionScopeId: 'app-test:client',
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+        messageId: 'telegram-route-cross-profile-context',
+      });
+
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: false,
+          status: 'telegram_privacy_route_cross_profile_context',
+          windowKey: 'client',
+          profile: 'client',
+          chatId: '4444444444',
+          sessionScopeId: 'app-test:client',
+        })
+      );
+    });
+
+    it('fails closed for user target when the reply chat route resolves outside main', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: Date.now(),
+        chatId: '4444444444',
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-test:main',
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+        messageId: 'telegram-route-cross-profile-chat',
+      });
+
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: false,
+          status: 'telegram_privacy_route_cross_profile_context',
+          windowKey: 'client',
+          profile: 'client',
+          chatId: '4444444444',
+          sessionScopeId: expect.stringContaining(':client'),
+        })
+      );
+    });
+
+    it('does not route user target when inbound context is stale', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: 'operator',
+        lastInboundAtMs: Date.now() - (6 * 60 * 1000),
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'user',
+        content: 'Build passed.',
+      });
+
+      expect(sendRoutedTelegramMessage).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: false,
+          status: 'telegram_context_stale',
+        })
+      );
+    });
+
+    it('routes explicit telegram target even without recent inbound context', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: null,
+        lastInboundAtMs: 0,
+        chatId: null,
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Direct ping.',
+        messageId: 'telegram-route-2',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Direct ping.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-route-2',
+          senderRole: 'system',
+          sessionId: expect.any(String),
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'telegram',
+          }),
+          chatId: null,
+        })
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+          routeMethod: 'hm-send-telegram',
+        })
+      );
+    });
+
+    it('does not inherit recent inbound chat context for explicit telegram target', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+      app.telegramInboundContext = {
+        sender: '@ScopedContact',
+        lastInboundAtMs: Date.now(),
+        chatId: '2222222222',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        sessionScopeId: 'app-test:scoped',
+      };
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Direct ping.',
+        messageId: 'telegram-route-default-chat',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Direct ping.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-route-default-chat',
+          chatId: null,
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'telegram',
+            windowKey: 'main',
+            profile: 'main',
+            chatId: null,
+            telegramChatId: null,
+            sessionScopeId: expect.any(String),
+          }),
+        })
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+          routeMethod: 'hm-send-telegram',
+        })
+      );
+    });
+
+    it('passes chatId override through routeTelegramReply', async () => {
+      const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
+
+      const result = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'Direct ping to Scoped.',
+        messageId: 'telegram-route-3',
+        chatId: '2222222222',
+      });
+
+      expect(sendRoutedTelegramMessage).toHaveBeenCalledWith(
+        'Direct ping to Scoped.',
+        process.env,
+        expect.objectContaining({
+          messageId: 'telegram-route-3',
+          chatId: '2222222222',
+          metadata: expect.objectContaining({
+            routeKind: 'telegram',
+            targetRaw: 'telegram',
+            windowKey: 'scoped',
+            profile: 'scoped',
+            chatId: '2222222222',
+            telegramChatId: '2222222222',
+            sessionScopeId: expect.stringContaining(':scoped'),
+          }),
+        })
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          handled: true,
+          ok: true,
+          status: 'telegram_delivered',
+          routeMethod: 'send-long-telegram',
+        })
+      );
+    });
+  });
+
+  describe('phase 4 delivery helpers', () => {
+    let app;
+
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      app.teamMemoryInitialized = true;
+    });
+
+    it('routes proactive memory injections into the target pane', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeInjectMessage = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+        ok: true,
+        injected: true,
+        status: 'delivered',
+        injection: {
+          injection_id: 'inject-1',
+          source_tier: 'tier3',
+          injection_reason: 'error_signature_match:solution_trace',
+          authoritative: false,
+          message: '[MEMORY][assistive] error_signature_match\nreason=error_signature_match tier=tier3 confidence=0.90 freshness=2026-03-12T00:00:00.000Z\nReact error #418',
+        },
+      });
+
+      const result = await app.triggerProactiveMemoryInjection({
+        paneId: '2',
+        triggerType: 'error_signature_match',
+        payload: {
+          error_signature: 'React error #418',
+          trigger_event_id: 'err-1',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        injected: true,
+        delivered: true,
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'trigger-memory-injection',
+        expect.objectContaining({
+          pane_id: '2',
+          trigger_type: 'error_signature_match',
+          trigger_event_id: 'err-1',
+        })
+      );
+      expect(routeInjectMessage).toHaveBeenCalledWith(expect.objectContaining({
+        panes: ['2'],
+        deliveryId: 'inject-1',
+        meta: expect.objectContaining({
+          memoryInjection: true,
+          triggerType: 'error_signature_match',
+          sourceTier: 'tier3',
+        }),
+      }));
+    });
+
+    it('advances lifecycle and reviews stale memories during session rollover injection', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeInjectMessage = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      teamMemory.executeTeamMemoryOperation
+        .mockResolvedValueOnce({ ok: true, staleCount: 1, archivedCount: 0, expiredCount: 0 })
+        .mockResolvedValueOnce({ ok: true, review_candidates: [] })
+        .mockResolvedValueOnce({
+          ok: true,
+          injected: true,
+          status: 'delivered',
+          injection: {
+            injection_id: 'inject-rollover-1',
+            source_tier: 'tier3',
+            injection_reason: 'session_rollover:solution_trace',
+            authoritative: false,
+            message: '[MEMORY][assistive] session_rollover\nreason=session_rollover tier=tier3 confidence=0.90 freshness=2026-03-12T00:00:00.000Z\nResume relay work.',
+          },
+        });
+
+      const result = await app.triggerProactiveMemoryInjection({
+        paneId: '2',
+        triggerType: 'session_rollover',
+        payload: {
+          trigger_event_id: 'rollover-1',
+          session_ordinal: 147,
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        injected: true,
+        delivered: true,
+        lifecycleAdvance: expect.objectContaining({ ok: true, staleCount: 1 }),
+        staleReview: expect.objectContaining({ ok: true, review_candidates: [] }),
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenNthCalledWith(
+        1,
+        'advance-memory-lifecycle',
+        expect.objectContaining({
+          session_ordinal: 147,
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenNthCalledWith(
+        2,
+        'review-stale-memories',
+        expect.objectContaining({
+          limit: 10,
+        })
+      );
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenNthCalledWith(
+        3,
+        'trigger-memory-injection',
+        expect.objectContaining({
+          pane_id: '2',
+          trigger_type: 'session_rollover',
+          trigger_event_id: 'rollover-1',
+          session_ordinal: 147,
+        })
+      );
+      expect(routeInjectMessage).toHaveBeenCalledWith(expect.objectContaining({
+        panes: ['2'],
+        deliveryId: 'inject-rollover-1',
+        meta: expect.objectContaining({
+          memoryInjection: true,
+          triggerType: 'session_rollover',
+          sourceTier: 'tier3',
+        }),
+      }));
+    });
+
+    it('resumes compaction survival by injecting the survival note back into the pane', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeInjectMessage = jest.spyOn(app, 'routeInjectMessage').mockReturnValue(true);
+      teamMemory.executeTeamMemoryOperation.mockResolvedValueOnce({
+        ok: true,
+        resumed: true,
+        injection: {
+          message: '[COMPACTION RESUME] Pane 2 context restored\nTier 1 re-read: ARCHITECTURE.md',
+        },
+      });
+
+      const result = await app.resumeCompactionSurvivalForPane({
+        paneId: '2',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        resumed: true,
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'resume-compaction-survival',
+        expect.objectContaining({
+          pane_id: '2',
+        })
+      );
+      expect(routeInjectMessage).toHaveBeenCalledWith(expect.objectContaining({
+        panes: ['2'],
+        meta: expect.objectContaining({
+          triggerType: 'compaction_survival_resume',
+        }),
+      }));
+    });
+
+    it('sends a cross-device handoff packet and marks it sent after relay delivery', async () => {
+      const teamMemory = require('../modules/team-memory');
+      const routeBridgeMessage = jest.spyOn(app, 'routeBridgeMessage').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'bridge_delivered',
+      });
+      teamMemory.executeTeamMemoryOperation.mockImplementation(async (action) => {
+        if (action === 'build-cross-device-handoff') {
+          return {
+            ok: true,
+            packet_id: 'handoff-1',
+            packet: {
+              packet_id: 'handoff-1',
+              session_id: 'app-session-test',
+              source_device: 'LOCAL',
+              target_device: 'PEER',
+              active_workstreams: ['Ship Phase 4'],
+              unresolved_blockers: ['None'],
+            },
+            result_refs: [],
+          };
+        }
+        if (action === 'mark-cross-device-handoff-sent') {
+          return {
+            ok: true,
+            packet_id: 'handoff-1',
+          };
+        }
+        return { ok: true, status: 'updated' };
+      });
+
+      const result = await app.sendCrossDeviceHandoffPacket({
+        targetDevice: 'PEER',
+        paneId: '1',
+        payload: {
+          session_id: 'app-session-test',
+          active_workstreams: ['Ship Phase 4'],
+          unresolved_blockers: ['None'],
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        packet_id: 'handoff-1',
+      }));
+      expect(routeBridgeMessage).toHaveBeenCalledWith(expect.objectContaining({
+        targetDevice: 'PEER',
+        structuredMessage: {
+          type: 'handoffpacket',
+          payload: {
+            packet: expect.objectContaining({
+              packet_id: 'handoff-1',
+            }),
+          },
+        },
+      }));
+      expect(teamMemory.executeTeamMemoryOperation).toHaveBeenCalledWith(
+        'mark-cross-device-handoff-sent',
+        expect.objectContaining({
+          packet_id: 'handoff-1',
+        })
+      );
+    });
+  });
+
+  describe('bridge structured message types', () => {
+    let app;
+
+    beforeEach(() => {
+      const triggers = require('../modules/triggers');
+      triggers.sendDirectMessage.mockReset();
+      triggers.sendDirectMessage.mockReturnValue({ success: true });
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      app.bridgeEnabled = true;
+      app.bridgeRuntimeConfig = {
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+      };
+      app.bridgeDeviceId = 'LOCAL';
+    });
+
+    it('uses profile-specific bridge IDs so Scoped cannot replace the main relay identity', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_PROFILE',
+        'SQUIDRUN_BRIDGE_RELAY_MODE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      try {
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'shared';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        process.env.SQUIDRUN_PROFILE = 'scoped';
+
+        const config = app.resolveEnvBridgeRuntimeConfig();
+
+        expect(config).toEqual(expect.objectContaining({
+          source: 'env',
+          deviceId: 'VIGIL-SCOPED',
+          relayUrl: 'wss://relay.example.test',
+        }));
+      } finally {
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
+    });
+
+    it('uses an env relay secret instead of a stale paired devices secret', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_PROFILE',
+        'SQUIDRUN_BRIDGE_RELAY_MODE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      const previousWorkspacePath = config.WORKSPACE_PATH;
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-paired-config-'));
+      try {
+        config.WORKSPACE_PATH = tempRoot;
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'working-env-secret';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        delete process.env.SQUIDRUN_PROFILE;
+        delete process.env.SQUIDRUN_BRIDGE_RELAY_MODE;
+        fs.writeFileSync(path.join(tempRoot, 'devices.json'), `${JSON.stringify({
+          device_id: 'VIGIL',
+          shared_secret: 'dead-pair-secret',
+          relay_url: 'wss://paired.example.test',
+          paired_device_id: 'PEER',
+          paired_at: '2026-07-06T22:00:00.000Z',
+        }, null, 2)}\n`, 'utf8');
+
+        const bridgeConfig = app.resolveBridgeRuntimeConfig();
+
+        expect(bridgeConfig).toEqual(expect.objectContaining({
+          source: 'devices.json',
+          relayUrl: 'wss://paired.example.test',
+          deviceId: 'VIGIL',
+          pairedDeviceId: 'PEER',
+          sharedSecret: 'working-env-secret',
+        }));
+      } finally {
+        config.WORKSPACE_PATH = previousWorkspacePath;
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
+    });
+
+    it('keeps the bridge disabled when install settings set relayMode off', () => {
+      const envKeys = [
+        'SQUIDRUN_CROSS_DEVICE',
+        'SQUIDRUN_RELAY_URL',
+        'SQUIDRUN_RELAY_SECRET',
+        'SQUIDRUN_DEVICE_ID',
+        'SQUIDRUN_BRIDGE_RELAY_MODE',
+      ];
+      const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+      try {
+        process.env.SQUIDRUN_CROSS_DEVICE = '1';
+        process.env.SQUIDRUN_RELAY_URL = 'wss://relay.example.test';
+        process.env.SQUIDRUN_RELAY_SECRET = 'shared';
+        process.env.SQUIDRUN_DEVICE_ID = 'VIGIL';
+        process.env.SQUIDRUN_BRIDGE_RELAY_MODE = 'off';
+
+        expect(app.resolveEnvBridgeRuntimeConfig()).toBeNull();
+        app.refreshBridgeRuntimeConfig();
+        expect(app.bridgeEnabled).toBe(false);
+        expect(app.bridgeRuntimeConfig).toBeNull();
+      } finally {
+        for (const key of envKeys) {
+          if (previousEnv[key] === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = previousEnv[key];
+          }
+        }
+      }
+    });
+
+    it('does not start the cross-device bridge from scoped side profiles', () => {
+      const { createBridgeClient } = require('../modules/bridge-client');
+      createBridgeClient.mockClear();
+      app.activeProfileName = 'scoped';
+      app.bridgeEnabled = true;
+      app.bridgeRuntimeConfig = {
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'VIGIL-SCOPED',
+        sharedSecret: 'shared',
+      };
+
+      const started = app.startBridgeClient();
+
+      expect(started).toBe(false);
+      expect(createBridgeClient).not.toHaveBeenCalled();
+      expect(app.bridgeRelayStatus).toEqual(expect.objectContaining({
+        running: false,
+        state: 'skipped',
+        status: 'profile_scope_skipped',
+      }));
+    });
+
+    it('tracks bridge lifecycle status for reconnect visibility', () => {
+      app.kernelBridge.emitBridgeEvent = jest.fn();
+
+      app.handleBridgeClientStatusUpdate({
+        type: 'relay.connected',
+        state: 'connected',
+        status: 'relay_connected',
+      });
+      app.handleBridgeClientStatusUpdate({
+        type: 'relay.reconnecting',
+        state: 'connecting',
+        status: 'relay_reconnecting',
+        reconnectAttempt: 2,
+        reconnectDelayMs: 1500,
+        reconnectAt: 1234567890,
+      });
+      app.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+        reason: 'network_lost',
+        code: 1006,
+      });
+
+      expect(app.getBridgeStatus()).toEqual(expect.objectContaining({
+        enabled: true,
+        configured: true,
+        mode: 'connecting',
+        running: false,
+        relayUrl: 'wss://relay.example.test',
+        deviceId: 'LOCAL',
+        state: 'disconnected',
+        status: 'relay_disconnected',
+        reconnectAttempt: 2,
+        nextReconnectDelayMs: 1500,
+        nextReconnectAt: 1234567890,
+        disconnectCount: 1,
+        flapCount: 1,
+        lastDisconnectReason: 'network_lost',
+        lastDisconnectCode: 1006,
+      }));
+      expect(app.kernelBridge.emitBridgeEvent).toHaveBeenCalledWith(
+        'bridge.relay.status',
+        expect.objectContaining({
+          flapCount: 1,
+          disconnectCount: 1,
+          reconnectAttempt: 2,
+        })
+      );
+    });
+
+    it('normalizes outbound structured type and keeps plain content fallback', async () => {
+      app.bridgeClient = {
+        isReady: jest.fn(() => true),
+        sendToDevice: jest.fn(async () => ({
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        })),
+      };
+
+      await app.routeBridgeMessage({
+        targetDevice: 'peer_a',
+        content: 'Approval result: approved by architect.',
+        fromRole: 'architect',
+        messageId: 'bridge-structured-1',
+        traceContext: { traceId: 'trace-structured-1' },
+        structuredMessage: {
+          type: 'approvalresult',
+          payload: {
+            requestMessageId: 'bridge-approval-1',
+            approved: true,
+            approverRole: 'architect',
+          },
+        },
+      });
+
+      expect(app.bridgeClient.sendToDevice).toHaveBeenCalledWith(expect.objectContaining({
+        content: 'Approval result: approved by architect.',
+        metadata: expect.objectContaining({
+          traceId: 'trace-structured-1',
+          structured: {
+            type: 'ApprovalResult',
+            payload: {
+              requestMessageId: 'bridge-approval-1',
+              approved: true,
+              approverRole: 'architect',
+            },
+          },
+        }),
+      }));
+    });
+
+    it('downgrades unknown outbound structured type to FYI', async () => {
+      app.bridgeClient = {
+        isReady: jest.fn(() => true),
+        sendToDevice: jest.fn(async () => ({
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        })),
+      };
+
+      await app.routeBridgeMessage({
+        targetDevice: 'peer_a',
+        content: 'Unknown structured message fallback',
+        fromRole: 'architect',
+        messageId: 'bridge-structured-2',
+        structuredMessage: {
+          type: 'customType',
+          payload: {
+            detail: 'non-standard structured payload',
+          },
+        },
+      });
+
+      expect(app.bridgeClient.sendToDevice).toHaveBeenCalledWith(expect.objectContaining({
+        metadata: expect.objectContaining({
+          structured: {
+            type: 'FYI',
+            payload: {
+              category: 'status',
+              detail: 'non-standard structured payload',
+              impact: 'context-only',
+              originalType: 'customType',
+            },
+          },
+        }),
+      }));
+    });
+
+    it('waits for bridge readiness before sending outbound bridge messages', async () => {
+      const readyStates = [false, false, true];
+      app.bridgeClient = {
+        isReady: jest.fn(() => (readyStates.length > 0 ? readyStates.shift() : true)),
+        sendToDevice: jest.fn(async () => ({
+          ok: true,
+          accepted: true,
+          queued: true,
+          verified: true,
+          status: 'bridge_delivered',
+        })),
+      };
+
+      const result = await app.routeBridgeMessage({
+        targetDevice: 'peer_a',
+        content: 'Bridge ready-wait test',
+        fromRole: 'architect',
+        messageId: 'bridge-ready-wait-1',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'bridge_delivered',
+      }));
+      expect(app.bridgeClient.isReady).toHaveBeenCalled();
+      expect(app.bridgeClient.sendToDevice).toHaveBeenCalledTimes(1);
+    });
+
+    it('journals and injects inbound structured type with bridge prefix', async () => {
+      const triggers = require('../modules/triggers');
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValue({ ok: true });
+
+      const result = await app.handleBridgeInboundMessage({
+        messageId: 'bridge-in-1',
+        fromDevice: 'peer_a',
+        content: 'Potential auth file conflict.',
+        metadata: {
+          structured: {
+            type: 'ConflictCheck',
+            payload: {
+              resource: 'ui/modules/auth.js',
+              action: 'write',
+              reason: 'updating auth handshake',
+            },
+          },
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'bridge_delivered',
+      }));
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[Bridge ConflictCheck from PEER_A]: Potential auth file conflict.',
+        null
+      );
+      expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
+        'upsert-comms-journal',
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            structuredType: 'ConflictCheck',
+            structured: {
+              type: 'ConflictCheck',
+              payload: {
+                resource: 'ui/modules/auth.js',
+                action: 'write',
+                reason: 'updating auth handshake',
+              },
+            },
+          }),
+        }),
+        expect.any(Object)
+      );
+    });
+
+    it('formats HandoffPacket bridge messages using the handoff note when available', async () => {
+      const triggers = require('../modules/triggers');
+      const evidenceLedger = require('../modules/ipc/evidence-ledger-handlers');
+      evidenceLedger.executeEvidenceLedgerOperation.mockResolvedValue({ ok: true });
+      app.handleInboundHandoffPacket = jest.fn().mockResolvedValue({
+        ok: true,
+        injection: {
+          message: '[HANDOFF PEER_A] Ship Phase 4\nBlockers: none\nSurfaced memories: 1',
+        },
+      });
+
+      const result = await app.handleBridgeInboundMessage({
+        messageId: 'bridge-in-handoff',
+        fromDevice: 'peer_a',
+        content: 'Cross-device handoff inbound',
+        metadata: {
+          structured: {
+            type: 'HandoffPacket',
+            payload: {
+              packet: {
+                packet_id: 'handoff-1',
+              },
+            },
+          },
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        status: 'bridge_delivered',
+      }));
+      expect(app.handleInboundHandoffPacket).toHaveBeenCalledWith(
+        expect.objectContaining({
+          packet_id: 'handoff-1',
+        }),
+        expect.objectContaining({
+          paneId: '1',
+        })
+      );
+      expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
+        ['1'],
+        '[Bridge HandoffPacket from PEER_A]\n[HANDOFF PEER_A] Ship Phase 4\nBlockers: none\nSurfaced memories: 1',
+        null
+      );
+    });
+  });
+
+  describe('Scoped Telegram Trigger Drain Poller', () => {
+    let app;
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+    });
+    it('scoped trigger drain poller exits early if profile is main or undefined', () => {
+      jest.useFakeTimers();
+      const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths');
+      
+      app.activeProfileName = undefined;
+      app.startScopedTelegramTriggerDrainPoller();
+      expect(getPathsSpy).not.toHaveBeenCalled();
+
+      app.activeProfileName = 'main';
+      app.startScopedTelegramTriggerDrainPoller();
+      expect(getPathsSpy).not.toHaveBeenCalled();
+
+      app.activeProfileName = 'client';
+      getPathsSpy.mockReturnValue([]); 
+      app.startScopedTelegramTriggerDrainPoller();
+      
+      jest.advanceTimersByTime(11000);
+      expect(getPathsSpy).toHaveBeenCalledWith('client');
+
+      getPathsSpy.mockRestore();
+      jest.useRealTimers();
+    });
+
+    it('drains and archives the trigger file when delivery is accepted without PTY verification', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-30T12:00:00.000Z'));
+      const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-accepted-'));
+      const triggerPath = path.join(triggerDir, 'architect.txt');
+      fs.writeFileSync(triggerPath, '[Telegram from @Clientchoi]: payload\n', 'utf8');
+
+      app.activeProfileName = 'client';
+      const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
+      const deliverSpy = jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: true,
+        accepted: true,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'accepted.daemon_pty_unverified',
+      });
+
+      app.startScopedTelegramTriggerDrainPoller();
+      await jest.advanceTimersByTimeAsync(11000);
+
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+      expect(fs.readFileSync(triggerPath, 'utf8')).toBe('');
+      const archivePath = path.join(triggerDir, 'drained', `architect-${new Date().toISOString().split('T')[0]}.txt`);
+      expect(fs.existsSync(archivePath)).toBe(true);
+      expect(fs.readFileSync(archivePath, 'utf8')).toContain('payload');
+
+      // Subsequent cycles must not re-inject the drained payload.
+      await jest.advanceTimersByTimeAsync(60 * 1000 * 3);
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+
+      app.stopScopedTelegramTriggerDrainPoller();
+      getPathsSpy.mockRestore();
+      deliverSpy.mockRestore();
+      jest.useRealTimers();
+      fs.rmSync(triggerDir, { recursive: true, force: true });
+    });
+
+    it('backs off on failed drains and quarantines the payload after max consecutive failures', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-06-30T12:00:00.000Z'));
+      const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-quarantine-'));
+      const triggerPath = path.join(triggerDir, 'architect.txt');
+      fs.writeFileSync(triggerPath, '[Telegram from @Clientchoi]: stuck payload\n', 'utf8');
+
+      app.activeProfileName = 'client';
+      const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
+      const deliverSpy = jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+      });
+
+      app.startScopedTelegramTriggerDrainPoller();
+      await jest.advanceTimersByTimeAsync(11000);
+      expect(deliverSpy).toHaveBeenCalledTimes(1);
+
+      // Backoff after the first failure is 60s, so the next 60s tick is the
+      // earliest allowed retry; failures 2..5 each take progressively longer.
+      // 31 minutes of ticks is enough for the full 1+2+4+8 minute backoff run.
+      await jest.advanceTimersByTimeAsync(31 * 60 * 1000);
+
+      expect(deliverSpy).toHaveBeenCalledTimes(5);
+      expect(fs.readFileSync(triggerPath, 'utf8')).toBe('');
+      const archivePath = path.join(triggerDir, 'drained', `architect-${new Date().toISOString().split('T')[0]}.txt`);
+      expect(fs.readFileSync(archivePath, 'utf8')).toContain('quarantined');
+      expect(fs.readFileSync(archivePath, 'utf8')).toContain('stuck payload');
+
+      // After quarantine the file is empty; no further injections occur.
+      await jest.advanceTimersByTimeAsync(5 * 60 * 1000);
+      expect(deliverSpy).toHaveBeenCalledTimes(5);
+
+      app.stopScopedTelegramTriggerDrainPoller();
+      getPathsSpy.mockRestore();
+      deliverSpy.mockRestore();
+      jest.useRealTimers();
+      fs.rmSync(triggerDir, { recursive: true, force: true });
+    });
+  });
+
+  describe('SquidRunApp Telegram ingress drain wiring', () => {
+    let app;
+    beforeEach(() => {
+      app = new SquidRunApp(mockAppContext, mockManagers);
+      seedPaneLaunchForCurrentGeneration();
+      seedPaneReadinessForApp(app);
+      freshTelegramSpoolRoot();
+    });
+
+    it('PRODUCTION SEAM: the canonical digest is the QUEUE RECORD, not an empty object', async () => {
+      // The near-miss this exists for: `buildTelegramInboundJob` did not carry
+      // `record` through, so `canonicalQueuedPayloadDigest` hashed `{}`. That
+      // fails SILENTLY and identically for every message ever sent — the marker
+      // still parses, the claim still commits, and the identity proves nothing.
+      // Unit fixtures cannot catch it because they pass the record directly.
+      const {
+        canonicalQueuedPayloadDigest,
+      } = require('../modules/main/telegram-consumed-proof');
+      const { TelegramAdmissionWriter } = require('../modules/main/telegram-admission-writer');
+      const { parseConsumeMarker } = require('../modules/main/telegram-consume-marker');
+
+      const record = {
+        updateId: 700100999,
+        text: 'the tankless job, not the other one',
+        chatId: 7000000001,
+        from: 'operator',
+        messageId: 24001,
+        routeKey: 'main',
+        targetProfile: 'main',
+        targetWindow: 'main',
+        timestampMs: Date.now(),
+        rawMetadata: { chatId: 7000000001, updateId: 700100999 },
+      };
+
+      let deliveredText = null;
+      jest.spyOn(app, 'deliverHumanMessageWithRecall').mockImplementation(async (message) => {
+        deliveredText = message;
+        return { accepted: true, verified: true, userVisible: true };
+      });
+
+      const built = app.buildTelegramInboundJob({
+        record,
+        messageId: 'telegram-in-700100999',
+        updateId: 700100999,
+        windowKey: 'main',
+        profile: 'main',
+        sessionScopeId: 'app-session-492',
+      });
+      // The builder must carry the record; everything below depends on it.
+      expect(built.record).toBe(record);
+
+      await app.deliverTelegramInboundJob(built);
+
+      const expectedDigest = canonicalQueuedPayloadDigest(record);
+      const emptyDigest = canonicalQueuedPayloadDigest({});
+      expect(expectedDigest).not.toBe(emptyDigest);
+
+      const writer = new TelegramAdmissionWriter({
+        dbPath: process.env.SQUIDRUN_ADMISSION_DB_PATH,
+      });
+      expect(writer.open().ok).toBe(true);
+      try {
+        const identity = writer.db
+          .prepare('SELECT * FROM telegram_source_identity WHERE message_id = ?')
+          .get('telegram-in-700100999');
+        expect(identity).toBeTruthy();
+        expect(identity.canonical_payload_sha256).toBe(expectedDigest);
+        expect(identity.canonical_payload_sha256).not.toBe(emptyDigest);
+      } finally {
+        writer.close();
+      }
+
+      // And the SAME digest is what the consumer is asked to echo.
+      const marker = parseConsumeMarker(deliveredText);
+      expect(marker).not.toBeNull();
+      expect(marker.queuedPayloadSha256).toBe(expectedDigest);
+    });
+
+    it('performFullShutdown quiesces the drain BEFORE killing the daemon', async () => {
+      // The daemon shutdown and force-kill used to run before drain disposal,
+      // so an in-flight pane delivery could lose its daemon mid-flight.
+      const order = [];
+      let release;
+      const gate = new Promise((r) => { release = r; });
+
+      app.telegramDrainCoordinator = {
+        dispose: async () => { await gate; order.push('drain-quiesced'); },
+      };
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+      // Configure the exit seam. Without it the mutated ordering merely CRASHES
+      // the harness, and a crash is not evidence that this assertion bites.
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+
+      const running = app.performFullShutdown('test');
+      // Nothing may have happened yet: the drain has not settled.
+      expect(order).toEqual([]);
+      release();
+      // Deliberately NOT swallowed: a rejection here is a real failure.
+      await running;
+
+      expect(order[0]).toBe('drain-quiesced');
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('daemon-shutdown'));
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('app-exit'));
+    });
+
+    it('quiesce is idempotent so shutdown() can safely repeat it', async () => {
+      let calls = 0;
+      app.telegramDrainCoordinator = { dispose: async () => { calls += 1; } };
+      await app.quiesceTelegramIngressDrain();
+      await app.quiesceTelegramIngressDrain();
+      expect(calls).toBe(1);
+      expect(app.telegramDrainCoordinator).toBeNull();
+    });
+
+    it.each([
+      ['ambiguous send', { ok: false, ambiguous: true, status: 'telegram_send_ambiguous' }],
+      ['accepted but not ok', { ok: false, accepted: true, status: 'telegram_send_ambiguous' }],
+    ])('MIRA %s HOLDS and never falls back to the Architect pane', async (_l, miraOutcome) => {
+      // A send that may already have reached Operator must not be followed by an
+      // Architect reply: that is two visible answers to one inbound message,
+      // inside a SINGLE delivery attempt, which no queue bookkeeping can undo.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue(miraOutcome);
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: false, delivered: 0, expectedParts: null,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 995 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-995', updateId: 995, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({ status: 'accepted.mira_send_ambiguous', accepted: true });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('A PROVEN pre-HTTP no-send MAY fall back to the Architect pane', async () => {
+      // Nothing left the process, so a fallback here is the only delivery.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: false, definiteNoSend: true, accepted: false, ambiguous: false,
+        status: 'telegram_send_failed',
+      });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: false, delivered: 0, expectedParts: null,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 996 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-996', updateId: 996, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(architectSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('routeTelegramReply marks a strict-path network failure AMBIGUOUS, not failed', async () => {
+      // The classification happens here, so it needs its own cover: the adapter
+      // tests mock routeMainTelegramInboundToMira and never exercise it.
+      const routing = require('../scripts/hm-telegram-routing');
+      jest.spyOn(routing, 'sendRoutedTelegramMessage')
+        .mockResolvedValue({ ok: false, error: 'read ECONNRESET' });
+      jest.spyOn(app, 'resolveTelegramInboundRoute').mockReturnValue({
+        ok: true, profile: 'main', windowKey: 'main',
+      });
+
+      const strict = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'reply',
+        fromRole: 'mira',
+        messageId: 'telegram-in-997-mira-reply',
+        chatId: 1111111111,
+        requireDurableJournal: true,
+        inboundMessageId: 'telegram-in-997',
+      });
+      expect(strict).toMatchObject({ status: 'telegram_send_ambiguous', ambiguous: true });
+
+      // And an ordinary sender is unaffected: its retry logic depends on a
+      // plain failure, so ambiguity must not leak outside the strict path.
+      const ordinary = await app.routeTelegramReply({
+        target: 'telegram',
+        content: 'reply',
+        fromRole: 'architect',
+        messageId: 'tg-ordinary',
+        chatId: 1111111111,
+      });
+      expect(ordinary).toMatchObject({ status: 'telegram_send_failed', ok: false });
+    });
+
+    it.each([
+      ['normal reply', false],
+      ['direct-status reply', true],
+    ])('REAL WRAPPER (%s): an ambiguous send reaches the adapter as a HOLD', async (_l, direct) => {
+      // The direct branch needs BOTH preconditions: the recognizer input
+      // (body 'status') and answer.ok === true. My earlier version mocked only
+      // an answer_text, so both rows fell through to the normal wrapper and the
+      // missing direct promotion survived deletion — a false green.
+      const replySpy = jest.spyOn(app, 'routeTelegramReply').mockResolvedValue({
+        handled: true, ok: false,
+        accepted: true, ambiguous: true, definiteNoSend: false,
+        status: 'telegram_send_ambiguous',
+      });
+      jest.spyOn(app, 'buildMiraDirectChannelStatusReply')
+        .mockReturnValue(direct ? { ok: true, answer_text: 'status' } : null);
+
+      const outcome = await app.routeMainTelegramInboundToMira({
+        body: direct ? 'status' : 'hello',
+        sender: 'operator',
+        metadata: { chatId: 111, updateId: 998 },
+        inboundMessageId: 'telegram-in-998',
+        inboundSessionScopeId: 'sess',
+      });
+
+      // Prove WHICH branch ran, so a fall-through cannot masquerade as coverage.
+      const sentId = replySpy.mock.calls[0][0].messageId;
+      expect(sentId).toBe(direct
+        ? 'telegram-in-998-mira-direct-status-reply'
+        : 'telegram-in-998-mira-reply');
+
+      // And that the adapter can SEE the ambiguity at the top level.
+      expect(outcome).toMatchObject({ ambiguous: true, accepted: true });
+    });
+
+    it('THE SCOPED LEDGER PATH IS runtime-<profile>, not plain runtime', () => {
+      // Architect #140/#141, carried forward to the terminal store in S492: a
+      // scoped profile NAMESPACES the first coord segment, so plain `runtime`
+      // would address a database that never exists, read as ABSENCE, and mean
+      // "never delivered" — a duplicate dressed as a miss.
+      const resolved = app.resolveScopedLedgerDbPath('client');
+      expect(resolved).toContain(`${path.sep}runtime-client${path.sep}`);
+      expect(resolved).not.toContain(`${path.sep}runtime${path.sep}`);
+      expect(resolved.endsWith('evidence-ledger.db')).toBe(true);
+    });
+
+    it('AN UNRESOLVED SCOPED ROOT THROWS instead of falling back to main', () => {
+      delete process.env.SQUIDRUN_NOSUCH_PROJECT_ROOT;
+      expect(() => app.resolveScopedLedgerDbPath('nosuch'))
+        .toThrow(/cannot resolve evidence ledger root/);
+    });
+
+    it('MAIN keeps its canonical default ledger', () => {
+      expect(app.resolveScopedLedgerDbPath('main')).toBeNull();
+    });
+
+    it('SCOPED TRIGGER PATHS are empty when the profile root is unresolved', () => {
+      // The getProjectRoot() fallback wrote a SCOPED message into MAIN's tree.
+      // That is not a fallback, it is a cross-profile leak that looks like
+      // delivery. No root means no path.
+      delete process.env.SQUIDRUN_NOSUCH_PROJECT_ROOT;
+      expect(app.getScopedTelegramTriggerPaths('nosuch')).toEqual([]);
+    });
+
+    it('SCOPED TRIGGER PATHS point only at the exact profile root', () => {
+      // The suite installs a REAL temp root; getProfileProjectRootOverride
+      // requires existsSync, so a made-up path resolves to null and the
+      // assertion would pass for the wrong reason.
+      const paths = app.getScopedTelegramTriggerPaths('scoped');
+      expect(paths).toHaveLength(1);
+      expect(paths[0]).toContain(path.resolve(scopedProfileRoot));
+      expect(paths[0]).toContain(`triggers-scoped${path.sep}architect.txt`);
+    });
+
+    it('SCOPED DELIVERY refuses BEFORE any WebSocket is constructed', async () => {
+      // My first version spied on the ws MODULE. squidrun-app captured
+      // require('ws') at load, so that spy intercepted nothing and the test was
+      // false-green (Architect #143). This drives the real injection seam.
+      const created = [];
+      const createWebSocket = jest.fn((url) => { created.push(url); throw new Error('should not construct'); });
+
+      delete process.env.SQUIDRUN_NOSUCH_PROJECT_ROOT;
+      const result = await app.deliverScopedTelegramInboundToProfileWindow(
+        'nosuch',
+        'hello',
+        { createWebSocket }
+      );
+
+      expect(createWebSocket).not.toHaveBeenCalled();
+      expect(created).toEqual([]);
+      expect(result).toMatchObject({
+        ok: false,
+        definiteNoSend: true,
+        status: 'scoped_profile_root_unresolved',
+      });
+    });
+
+    it('POSITIVE CONTROL: a resolvable root DOES reach the WebSocket factory', async () => {
+      // Without this, "not called" could simply mean the seam is never used and
+      // the refusal test would pass for the wrong reason.
+      const createWebSocket = jest.fn(() => {
+        const stub = {
+          readyState: 0,
+          on() { return stub; },
+          once() { return stub; },
+          off() { return stub; },
+          removeListener() { return stub; },
+          addEventListener() { return stub; },
+          send() {},
+          close() {},
+          terminate() {},
+          removeAllListeners() {},
+        };
+        return stub;
+      });
+
+      await app.deliverScopedTelegramInboundToProfileWindow(
+        'scoped',
+        'hello',
+        { createWebSocket, timeoutMs: 1 }
+      ).catch(() => {});
+
+      expect(createWebSocket).toHaveBeenCalled();
+      expect(String(createWebSocket.mock.calls[0][0])).toContain('ws://127.0.0.1:');
+    });
+
+    it('SCOPED REPLAY PROOF reads the exact runtime-<profile> ledger', async () => {
+      // Architect #146: the resolver and the reader were tested SEPARATELY, so
+      // a mutant leaving the resolver correct while findTelegramDeliveryReceipt
+      // read main/default state would survive. This drives the actual call.
+      const lookup = require('../modules/main/telegram-terminal-lookup');
+      const calls = [];
+      const spy = jest.spyOn(lookup, 'findTerminalConsumptionEvidence')
+        .mockImplementation((input) => {
+          calls.push(input);
+          // Answer ONLY for the exact scoped ledger.
+          if (input?.dbPath && input.dbPath.includes(`runtime-scoped${path.sep}`)) {
+            return {
+              status: 'delivered.verified',
+              verified: true,
+              proofSource: 'telegram_consumed_receipt',
+              messageId: input.messageId,
+              routeKey: 'scoped',
+              windowKey: 'scoped',
+              profile: 'scoped',
+              chatId: '111',
+              generation: 'app-session-492',
+              provedAtMs: 1_700_000_000_000,
+            };
+          }
+          return null;
+        });
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+
+      const found = await app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-700',
+        routeKey: 'scoped',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        chatId: 111,
+      });
+
+      expect(found).toMatchObject({ verified: true, proofSource: 'telegram_consumed_receipt' });
+      expect(calls).toHaveLength(1);
+      expect(calls[0].dbPath).toContain(`runtime-scoped${path.sep}`);
+      expect(calls[0].messageId).toBe('telegram-in-700');
+      spy.mockRestore();
+    });
+
+    it('THE SAME ID at main/default does NOT retire a scoped message', async () => {
+      const lookup = require('../modules/main/telegram-terminal-lookup');
+      const spy = jest.spyOn(lookup, 'findTerminalConsumptionEvidence')
+        .mockImplementation((input) => (
+          // Present ONLY at the default/main ledger.
+          input?.dbPath && input.dbPath.includes(`runtime-scoped${path.sep}`)
+            ? null
+            : { status: 'delivered.verified', verified: true, messageId: input.messageId }
+        ));
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+
+      const found = await app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-701',
+        routeKey: 'scoped',
+        windowKey: 'scoped',
+        profile: 'scoped',
+        chatId: 111,
+      });
+
+      // Main's receipt says nothing about whether it reached HER window.
+      expect(found).toBeNull();
+      spy.mockRestore();
+    });
+
+    function chunkRow(base, index, count, overrides = {}) {
+      return {
+        messageId: `${base}-part${index}`,
+        direction: 'outbound',
+        channel: 'telegram',
+        senderRole: 'mira',
+        ackStatus: 'telegram_delivered',
+        status: 'acked',
+        chatId: 111,
+        metadata: {
+          chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+          inboundMessageId: 'telegram-in-800',
+          chunkIndex: index,
+          chunkCount: count,
+          ...overrides,
+        },
+      };
+    }
+
+    function serveChunks(rowsByMessageId) {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (rowsByMessageId[messageId] ? [rowsByMessageId[messageId]] : []));
+    }
+
+    const BASE800 = 'telegram-in-800-mira-reply';
+    const EXPECT800 = {
+      inboundMessageId: 'telegram-in-800',
+      chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+    };
+
+    it('ALL PARTS 1..N exactly once is complete', () => {
+      serveChunks({
+        [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3),
+        [`${BASE800}-part2`]: chunkRow(BASE800, 2, 3),
+        [`${BASE800}-part3`]: chunkRow(BASE800, 3, 3),
+      });
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: true, delivered: 3, expectedParts: 3 });
+    });
+
+    it.each([
+      ['a GAP in the middle', { skip: 2 }],
+      ['a MISMATCHED count on a later part', { badCount: true }],
+      ['a SUFFIX that disagrees with the recorded index', { badIndex: true }],
+    ])('CHUNK INCOHERENCE (%s) is PARTIAL, never complete', (_l, mode) => {
+      const rows = { [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3) };
+      if (!mode.skip) {
+        rows[`${BASE800}-part2`] = chunkRow(BASE800, 2, 3,
+          mode.badCount ? { chunkCount: 4 } : (mode.badIndex ? { chunkIndex: 99 } : {}));
+      }
+      rows[`${BASE800}-part3`] = chunkRow(BASE800, 3, 3);
+      serveChunks(rows);
+
+      const egress = app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800);
+      // A visible prefix exists, so this must HOLD rather than re-send over it.
+      expect(egress.complete).toBe(false);
+      expect(egress.anyDelivered).toBe(true);
+    });
+
+    it('A NON-INTEGER chunk count is PARTIAL, not complete', () => {
+      serveChunks({ [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3, { chunkCount: 'three' }) });
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: false, anyDelivered: true, expectedParts: null });
+    });
+
+    it.each([['chatId'], ['windowKey'], ['profile'], ['routeKey']])(
+      'A MISSING expected.%s THROWS rather than authorizing replay',
+      (field) => {
+        const partial = { ...EXPECT800 };
+        delete partial[field];
+        expect(() => app.inspectMiraOutboundEgress('telegram-in-800', partial))
+          .toThrow(new RegExp(`requires expected.${field}`));
+      }
+    );
+
+    it.each([['windowKey'], ['profile'], ['routeKey'], ['inboundMessageId']])(
+      'A ROW MISSING %s is not accepted as proof',
+      (field) => {
+        const row = chunkRow(BASE800, 1, 1);
+        delete row.metadata[field];
+        serveChunks({ [`${BASE800}-part1`]: row });
+        expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800).complete).toBe(false);
+      }
+    );
+
+    it('A DUPLICATE delivered row for one part is PARTIAL, never complete', () => {
+      // .find() returned the first hit and made duplicates invisible, so two
+      // records for one part could still read as complete. If two rows claim
+      // the same part, we cannot say it was sent exactly once.
+      const commsJournal = require('../modules/main/comms-journal');
+      const dup = chunkRow(BASE800, 1, 1);
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === `${BASE800}-part1` ? [dup, { ...dup }] : []));
+
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: false, anyDelivered: true });
+    });
+
+    it.each([
+      ['a numeric string', '2'],
+      ['a boolean', true],
+      ['an unsafe integer', Number.MAX_SAFE_INTEGER + 2],
+    ])('A CHUNK COUNT that is %s is not a valid position', (_l, value) => {
+      serveChunks({ [`${BASE800}-part1`]: chunkRow(BASE800, 1, 3, { chunkCount: value }) });
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800))
+        .toMatchObject({ complete: false, expectedParts: null });
+    });
+
+    it('A BASE id carrying chunk metadata is NOT complete', () => {
+      // The chunked producer uses exact -partN ids, so a base row with chunk
+      // metadata disagrees with its own shape.
+      const commsJournal = require('../modules/main/comms-journal');
+      const row = chunkRow(BASE800, 1, 3);
+      row.messageId = BASE800;
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === BASE800 ? [row] : []));
+
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800).complete).toBe(false);
+    });
+
+    it('A TOP-LEVEL field cannot stand in for missing durable metadata', () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      const row = chunkRow(BASE800, 1, 1);
+      delete row.metadata.routeKey;
+      row.routeKey = 'main'; // exact, but only at the top level
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === `${BASE800}-part1` ? [row] : []));
+
+      expect(app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800).complete).toBe(false);
+    });
+
+    it('EXPECTED inboundMessageId must equal the id being proved', () => {
+      expect(() => app.inspectMiraOutboundEgress('telegram-in-800', {
+        ...EXPECT800, inboundMessageId: 'telegram-in-999',
+      })).toThrow(/must match the inbound id/);
+    });
+
+    // All FIVE identity fields, in BOTH failure modes. Each one, missing or
+    // wrong, must still count as visible egress that HOLDS.
+    it.each([
+      ['MISSING inboundMessageId', (row) => { delete row.metadata.inboundMessageId; }],
+      ['MISSING chatId', (row) => { delete row.metadata.chatId; }],
+      ['MISSING windowKey', (row) => { delete row.metadata.windowKey; }],
+      ['MISSING profile', (row) => { delete row.metadata.profile; }],
+      ['MISSING routeKey', (row) => { delete row.metadata.routeKey; }],
+      ['MISMATCHED inboundMessageId', (row) => { row.metadata.inboundMessageId = 'telegram-in-999'; }],
+      ['MISMATCHED chatId', (row) => { row.metadata.chatId = 222; }],
+      ['MISMATCHED windowKey', (row) => { row.metadata.windowKey = 'someone-else'; }],
+      ['MISMATCHED profile', (row) => { row.metadata.profile = 'someone-else'; }],
+      ['MISMATCHED routeKey', (row) => { row.metadata.routeKey = 'someone-else'; }],
+    ])('A DELIVERED ROW WITH %s is anyDelivered, so it HOLDS', (_l, corrupt) => {
+      // Filtering delivered rows through exact identity made an uncorrelated
+      // record look like "nothing was ever sent" — which permits the Architect
+      // fallback and stacks a SECOND reply on top of one Mira already sent.
+      const commsJournal = require('../modules/main/comms-journal');
+      const row = chunkRow(BASE800, 1, 1);
+      delete row.metadata.chunkIndex;
+      delete row.metadata.chunkCount;
+      row.messageId = BASE800;
+      corrupt(row);
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries')
+        .mockImplementation(({ messageId }) => (messageId === BASE800 ? [row] : []));
+
+      const egress = app.inspectMiraOutboundEgress('telegram-in-800', EXPECT800);
+      expect(egress.complete).toBe(false);
+      expect(egress.anyDelivered).toBe(true);
+    });
+
+    it('AN UNCORRELATED MIRA DELIVERY does NOT fall back to the Architect pane', async () => {
+      // The end-to-end consequence: partial/uncorrelated egress must hold.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: false, handled: true, status: 'telegram_send_failed',
+      });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: true, delivered: 0, expectedParts: null,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 810 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-810', updateId: 810, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(architectSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ accepted: true });
+    });
+
+    it('A FAILED QUIESCE ABORTS shutdown before anything is torn down', async () => {
+      // Proceeding would kill the daemon and close journals underneath a
+      // delivery we could not settle — neither delivered nor durably held.
+      const order = [];
+      // ONE coordinator throughout, with a flag — production never swaps the
+      // coordinator or clears the sticky latch, so doing either in the test
+      // would bypass the very state we just asserted.
+      const coordinator = {
+        failDispose: true,
+        dispose: async () => {
+          if (coordinator.failDispose) throw new Error('drain stuck');
+          order.push('drain-quiesced');
+        },
+      };
+      app.telegramDrainCoordinator = coordinator;
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockImplementation(async () => {
+        order.push('supervisor-stop');
+        return { ok: true, skipped: true };
+      });
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+
+      const result = await app.performFullShutdown('test');
+
+      // NOTHING may have been torn down.
+      expect(order).toEqual([]);
+      expect(result).toMatchObject({
+        ok: false, success: false, aborted: true, stage: 'telegram_drain_quiesce',
+      });
+      // The OUTER finally owns the latch; clearing it inside the abort would
+      // let a second retry start and then have call #1 erase its latch.
+      expect(app.fullShutdownPromise).toBeNull();
+      // Quiesce is sticky: nothing may resurrect the coordinator.
+      expect(app.telegramDrainQuiesced).toBe(true);
+
+      // The SAME coordinator must still be retained for a retry.
+      expect(app.telegramDrainCoordinator).toBe(coordinator);
+
+      // A RETRY through the production path: only the underlying failure is
+      // repaired. quiesce already retries a retained coordinator even with the
+      // latch set, so nothing in the app state is touched by hand.
+      coordinator.failDispose = false;
+      const retry = await app.performFullShutdown('retry');
+
+      expect(order[0]).toBe('drain-quiesced');
+      expect(retry?.aborted).toBeFalsy();
+    });
+
+    it('THE SUCCESS PATH still tears down in order after a clean quiesce', async () => {
+      // The abort must not have broken the ordinary case.
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+
+      await app.performFullShutdown('test');
+
+      expect(order[0]).toBe('drain-quiesced');
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('daemon-shutdown'));
+    });
+
+    function shutdownHarness(order) {
+      app.ctx.daemonClient = { shutdown: () => order.push('daemon-shutdown') };
+      jest.spyOn(app, 'forceKillDaemonFromPidFile').mockImplementation(() => order.push('daemon-force-kill'));
+      jest.spyOn(app, 'shutdown').mockImplementation(async () => order.push('app-shutdown'));
+      jest.spyOn(app, 'stopSupervisorFromPidFile').mockResolvedValue({ ok: true, skipped: true });
+      const electron = require('electron');
+      electron.app.exit = jest.fn(() => order.push('app-exit'));
+    }
+
+    it('THE QUIT NOTICE is sent AFTER quiesce and BEFORE the daemon dies', async () => {
+      // The poller is alive here and will not be after daemon shutdown. Telling
+      // Operator his messages will wait is only honest while we can still send it.
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+      jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(async () => {
+        order.push('quit-notice');
+        return { ok: true };
+      });
+      shutdownHarness(order);
+
+      await app.performFullShutdown('test');
+
+      expect(order.indexOf('drain-quiesced')).toBeLessThan(order.indexOf('quit-notice'));
+      expect(order.indexOf('quit-notice')).toBeLessThan(order.indexOf('daemon-shutdown'));
+    });
+
+    it('A SLOW NOTICE delays the daemon: it is awaited, not fired and forgotten', async () => {
+      const order = [];
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      app.telegramDrainCoordinator = { dispose: async () => {} };
+      jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(async () => {
+        await gate;
+        order.push('quit-notice');
+        return { ok: true };
+      });
+      shutdownHarness(order);
+
+      const running = app.performFullShutdown('test');
+      await new Promise((r) => setImmediate(r));
+      expect(order).toEqual([]);
+      release();
+      await running;
+      expect(order[0]).toBe('quit-notice');
+    });
+
+    it.each([
+      ['a FALSE result', async () => ({ ok: false, reason: 'send_failed' })],
+      ['a THROW', async () => { throw new Error('telegram down'); }],
+    ])('%s from the notice does NOT block teardown', async (_l, impl) => {
+      const order = [];
+      app.telegramDrainCoordinator = { dispose: async () => {} };
+      jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(impl);
+      shutdownHarness(order);
+
+      await app.performFullShutdown('test');
+
+      expect(order).toContain('daemon-shutdown');
+      expect(order).toContain('app-shutdown');
+    });
+
+    it('TEARDOWN PROCEEDS once the notice bound expires', async () => {
+      // The whole point of the bound: a dead Telegram must not stop Quit — and
+      // proving it must not depend on the wall clock.
+      jest.useFakeTimers();
+      const routing = require('../scripts/hm-telegram-routing');
+      try {
+        const order = [];
+        app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
+        routing.sendRoutedTelegramMessage.mockImplementation(() => new Promise(() => {}));
+        app.quitNoticeTimeoutMs = 5000;
+        shutdownHarness(order);
+
+        const running = app.performFullShutdown('test');
+
+        // Quiesce has run; nothing may tear down while the notice is pending.
+        await jest.advanceTimersByTimeAsync(4999);
+        expect(order).toEqual(['drain-quiesced']);
+
+        await jest.advanceTimersByTimeAsync(1);
+        await running;
+
+        expect(order).toContain('daemon-shutdown');
+        expect(order).toContain('app-shutdown');
+        expect(order[0]).toBe('drain-quiesced');
+      } finally {
+        delete app.quitNoticeTimeoutMs;
+        routing.sendRoutedTelegramMessage.mockReset();
+        routing.sendRoutedTelegramMessage.mockResolvedValue({ ok: true });
+        jest.useRealTimers();
+      }
+    });
+
+    it('A QUIESCE ABORT sends no notice at all', async () => {
+      const notice = jest.spyOn(app, 'sendQuitTelegramNotice').mockResolvedValue({ ok: true });
+      app.telegramDrainCoordinator = { dispose: async () => { throw new Error('stuck'); } };
+      shutdownHarness([]);
+
+      const result = await app.performFullShutdown('test');
+
+      expect(result).toMatchObject({ aborted: true });
+      expect(notice).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the native confirm', 'modules/main/squidrun-app.js', 'SHUTDOWN_CONFIRM_MESSAGE'],
+      ['the renderer confirm', 'renderer.js', 'Quit SquidRun?'],
+      ['the static Quit tooltip', 'index.html', 'fullRestartBtn'],
+      ['the RUNTIME Quit tooltip', 'renderer.js', 'This RUNTIME assignment is the live tooltip'],
+    ])('%s tells the truth about Telegram going offline', (_l, relPath, marker) => {
+      const src = fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+      const at = src.indexOf(marker);
+      expect(at).toBeGreaterThan(-1);
+      // Flatten source-level string concatenation: the copy is split across `+`
+      // joins, so a phrase can straddle a break and fail for formatting rather
+      // than for being untrue.
+      const flat = src.slice(at, at + 1400).toLowerCase().replace(/['"`]\s*\+?\s*['"`]?/g, '');
+      expect(flat).toContain('telegram');
+      expect(flat).toMatch(/offline/);
+      expect(flat).toMatch(/reopen/);
+    });
+
+    it.each([
+      ['the standalone profile-app prompt', 'Quit the ${windowContext.windowKey} profile app?'],
+      ['the secondary window prompt', 'Close the ${windowContext.windowKey} window?'],
+    ])('%s keeps its own copy and gains NO polling warning', (_l, marker) => {
+      // These are the ACTUAL non-main confirmations (~3945), not the runtime
+      // tooltip branch that also contains "main SquidRun keeps running".
+      // Main owns getUpdates and keeps polling when either closes, so warning
+      // here would be a lie in the other direction.
+      const src = fs.readFileSync(path.join(__dirname, '..', 'renderer.js'), 'utf8');
+      const at = src.indexOf(marker);
+      expect(at).toBeGreaterThan(-1);
+      const lineStart = src.lastIndexOf('\n', at) + 1;
+      const lineEnd = src.indexOf('\n', at);
+      const region = src.slice(lineStart, lineEnd).toLowerCase();
+      // Its existing reassurance must remain...
+      expect(region).toMatch(/keeps? running/);
+      // ...and it must not claim polling stops.
+      expect(region).not.toContain('polling goes offline');
+      expect(region).not.toContain('will not be seen');
+    });
+
+    describe('the quit notice helper itself', () => {
+      // Every ordering test above spies this method out, so a helper that did
+      // nothing would pass all of them. These drive the real implementation.
+      //
+      // squidrun-app destructures sendRoutedTelegramMessage at module load, so
+      // jest.spyOn would replace a property the captured const never reads —
+      // the same captured-module-spy trap rejected in the WebSocket work. Drive
+      // the MOCKED FUNCTION OBJECT itself so source and test share identity.
+      const routing = require('../scripts/hm-telegram-routing');
+      const sendFn = routing.sendRoutedTelegramMessage;
+
+      beforeEach(() => {
+        sendFn.mockReset();
+        sendFn.mockResolvedValue({ ok: true });
+      });
+
+      afterEach(() => {
+        sendFn.mockReset();
+        sendFn.mockResolvedValue({ ok: true });
+      });
+
+      it('MAIN sends exactly one notice with the main-built env and honest metadata', async () => {
+        const envSentinel = { __sentinel: 'main-built-env', SQUIDRUN_PROFILE: 'main' };
+        jest.spyOn(app, 'buildTelegramPollerEnv').mockReturnValue(envSentinel);
+
+        const result = await app.sendQuitTelegramNotice('window-close');
+
+        expect(sendFn).toHaveBeenCalledTimes(1);
+        const [message, env, opts] = sendFn.mock.calls[0];
+        expect(String(message).toLowerCase()).toContain('telegram is going offline');
+        // Identity, not shape: toMatchObject({SQUIDRUN_PROFILE:'main'}) can pass
+        // against live process.env and proves nothing about forwarding.
+        expect(env).toBe(envSentinel);
+        expect(opts.senderRole).toBe('system');
+        expect(opts.metadata).toMatchObject({
+          source: 'squidrun-quit-notice',
+          shutdownReason: 'window-close',
+          windowKey: 'main',
+          profile: 'main',
+        });
+        expect(result).toMatchObject({ ok: true });
+      });
+
+      it('A FALSE result is reported as a notice failure', async () => {
+        sendFn.mockResolvedValue({ ok: false, error: 'chat not found' });
+        await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+      });
+
+      it('A THROWN router is reported as a notice failure, not propagated', async () => {
+        sendFn.mockImplementation(() => { throw new Error('telegram down'); });
+        await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+      });
+
+      it('A NEVER-SETTLING ROUTER settles as a timeout, not a hang', async () => {
+        // Deterministic: a wall-clock wait can pass or fail for timing reasons
+        // and proves nothing about the bound itself.
+        jest.useFakeTimers();
+        try {
+          sendFn.mockImplementation(() => new Promise(() => {}));
+          app.quitNoticeTimeoutMs = 5000;
+
+          let settled = null;
+          const pending = app.sendQuitTelegramNotice('test').then((r) => { settled = r; });
+
+          // Before the bound: still waiting.
+          await jest.advanceTimersByTimeAsync(4999);
+          expect(settled).toBeNull();
+
+          // The final millisecond releases it.
+          await jest.advanceTimersByTimeAsync(1);
+          await pending;
+          expect(settled).toMatchObject({ ok: false, reason: 'timeout' });
+        } finally {
+          delete app.quitNoticeTimeoutMs;
+          jest.useRealTimers();
+        }
+      });
+
+      it('A FAST REJECTION leaves no armed timer behind', async () => {
+        // The ONLY regression covering the try/finally fix: Promise.race rejects
+        // straight past a trailing clearTimeout, so an immediate failure left
+        // the timer armed for the whole bound. The never-settling test cannot
+        // catch this — it never takes the rejection path.
+        jest.useFakeTimers();
+        try {
+          sendFn.mockRejectedValue(new Error('instant failure'));
+          app.quitNoticeTimeoutMs = 5000;
+
+          await expect(app.sendQuitTelegramNotice('test')).resolves.toMatchObject({ ok: false });
+          expect(jest.getTimerCount()).toBe(0);
+        } finally {
+          delete app.quitNoticeTimeoutMs;
+          jest.useRealTimers();
+        }
+      });
+
+      it('A LATE REJECTION after the timeout does not surface unhandled', async () => {
+        let rejectLater;
+        sendFn.mockImplementation(() => new Promise((_res, rej) => { rejectLater = rej; }));
+        app.quitNoticeTimeoutMs = 20;
+
+        const result = await app.sendQuitTelegramNotice('test');
+        expect(result).toMatchObject({ ok: false, reason: 'timeout' });
+
+        // The losing promise has its own catch; this must not blow up the run.
+        rejectLater(new Error('late failure'));
+        await new Promise((r) => setImmediate(r));
+
+        delete app.quitNoticeTimeoutMs;
+      });
+
+      it('NON-MAIN sends nothing at all: main owns polling', async () => {
+        app.activeProfileName = 'client';
+        const result = await app.sendQuitTelegramNotice('test');
+        expect(sendFn).not.toHaveBeenCalled();
+        expect(result).toMatchObject({ skipped: true });
+        app.activeProfileName = 'main';
+      });
+    });
+
+    it('AN UNOBSERVED STOP means NO replacement is forked', async () => {
+      // The whole point: forking after an exit we never saw is how two
+      // getUpdates children end up alive on one cursor.
+      app.inboundPollerService.stopTelegram = jest.fn()
+        .mockResolvedValue({ ok: false, exited: false, reason: 'exit_not_observed' });
+      const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
+
+      const result = await app.restartTelegramPoller({ reason: 'test' });
+
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ success: false, aborted: true, startupReason: 'exit_not_observed' });
+    });
+
+    it('CONCURRENT RESTARTS share one promise instead of racing to fork', async () => {
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      app.inboundPollerService.stopTelegram = jest.fn(async () => {
+        await gate;
+        return { ok: true, exited: true };
+      });
+      const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
+
+      const a = app.restartTelegramPoller({ reason: 'one' });
+      const b = app.restartTelegramPoller({ reason: 'two' });
+      expect(a).toBe(b);
+
+      release();
+      await Promise.all([a, b]);
+
+      // One stop, one start — not two of either.
+      expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
+      expect(startSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['SHUTDOWN', () => { app.shuttingDown = true; }, 'shutting_down'],
+      ['an explicit CANCEL', null, 'cancelled'],
+    ])('%s winning while we wait means no replacement is forked', async (_l, trip, expected) => {
+      let release;
+      const gate = new Promise((r) => { release = r; });
+      app.inboundPollerService.stopTelegram = jest.fn(async () => {
+        await gate;
+        return { ok: true, exited: true };
+      });
+      const startSpy = jest.spyOn(app, 'startTelegramPoller').mockReturnValue(true);
+
+      let cancelled = false;
+      const pending = app.restartTelegramPoller({
+        reason: 'test',
+        isCancelled: () => cancelled,
+      });
+
+      // The decision is made AFTER the exit is observed, not before the wait.
+      if (trip) trip(); else cancelled = true;
+      release();
+      const result = await pending;
+
+      expect(startSpy).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ success: false, skipped: true, startupReason: expected });
+      app.shuttingDown = false;
+    });
+
+    it('creates exactly ONE coordinator and reuses it', () => {
+      // Two coordinators would each hold their own single-flight latch and could
+      // deliver the same record twice.
+      const a = app.getTelegramDrainCoordinator();
+      const b = app.getTelegramDrainCoordinator();
+      expect(a).toBe(b);
+    });
+
+    it('the callback contains NO direct delivery path any more', () => {
+      // Source-level backstop for the contract the behaviour tests assert: if a
+      // direct delivery call is ever reintroduced into the callback, replays
+      // would deliver twice — once inline, once through the drain.
+      const src = fs.readFileSync(
+        path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+        'utf8'
+      );
+      const start = src.indexOf('const spooled = telegramIngressSpool.acceptInbound({');
+      const end = src.indexOf('\n      },\n    });', start);
+      const callback = src.slice(start, end);
+      expect(callback).not.toContain('deliverHumanMessageWithRecall');
+      expect(callback).not.toContain('deliverScopedTelegramInboundWithRetry');
+      expect(callback).not.toContain('routeMainTelegramInboundToMira');
+      expect(callback).not.toContain('handleScopedTelegramInboundFallback');
+      expect(callback).toContain('scheduleTelegramIngressDrain');
+    });
+
+    it('the drain adapter never reaches the forbidden trigger fallback', () => {
+      const src = fs.readFileSync(
+        path.join(__dirname, '..', 'modules', 'main', 'squidrun-app.js'),
+        'utf8'
+      );
+      const start = src.indexOf('async deliverTelegramInboundJob(job = {}) {');
+      expect(start).toBeGreaterThan(-1);
+      const end = src.indexOf('\n  }\n', start);
+      const adapter = src.slice(start, end).replace(/^\s*\/\/.*$/gm, '');
+      // loss site #1 — the fixed-path trigger overwrite.
+      expect(adapter).not.toContain('handleScopedTelegramInboundFallback(');
+    });
+
+    it('a decorated inbound journal row is NOT consulted at all, however verified it looks', async () => {
+      // The row-based seam was removed (Architect #73). It proved only that SOME
+      // row with this id reached a verified submit, and then attached whatever
+      // route/window/profile was being asked about — accepting proof from one
+      // surface as proof for another. It also raced the void inbound upsert.
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([{
+        messageId: 'telegram-in-950',
+        direction: 'inbound',
+        status: 'brokered',
+        ackStatus: 'prompt_submitted.receipt_verified',
+        metadata: { submitVerification: { verified: true } },
+      }]);
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue(null);
+
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-950', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
+      })).resolves.toBeNull();
+    });
+
+    it('a proof-store failure HOLDS rather than risking a second copy', async () => {
+      const lookup = require('../modules/main/telegram-terminal-lookup');
+      const spy = jest.spyOn(lookup, 'findTerminalConsumptionEvidence')
+        .mockImplementation(() => { throw new Error('terminal store unreadable'); });
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-951', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
+      })).rejects.toThrow(/terminal consumption lookup failed/);
+      spy.mockRestore();
+    });
+
+    // Expected identity is REQUIRED in full now: a missing field used to act as
+    // a wildcard and authorize replay against any row.
+    // Built PER inbound id: the old shared constant hardcoded 990 and quietly
+    // described a different message than the test was about.
+    const expectedFor = (inbound) => ({
+      inboundMessageId: inbound,
+      chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+    });
+    const EXPECTED990 = expectedFor('telegram-in-990');
+
+    function miraRow(messageId, extra = {}) {
+      return {
+        messageId,
+        direction: 'outbound',
+        channel: 'telegram',
+        senderRole: 'mira',
+        ackStatus: 'telegram_delivered',
+        status: 'acked',
+        chatId: 111,
+        metadata: {
+          chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+          inboundMessageId: String(messageId).replace(/-mira-(reply|direct-status-reply)(-part\d+)?$/, ''),
+        },
+        ...extra,
+      };
+    }
+
+    it('CHUNKED EGRESS: one delivered part out of three is PARTIAL, not proof', () => {
+      // sendLongTelegramMessage ids pieces <base>-part<N>
+      // (scripts/hm-telegram-routing.js:255). Querying only <base> proves
+      // nothing about a chunked reply.
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
+        messageId === 'telegram-in-990-mira-reply-part1'
+          ? [miraRow(messageId, { metadata: { chunkCount: 3, chunkIndex: Number(String(messageId).slice(-1)), chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main', inboundMessageId: String(messageId).replace(/-mira-reply-part\d+$/, '') } })]
+          : []
+      ));
+
+      const egress = app.inspectMiraOutboundEgress('telegram-in-990', EXPECTED990);
+      expect(egress).toMatchObject({ complete: false, anyDelivered: true, delivered: 1, expectedParts: 3 });
+      expect(app.hasDurableMiraOutboundProof('telegram-in-990', EXPECTED990)).toBe(false);
+    });
+
+    it('CHUNKED EGRESS: every part delivered is full proof', () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
+        /telegram-in-991-mira-reply-part[123]$/.test(messageId)
+          ? [miraRow(messageId, { metadata: { chunkCount: 3, chunkIndex: Number(String(messageId).slice(-1)), chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main', inboundMessageId: String(messageId).replace(/-mira-reply-part\d+$/, '') } })]
+          : []
+      ));
+      expect(app.hasDurableMiraOutboundProof('telegram-in-991', expectedFor('telegram-in-991'))).toBe(true);
+    });
+
+    it('PARTIAL EGRESS HOLDS even when Mira reports failure, instead of a second reply', async () => {
+      // A later chunk failed after part 1 already reached Operator. The aggregate
+      // says ok:false, but falling back would put a second visible reply on top
+      // of text he has already seen.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: false, handled: true, status: 'telegram_send_failed',
+      });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockReturnValue({
+        complete: false, anyDelivered: true, delivered: 1, expectedParts: 3,
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 992 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-992', updateId: 992, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({ status: 'accepted.mira_partial_egress', accepted: true });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('A PROOF-LOOKUP FAILURE ON THE LIVE PATH HOLDS instead of being read as a delivery failure', async () => {
+      // If this throw escaped into the caller's try, processRecord would read it
+      // as deliver_threw -> DEFINITE -> retry, and retrying after Mira may
+      // already have sent is a second reply to Operator.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({ ok: true, handled: true });
+      jest.spyOn(app, 'inspectMiraOutboundEgress').mockImplementation(() => {
+        throw new Error('journal unreadable');
+      });
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 994 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-994', updateId: 994, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({ status: 'accepted.proof_lookup_pending', accepted: true });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('CRASH REPLAY: an existing Mira outbound row retires without re-sending', async () => {
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue(null);
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(true);
+
+      // A Mira-answered message never produces a pane receipt, so without this
+      // the replay lookup would find nothing and send a SECOND Mira reply.
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-993', routeKey: 'main', windowKey: 'main',
+        profile: 'main', chatId: 111,
+      })).resolves.toMatchObject({
+        userVisible: true, proofSource: 'mira_outbound_row', messageId: 'telegram-in-993',
+      });
+    });
+
+    it('Mira accepted with NO durable proof HOLDS and never falls back to the Architect pane', async () => {
+      // A fallback here would be a SECOND user-visible reply to Operator for one
+      // inbound message. Only a definite Mira failure may fall back.
+      jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
+      jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
+        ok: true, handled: true, status: 'telegram_delivered',
+        telegramResult: { ok: true, messageId: 55 },
+      });
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+      const architectSpy = jest.spyOn(app, 'deliverHumanMessageWithRecall').mockResolvedValue({
+        accepted: true, verified: true, userVisible: true,
+      });
+
+      const result = await app.deliverTelegramInboundJob({
+        body: 'hello', sender: 'operator', metadata: { chatId: 1111111111, updateId: 980 },
+        media: null, photo: null, document: null, archivePath: null,
+        inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
+        inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
+        inboundMessageId: 'telegram-in-980', updateId: 980, messageId: 1, sentAtMs: Date.now(),
+      });
+
+      expect(result).toMatchObject({
+        status: 'accepted.mira_proof_pending',
+        accepted: true,
+        messageId: 'telegram-in-980',
+      });
+      expect(architectSpy).not.toHaveBeenCalled();
+    });
+
+    it('Mira proof requires a durable outbound row, not transport success', () => {
+      const commsJournal = require('../modules/main/comms-journal');
+      // Transport said ok, but nothing durable exists.
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([]);
+      expect(app.hasDurableMiraOutboundProof('telegram-in-970', expectedFor('telegram-in-970'))).toBe(false);
+
+      commsJournal.queryCommsJournalEntries.mockImplementation(({ messageId }) => (
+        messageId === 'telegram-in-970-mira-reply'
+          ? [{
+            messageId: 'telegram-in-970-mira-reply',
+            direction: 'outbound',
+            channel: 'telegram',
+            senderRole: 'mira',
+            ackStatus: 'telegram_delivered',
+            status: 'acked',
+            chatId: 111,
+            metadata: {
+              chatId: 111, windowKey: 'main', profile: 'main', routeKey: 'main',
+              inboundMessageId: 'telegram-in-970',
+            },
+          }]
+          : []
+      ));
+      expect(app.hasDurableMiraOutboundProof('telegram-in-970', expectedFor('telegram-in-970'))).toBe(true);
+    });
+
+    it.each([
+      ['wrong direction', { direction: 'inbound' }],
+      ['wrong channel', { channel: 'ws' }],
+      ['not from mira', { senderRole: 'architect' }],
+      ['not delivered', { ackStatus: 'telegram_send_failed', status: 'failed' }],
+      ['acked but ack status missing', { ackStatus: undefined }],
+      ['ack status set but not acked', { status: 'queued' }],
+      ['no chat identity at all', { chatId: undefined }],
+      ['different chat', { chatId: 999 }],
+    ])('Mira proof rejects a row with the %s', (_l, override) => {
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockImplementation(({ messageId }) => (
+        messageId === 'telegram-in-971-mira-reply'
+          ? [{
+            messageId: 'telegram-in-971-mira-reply',
+            direction: 'outbound',
+            channel: 'telegram',
+            senderRole: 'mira',
+            ackStatus: 'telegram_delivered',
+            status: 'acked',
+            chatId: 111,
+            ...override,
+          }]
+          : []
+      ));
+      expect(app.hasDurableMiraOutboundProof('telegram-in-971', expectedFor('telegram-in-971'))).toBe(false);
+    });
+
+    it('a crash-surviving TERMINAL receipt proves delivery and owns its own identity', async () => {
+      // S492 replaces the model-prompt receipt as the proof source. That store
+      // records `prompt_submit` for every prompt in every pane and can name no
+      // update, no chat and no generation, so it could only ever prove that
+      // SOMETHING was submitted somewhere. The terminal receipt is written at a
+      // consumer boundary that saw the exact bytes.
+      //
+      // THE ASSERTION THAT MATTERS: every field returned is the RECORD'S, and
+      // the record is deliberately given a chatId and generation the caller did
+      // NOT pass. If any of this were still being joined from the query, these
+      // two fields would come back as the caller's values.
+      const lookup = require('../modules/main/telegram-terminal-lookup');
+      const spy = jest.spyOn(lookup, 'findTerminalConsumptionEvidence')
+        .mockReturnValue({
+          status: 'delivered.verified',
+          verified: true,
+          proofSource: 'telegram_consumed_receipt',
+          messageId: 'telegram-in-960',
+          routeKey: 'main',
+          windowKey: 'main',
+          profile: 'main',
+          chatId: '777',
+          generation: 'app-session-491',
+          provedAtMs: 1_700_000_000_123,
+        });
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-960', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
+      })).resolves.toMatchObject({
+        messageId: 'telegram-in-960',
+        verified: true,
+        proofSource: 'telegram_consumed_receipt',
+        // NOT 111. The evidence owns its chat, and a lookup that synthesized
+        // identity would have overwritten this with what it was asked about.
+        chatId: '777',
+        // NOT the current process generation either.
+        generation: 'app-session-491',
+        provedAtMs: 1_700_000_000_123,
+      });
+      spy.mockRestore();
+    });
+
+    it('the generic model-prompt receipt store is NOT consulted for Telegram proof any more', async () => {
+      // The ruled defect, pinned as a regression test: a `prompt_submitted`
+      // receipt is a submission to a model endpoint, not consumption by a pane,
+      // and it must no longer be able to retire one of Operator's messages.
+      const receipts = require('../modules/model-prompt-receipt');
+      receipts.getModelPromptReceipt.mockReturnValue({
+        messageId: 'telegram-in-962',
+        semanticEvent: 'prompt_submit',
+        status: 'prompt_submitted.in_band',
+      });
+      const lookup = require('../modules/main/telegram-terminal-lookup');
+      const spy = jest.spyOn(lookup, 'findTerminalConsumptionEvidence').mockReturnValue(null);
+      jest.spyOn(app, 'hasDurableMiraOutboundProof').mockReturnValue(false);
+
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-962', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
+      })).resolves.toBeNull();
+      // And it was not even asked. A store that is merely outvoted could be
+      // promoted back by a later edit; a store that is not consulted cannot.
+      expect(receipts.getModelPromptReceipt).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
+
+    it('no terminal receipt is NOT proof, and is not an error either', async () => {
+      const lookup = require('../modules/main/telegram-terminal-lookup');
+      const spy = jest.spyOn(lookup, 'findTerminalConsumptionEvidence').mockReturnValue(null);
+      const commsJournal = require('../modules/main/comms-journal');
+      jest.spyOn(commsJournal, 'queryCommsJournalEntries').mockReturnValue([]);
+      await expect(app.findTelegramDeliveryReceipt({
+        messageId: 'telegram-in-961', routeKey: 'main', windowKey: 'main', profile: 'main', chatId: 111,
+      })).resolves.toBeNull();
+      spy.mockRestore();
+    });
+
+    it('startup drains a backlog spooled while the app was down', async () => {
+      const spool = jest.requireActual('../modules/main/telegram-ingress-spool');
+      const base = telegramSpoolRoots[telegramSpoolRoots.length - 1];
+      for (const updateId of [900, 901]) {
+        spool.acceptInbound({
+          dataRoot: base,
+          routeKey: 'main',
+          text: `backlog ${updateId}`,
+          from: 'operator',
+          metadata: { updateId, chatId: 1111111111 },
+          targetProfile: 'main',
+          targetWindow: 'main',
+          // v7 §1: the spool fails closed without a producer identity.
+          producerAppGeneration: 'app-session-test',
+          producerSessionId: 'sess-test',
+        });
+      }
+
+      const seen = [];
+      jest.spyOn(app, 'deliverTelegramInboundJob').mockImplementation(async (job) => {
+        seen.push(job.inboundMessageId);
+        return {
+          messageId: job.inboundMessageId,
+          routeKey: 'main',
+          windowKey: 'main',
+          profile: 'main',
+          verified: true,
+          userVisible: true,
+        };
+      });
+      jest.spyOn(app, 'resolveTelegramInboundRoute').mockReturnValue({
+        ok: true, profile: 'main', windowKey: 'main',
+      });
+
+      const result = await app.drainTelegramIngressBacklog(base);
+
+      expect(result.ok).toBe(true);
+      // In order, and both retired.
+      expect(seen).toEqual(['telegram-in-900', 'telegram-in-901']);
+    });
+  });
+});

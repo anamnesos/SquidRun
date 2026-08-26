@@ -1,0 +1,4730 @@
+/**
+ * SquidRun Renderer - Main entry point
+ * Orchestrates terminal, tabs, settings, and daemon handler modules
+ */
+
+function resolveBridgeApi() {
+  if (typeof window === 'undefined' || !window || typeof window !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    window.squidrunAPI,
+    window.squidrun,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue;
+
+    if (
+      typeof candidate.invoke === 'function'
+      && typeof candidate.send === 'function'
+      && typeof candidate.on === 'function'
+    ) {
+      return candidate;
+    }
+
+    const nested = candidate.ipc;
+    if (
+      nested
+      && typeof nested === 'object'
+      && typeof nested.invoke === 'function'
+      && typeof nested.send === 'function'
+      && typeof nested.on === 'function'
+    ) {
+      return {
+        ...candidate,
+        invoke: nested.invoke.bind(nested),
+        send: nested.send.bind(nested),
+        on: nested.on.bind(nested),
+        removeListener: typeof nested.removeListener === 'function'
+          ? nested.removeListener.bind(nested)
+          : null,
+        once: typeof nested.once === 'function' ? nested.once.bind(nested) : null,
+      };
+    }
+  }
+
+  return null;
+}
+
+function makeMissingBridgeError(method) {
+  return new Error(`[renderer bridge] Missing preload bridge for ${method}()`);
+}
+
+const bridgeApi = resolveBridgeApi();
+if (!bridgeApi) {
+  throw makeMissingBridgeError('bootstrap');
+}
+
+const rendererModules = bridgeApi.rendererModules;
+if (!rendererModules || typeof rendererModules !== 'object') {
+  const loadError = bridgeApi.rendererModulesLoadError;
+  if (loadError && (loadError.message || loadError.stack)) {
+    const detail = loadError.stack || loadError.message;
+    const surfaced = new Error(`[renderer bridge] rendererModules failed to load in preload: ${loadError.message || 'unknown error'}`);
+    surfaced.cause = loadError;
+    console.error(`[renderer bridge] preload rendererModules load error:\n${detail}`);
+    throw surfaced;
+  }
+  throw new Error('[renderer bridge] Missing rendererModules preload export');
+}
+
+function invokeBridge(channel, ...args) {
+  if (typeof bridgeApi.invoke !== 'function') {
+    return Promise.reject(makeMissingBridgeError('invoke'));
+  }
+  return bridgeApi.invoke(channel, ...args);
+}
+
+function onBridge(channel, listener) {
+  if (typeof listener !== 'function') return () => {};
+  if (typeof bridgeApi.on !== 'function') return () => {};
+
+  const wrapped = (...payloadArgs) => listener(undefined, ...payloadArgs);
+  const disposer = bridgeApi.on(channel, wrapped);
+
+  if (typeof disposer === 'function') {
+    return disposer;
+  }
+
+  const removeListener = (typeof bridgeApi.removeListener === 'function')
+    ? bridgeApi.removeListener.bind(bridgeApi)
+    : null;
+  if (!removeListener) return () => {};
+  return () => removeListener(channel, wrapped);
+}
+
+function onceBridge(channel, listener) {
+  if (typeof listener !== 'function') return () => {};
+  if (typeof bridgeApi.once === 'function') {
+    const wrapped = (...payloadArgs) => listener(undefined, ...payloadArgs);
+    const disposer = bridgeApi.once(channel, wrapped);
+    if (typeof disposer === 'function') return disposer;
+    const removeListener = (typeof bridgeApi.removeListener === 'function')
+      ? bridgeApi.removeListener.bind(bridgeApi)
+      : null;
+    if (!removeListener) return () => {};
+    return () => removeListener(channel, wrapped);
+  }
+
+  let disposed = false;
+  let off = () => {};
+  off = onBridge(channel, (...args) => {
+    if (disposed) return;
+    disposed = true;
+    off();
+    listener(...args);
+  });
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    off();
+  };
+}
+
+const log = rendererModules.log;
+const terminal = rendererModules.terminal;
+const tabs = rendererModules.tabs;
+const settings = rendererModules.settings;
+const daemonHandlers = rendererModules.daemonHandlers;
+const { showStatusNotice, showToast } = rendererModules.notifications;
+const { debounceButton, applyShortcutTooltips } = rendererModules.utils;
+const {
+  initCommandPalette,
+  getCommandPaletteCommands,
+  smokeCommandPaletteCommands,
+} = rendererModules.commandPalette;
+const { initStatusStrip } = rendererModules.statusStrip;
+const { initPaneVisibilityControls } = rendererModules.paneVisibility;
+const { createWindowTeamBootstrap, readInitialWindowContextFromLocation } = rendererModules.windowTeamBootstrap;
+
+function formatTeamRoomOpenFailure(result = {}) {
+  const reason = String(result.reason || 'unknown error');
+  if (reason === 'room_lan_bind_host_not_local') {
+    const configuredHost = String(result.configuredHost || 'unset');
+    const localAddresses = Array.isArray(result.localAddresses) && result.localAddresses.length > 0
+      ? result.localAddresses.join(', ')
+      : 'none detected';
+    return `Team Room cannot start: configured host ${configuredHost} is not one of this PC's IPs (${localAddresses}). Update .env and restart SquidRun.`;
+  }
+  return `Team Room could not open: ${reason}`;
+}
+
+function bindTeamRoomOpenButton() {
+  const button = document.getElementById('openTeamRoomBtn');
+  if (!button || button.dataset.teamRoomOpenBound === 'true') return;
+  button.removeAttribute?.('onclick');
+  const onClick = async () => {
+    try {
+      const result = await invokeBridge('open-app-window', { windowKey: 'team-room' });
+      if (!result?.ok) showToast(formatTeamRoomOpenFailure(result), 'warning');
+    } catch (error) {
+      showToast(formatTeamRoomOpenFailure({ reason: error?.message || 'IPC bridge failed' }), 'warning');
+    }
+  };
+  button.addEventListener('click', onClick);
+  button.dataset.teamRoomOpenBound = 'true';
+  registerRendererLifecycleCleanup(() => {
+    button.removeEventListener('click', onClick);
+    delete button.dataset.teamRoomOpenBound;
+  });
+}
+const { configureWorkspacePaneShell } = rendererModules.workspacePaneShell || {};
+const squidRoomSurfaceModule = rendererModules.squidRoomSurface || {};
+const {
+  initSquidRoomSurface,
+  refreshSquidRoomSurface,
+  toggleSquidRoomPaneExpansion,
+} = squidRoomSurfaceModule;
+const SQUID_ROOM_PROJECTION_CHANNEL = squidRoomSurfaceModule.ARM_STATE_PROJECTION_CHANNEL || 'arm-state:projection';
+const SQUID_ROOM_WINDOW_KEY = squidRoomSurfaceModule.SQUID_ROOM_WINDOW_KEY || 'squid-room';
+const EXAMPLEAPP_APP_ROOM_ID = squidRoomSurfaceModule.EXAMPLEAPP_APP_ROOM_ID || 'exampleapp';
+const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
+const squidRoomCreatureRuntime = rendererModules.squidRoomCreatureRuntime || {};
+let squidRoomCreatureMountReported = false;
+const { initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute } = rendererModules.modelSelector;
+const { PANE_ROLES, PANE_ROLE_BUNDLES } = rendererModules.config;
+const bus = rendererModules.bus;
+const { clearScopedIpcListeners, registerScopedIpcListener } = rendererModules.ipcRegistry;
+
+const ipcListenerRegistry = new Map();
+
+function trackIpcListener(channel, listener, dispose) {
+  const key = String(channel || '');
+  if (!key || typeof listener !== 'function' || typeof dispose !== 'function') return;
+  let entries = ipcListenerRegistry.get(key);
+  if (!entries) {
+    entries = new Set();
+    ipcListenerRegistry.set(key, entries);
+  }
+  entries.add({ listener, dispose });
+}
+
+function untrackIpcListener(channel, listener) {
+  const key = String(channel || '');
+  const entries = ipcListenerRegistry.get(key);
+  if (!entries || entries.size === 0) return;
+  for (const entry of Array.from(entries)) {
+    if (entry.listener !== listener) continue;
+    try {
+      entry.dispose();
+    } catch (_) {}
+    entries.delete(entry);
+    break;
+  }
+  if (entries.size === 0) {
+    ipcListenerRegistry.delete(key);
+  }
+}
+
+const ipcRenderer = {
+  invoke: (channel, ...args) => invokeBridge(channel, ...args),
+  on: (channel, listener) => {
+    const dispose = onBridge(channel, listener);
+    trackIpcListener(channel, listener, dispose);
+    return dispose;
+  },
+  once: (channel, listener) => {
+    const dispose = onceBridge(channel, listener);
+    trackIpcListener(channel, listener, dispose);
+    return dispose;
+  },
+  off: (channel, listener) => {
+    untrackIpcListener(channel, listener);
+  },
+  removeListener: (channel, listener) => {
+    untrackIpcListener(channel, listener);
+  },
+  removeAllListeners: (channel) => {
+    if (typeof channel !== 'string' || !channel) {
+      for (const [trackedChannel, entries] of ipcListenerRegistry.entries()) {
+        for (const entry of Array.from(entries)) {
+          try {
+            entry.dispose();
+          } catch (_) {}
+        }
+        ipcListenerRegistry.delete(trackedChannel);
+      }
+      return;
+    }
+    const entries = ipcListenerRegistry.get(channel);
+    if (!entries || entries.size === 0) return;
+    for (const entry of Array.from(entries)) {
+      try {
+        entry.dispose();
+      } catch (_) {}
+    }
+    ipcListenerRegistry.delete(channel);
+  },
+  listenerCount: (channel) => {
+    const entries = ipcListenerRegistry.get(String(channel || ''));
+    return entries ? entries.size : 0;
+  },
+  eventNames: () => Array.from(ipcListenerRegistry.keys()),
+};
+
+const dynamicPtyIpcChannels = new Set();
+const RENDERER_IPC_CHANNELS = Object.freeze([
+  // 'feature-capabilities-updated' — scoped listeners only (renderer + oracle.js), cleaned by clearScopedIpcListeners
+  // 'task-list-updated' — scoped listener in status-strip.js (SSOT), cleaned by clearScopedIpcListeners
+  'global-escape-pressed',
+  'watchdog-alert',
+  'heartbeat-state-changed',
+  'nudge-pane',
+  'pane-enter',
+  'unstick-pane',
+  'restart-pane',
+  'agent-stuck-detected',
+  'pane-cli-identity',
+  'daemon-connected',
+  'daemon-timeout',
+  // Channels registered in submodules — must be cleaned up here too
+  'activity-logged',         // tabs/activity.js
+  'oracle:image-generated',  // tabs/oracle.js
+  'pane-model-changed',      // model-selector.js
+]);
+
+function trackDynamicPtyIpcChannel(channel) {
+  if (typeof channel !== 'string') return;
+  if (channel.startsWith('pty-data-') || channel.startsWith('pty-exit-')) {
+    dynamicPtyIpcChannels.add(channel);
+  }
+}
+
+function untrackDynamicPtyIpcChannel(channel) {
+  if (!dynamicPtyIpcChannels.has(channel)) return;
+  if (typeof ipcRenderer.listenerCount === 'function' && ipcRenderer.listenerCount(channel) === 0) {
+    dynamicPtyIpcChannels.delete(channel);
+  }
+}
+
+function collectDynamicPtyIpcChannels() {
+  const channels = new Set(dynamicPtyIpcChannels);
+  if (typeof ipcRenderer.eventNames === 'function') {
+    for (const channel of ipcRenderer.eventNames()) {
+      if (typeof channel !== 'string') continue;
+      if (channel.startsWith('pty-data-') || channel.startsWith('pty-exit-')) {
+        channels.add(channel);
+      }
+    }
+  }
+  return channels;
+}
+
+function clearRendererIpcListeners() {
+  if (typeof ipcRenderer.removeAllListeners !== 'function') return;
+  for (const channel of RENDERER_IPC_CHANNELS) {
+    ipcRenderer.removeAllListeners(channel);
+  }
+  for (const channel of collectDynamicPtyIpcChannels()) {
+    ipcRenderer.removeAllListeners(channel);
+  }
+  dynamicPtyIpcChannels.clear();
+  clearScopedIpcListeners();
+}
+
+
+
+const MAIN_PANE_CONTAINER_SELECTOR = '.main-pane-container';
+const SIDE_PANES_CONTAINER_SELECTOR = '.side-panes-container';
+let mainPaneId = '1';
+const RESIZE_DEBOUNCE_MS = 175;
+let resizeDebounceTimer = null;
+let setupEventListenersBound = false;
+let autonomyOnboardingHandlersBound = false;
+let lifecycleUnloadHookBound = false;
+let rendererLifecycleCleanupFns = [];
+
+function registerRendererLifecycleCleanup(fn) {
+  if (typeof fn === 'function') {
+    rendererLifecycleCleanupFns.push(fn);
+  }
+}
+
+function clearRendererLifecycleBindings() {
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer);
+    resizeDebounceTimer = null;
+  }
+  clearHeaderSessionBadgeRetry();
+
+  const cleanupFns = rendererLifecycleCleanupFns;
+  rendererLifecycleCleanupFns = [];
+  for (const cleanup of cleanupFns) {
+    try {
+      cleanup();
+    } catch (_) {}
+  }
+}
+
+function ensureLifecycleUnloadHook() {
+  if (lifecycleUnloadHookBound || typeof window?.addEventListener !== 'function') return;
+  const unloadHandler = () => {
+    clearRendererIpcListeners();
+    clearRendererLifecycleBindings();
+  };
+  window.addEventListener('beforeunload', unloadHandler);
+  lifecycleUnloadHookBound = true;
+}
+
+function asPositiveInt(value) {
+  const numeric = Number(value);
+  return Number.isInteger(numeric) && numeric > 0 ? numeric : null;
+}
+
+function _extractSessionNumberFromStatus(status) {
+  if (!status || typeof status !== 'object') return null;
+  return (
+    asPositiveInt(status.session)
+    || asPositiveInt(status.session_number)
+    || asPositiveInt(status.sessionNumber)
+    || asPositiveInt(status.currentSession)
+    || null
+  );
+}
+
+function updateHeaderSessionBadge(sessionNumber) {
+  const badge = document.getElementById('headerSessionBadge');
+  if (!badge) return;
+
+  if (asPositiveInt(sessionNumber)) {
+    badge.textContent = `Session ${sessionNumber}`;
+    badge.classList.remove('pending');
+    badge.classList.add('ready');
+    badge.title = `Current app session: ${sessionNumber}`;
+    return;
+  }
+
+  badge.textContent = 'Session --';
+  badge.classList.remove('ready');
+  badge.classList.add('pending');
+  badge.title = 'Current app session unavailable';
+}
+
+function clearHeaderSessionBadgeRetry() {
+  if (headerSessionBadgeRetryTimer) {
+    clearTimeout(headerSessionBadgeRetryTimer);
+    headerSessionBadgeRetryTimer = null;
+  }
+  headerSessionBadgeRetryAttempts = 0;
+}
+
+function scheduleHeaderSessionBadgeRetry() {
+  if (headerSessionBadgeRetryTimer) return;
+  if (headerSessionBadgeRetryAttempts >= HEADER_SESSION_BADGE_MAX_RETRIES) return;
+  headerSessionBadgeRetryAttempts += 1;
+  headerSessionBadgeRetryTimer = setTimeout(() => {
+    headerSessionBadgeRetryTimer = null;
+    void refreshHeaderSessionBadge();
+  }, HEADER_SESSION_BADGE_RETRY_MS);
+}
+
+async function readSessionFromAppStatusFallback() {
+  try {
+    const status = await ipcRenderer.invoke('get-app-status');
+    return _extractSessionNumberFromStatus(status);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function resolveCurrentSessionNumber() {
+  return readSessionFromAppStatusFallback();
+}
+
+async function refreshHeaderSessionBadge() {
+  const sessionNumber = await resolveCurrentSessionNumber();
+  updateHeaderSessionBadge(sessionNumber);
+  if (asPositiveInt(sessionNumber)) {
+    clearHeaderSessionBadgeRetry();
+  } else {
+    scheduleHeaderSessionBadgeRetry();
+  }
+}
+
+function scheduleTerminalResize(delayMs = RESIZE_DEBOUNCE_MS) {
+  if (resizeDebounceTimer) {
+    clearTimeout(resizeDebounceTimer);
+  }
+  resizeDebounceTimer = setTimeout(() => {
+    resizeDebounceTimer = null;
+    terminal.handleResize();
+  }, delayMs);
+}
+
+function getPaneElement(paneId) {
+  return document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+}
+
+function updateMainPaneState(paneId) {
+  mainPaneId = String(paneId);
+  if (document.body) {
+    document.body.dataset.mainPaneId = mainPaneId;
+  }
+  document.querySelectorAll('.pane').forEach((pane) => {
+    pane.dataset.main = pane.dataset.paneId === mainPaneId ? 'true' : 'false';
+  });
+}
+
+function _getMainPaneId() {
+  return mainPaneId;
+}
+
+function _swapToMainPane(targetPaneId) {
+  const targetId = String(targetPaneId);
+  if (!targetId || targetId === mainPaneId) {
+    terminal.focusPane(targetId || mainPaneId);
+    return;
+  }
+
+  const mainContainer = document.querySelector(MAIN_PANE_CONTAINER_SELECTOR);
+  const sideContainer = document.querySelector(SIDE_PANES_CONTAINER_SELECTOR);
+  const targetPane = getPaneElement(targetId);
+  const currentMainPane = getPaneElement(mainPaneId);
+
+  if (!mainContainer || !sideContainer || !targetPane || !currentMainPane) {
+    log.warn('PaneSwap', 'Swap aborted - missing pane containers or elements');
+    return;
+  }
+
+  if (targetPane.parentElement !== sideContainer) {
+    terminal.focusPane(targetId);
+    return;
+  }
+
+  const targetNextSibling = targetPane.nextSibling;
+
+  mainContainer.appendChild(targetPane);
+  if (targetNextSibling) {
+    sideContainer.insertBefore(currentMainPane, targetNextSibling);
+  } else {
+    sideContainer.appendChild(currentMainPane);
+  }
+
+  updateMainPaneState(targetId);
+  terminal.focusPane(targetId);
+
+  requestAnimationFrame(() => {
+    scheduleTerminalResize(0);
+  });
+}
+
+function initMainPaneState() {
+  const mainContainer = document.querySelector(MAIN_PANE_CONTAINER_SELECTOR);
+  const mainPane = mainContainer ? mainContainer.querySelector('.pane') : null;
+  const paneId = mainPane?.dataset?.paneId || '1';
+  updateMainPaneState(paneId);
+}
+
+// Initialization state tracking - fixes race condition in auto-spawn
+let initState = {
+  settingsLoaded: false,
+  terminalsReady: false,
+  autoSpawnChecked: false
+};
+const initialWindowContext = readInitialWindowContextFromLocation(window?.location?.search || '');
+const windowTeamBootstrap = createWindowTeamBootstrap({
+  settings,
+  terminal,
+  log,
+  initialContext: initialWindowContext,
+});
+let squidRoomSurfaceController = null;
+let rightPanelSetupDone = false;
+if (typeof terminal.setStartupWindowContext === 'function') {
+  terminal.setStartupWindowContext(initialWindowContext);
+}
+if (typeof configureWorkspacePaneShell === 'function') {
+  configureWorkspacePaneShell(initialWindowContext, terminal, document);
+}
+const STARTUP_OVERLAY_FADE_MS = 280;
+const DAEMON_TIMEOUT_FALLBACK_MESSAGE = "SquidRun couldn't start the background daemon. Make sure Node.js 18+ is installed and try restarting the app.";
+const STARTUP_LOADING_DEFAULT_MESSAGE = 'Starting SquidRun...';
+const STARTUP_LOADING_DEFAULT_STAGE = 'Bootstrapping workspace...';
+const STARTUP_LOADING_COPY = Object.freeze({
+  main: Object.freeze({
+    message: STARTUP_LOADING_DEFAULT_MESSAGE,
+    stage: STARTUP_LOADING_DEFAULT_STAGE,
+    readyMessage: 'SquidRun ready',
+    readyStage: 'All core services online',
+    degradedStage: 'Started with degraded services',
+    stuckEta: 'Check logs or restart SquidRun',
+  }),
+  squidRoom: Object.freeze({
+    message: 'Opening the Squid Room...',
+    stage: 'Waking the reef...',
+    readyMessage: 'Squid Room ready',
+    readyStage: 'Room surface online',
+    degradedStage: 'Room opened with degraded services',
+    stuckEta: 'Check logs or close this window',
+  }),
+});
+const STARTUP_OVERLAY_ERROR_DISMISS_MS = 12000;
+const STARTUP_OVERLAY_MIN_VISIBLE_MS = 1400;
+const STARTUP_OVERLAY_POLL_MS = 600;
+const STARTUP_OVERLAY_MAX_WAIT_MS = 12000;
+const STARTUP_OVERLAY_STALL_WATCHDOG_MS = 45000;
+const STARTUP_OVERLAY_INITIAL_PERCENT = 6;
+const HEADER_SESSION_BADGE_RETRY_MS = 700;
+const HEADER_SESSION_BADGE_MAX_RETRIES = 8;
+let autonomyOnboardingBusy = false;
+const profileOnboardingState = {
+  checkComplete: false,
+  checking: false,
+  required: false,
+  completed: false,
+};
+let headerSessionBadgeRetryTimer = null;
+let headerSessionBadgeRetryAttempts = 0;
+let squidRoomLivePaneEnsureTimer = null;
+let squidRoomPetStatusTimer = null;
+const squidRoomPetAnimationTimers = new Map();
+const squidRoomPetCelebrationState = new Map();
+const squidRoomLivePaneSpawnAttempts = new Map();
+const SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS = 15000;
+const SQUID_ROOM_PET_STATUS_REFRESH_MS = 10000;
+const SQUID_ROOM_PET_STATUS_CHANNEL = 'evidence-ledger:query-comms-journal';
+const SQUID_ROOM_PET_ACTIVE_AGE_MS = 30000;
+const SQUID_ROOM_PET_SETTLING_AGE_MS = 5 * 60 * 1000;
+const SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS = 10 * 60 * 1000;
+const SQUID_ROOM_PET_CELEBRATION_DURATION_MS = 1500;
+const SQUID_ROOM_PET_SPEECH_MAX_CHARS = 42;
+const SQUID_ROOM_PET_ATLAS_COLUMNS = 8;
+const SQUID_ROOM_PET_ATLAS_ROWS = 9;
+const SQUID_ROOM_PET_IDLE_FRAMES = Object.freeze([
+  { rowIndex: 0, columnIndex: 0, frameDurationMs: 280 },
+  { rowIndex: 0, columnIndex: 1, frameDurationMs: 110 },
+  { rowIndex: 0, columnIndex: 2, frameDurationMs: 110 },
+  { rowIndex: 0, columnIndex: 3, frameDurationMs: 140 },
+  { rowIndex: 0, columnIndex: 4, frameDurationMs: 140 },
+  { rowIndex: 0, columnIndex: 5, frameDurationMs: 320 },
+]);
+const SQUID_ROOM_PET_IDLE_LOOP_FRAMES = Object.freeze(
+  SQUID_ROOM_PET_IDLE_FRAMES.map((frame) => Object.freeze({
+    ...frame,
+    frameDurationMs: frame.frameDurationMs * 6,
+  }))
+);
+
+function makeSquidRoomPetFrames(rowIndex, frameCount, frameDurationMs, lastFrameDurationMs) {
+  return Object.freeze(Array.from({ length: frameCount }, (_unused, columnIndex) => Object.freeze({
+    rowIndex,
+    columnIndex,
+    frameDurationMs: columnIndex === frameCount - 1 ? lastFrameDurationMs : frameDurationMs,
+  })));
+}
+
+const SQUID_ROOM_PET_STATE_FRAMES = Object.freeze({
+  failed: makeSquidRoomPetFrames(5, 8, 140, 240),
+  idle: SQUID_ROOM_PET_IDLE_FRAMES,
+  jumping: makeSquidRoomPetFrames(4, 5, 140, 280),
+  review: makeSquidRoomPetFrames(8, 6, 150, 280),
+  running: makeSquidRoomPetFrames(7, 6, 120, 220),
+  waiting: makeSquidRoomPetFrames(6, 6, 150, 260),
+});
+
+function getCurrentWindowContext() {
+  return windowTeamBootstrap.getState();
+}
+
+function setupPanelsAfterSettingsLoaded() {
+  if (rightPanelSetupDone) return;
+  rightPanelSetupDone = true;
+  tabs.setupRightPanel(terminal.handleResize, bus);
+}
+
+function isSquidRoomWindowContext(windowContext = {}) {
+  if (String(windowContext?.windowKey || 'main').trim() === SQUID_ROOM_WINDOW_KEY) {
+    return true;
+  }
+  const body = typeof document !== 'undefined' ? document.body : null;
+  return body?.dataset?.workspaceKey === SQUID_ROOM_WINDOW_KEY
+    || body?.classList?.contains?.('sr2-room') === true;
+}
+
+function getSquidRoomSurfaceElements() {
+  return {
+    root: document.getElementById('squidRoomSurface'),
+    status: document.getElementById('squidRoomExampleAppStatus'),
+    counts: document.getElementById('squidRoomExampleAppCounts'),
+  };
+}
+
+function getSquidRoomLivePaneElements() {
+  return Array.from(document.querySelectorAll('[data-squid-room-live-pane="true"]'));
+}
+
+function getSquidRoomPetPaneElements() {
+  return Array.from(document.querySelectorAll('[data-squid-room-pet]'));
+}
+
+function getSquidRoomPetSpriteElements() {
+  return Array.from(document.querySelectorAll('[data-squid-room-pet-sprite="true"]'));
+}
+
+function getSquidRoomPetBackgroundPosition(frame) {
+  const column = Number(frame?.columnIndex || 0);
+  const row = Number(frame?.rowIndex || 0);
+  const x = column / (SQUID_ROOM_PET_ATLAS_COLUMNS - 1) * 100;
+  const y = row / (SQUID_ROOM_PET_ATLAS_ROWS - 1) * 100;
+  return `${x}% ${y}%`;
+}
+
+function getSquidRoomPetAnimationPlan(state, prefersReducedMotion = false) {
+  const normalizedState = SQUID_ROOM_PET_STATE_FRAMES[state] ? state : 'idle';
+  const baseFrames = SQUID_ROOM_PET_STATE_FRAMES[normalizedState] || SQUID_ROOM_PET_IDLE_FRAMES;
+  if (prefersReducedMotion) return { frames: [baseFrames[0]], loopStartIndex: null };
+  if (normalizedState === 'idle') {
+    return { frames: SQUID_ROOM_PET_IDLE_LOOP_FRAMES, loopStartIndex: 0 };
+  }
+  const activeFrames = [...baseFrames, ...baseFrames, ...baseFrames];
+  return {
+    frames: [...activeFrames, ...SQUID_ROOM_PET_IDLE_LOOP_FRAMES],
+    loopStartIndex: activeFrames.length,
+  };
+}
+
+function getSquidRoomPetReducedMotionPreference() {
+  try {
+    return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function stopSquidRoomPetAnimation(sprite) {
+  const active = squidRoomPetAnimationTimers.get(sprite);
+  if (active?.timer) window.clearTimeout(active.timer);
+  squidRoomPetAnimationTimers.delete(sprite);
+}
+
+function pruneSquidRoomPetAnimations() {
+  for (const [sprite, active] of squidRoomPetAnimationTimers.entries()) {
+    if (!sprite?.isConnected) {
+      if (active?.timer) window.clearTimeout(active.timer);
+      squidRoomPetAnimationTimers.delete(sprite);
+    }
+  }
+}
+
+function animateSquidRoomPetSprite(sprite, state) {
+  if (!sprite) return;
+  const normalizedState = SQUID_ROOM_PET_STATE_FRAMES[state] ? state : 'idle';
+  const prefersReducedMotion = getSquidRoomPetReducedMotionPreference();
+  const existing = squidRoomPetAnimationTimers.get(sprite);
+  if (existing?.state === normalizedState && existing?.reducedMotion === prefersReducedMotion) return;
+  stopSquidRoomPetAnimation(sprite);
+
+  const plan = getSquidRoomPetAnimationPlan(normalizedState, prefersReducedMotion);
+  const frames = plan.frames.length ? plan.frames : SQUID_ROOM_PET_IDLE_LOOP_FRAMES;
+  let frameIndex = 0;
+  sprite.dataset.avatarState = normalizedState;
+  sprite.style.backgroundPosition = getSquidRoomPetBackgroundPosition(frames[frameIndex]);
+  if (frames.length <= 1) {
+    squidRoomPetAnimationTimers.set(sprite, { state: normalizedState, reducedMotion: prefersReducedMotion, timer: null });
+    return;
+  }
+
+  const step = () => {
+    const frame = frames[frameIndex];
+    const timer = window.setTimeout(() => {
+      frameIndex += 1;
+      if (frameIndex >= frames.length) {
+        frameIndex = plan.loopStartIndex == null ? 0 : plan.loopStartIndex;
+      }
+      sprite.style.backgroundPosition = getSquidRoomPetBackgroundPosition(frames[frameIndex]);
+      step();
+    }, frame.frameDurationMs);
+    squidRoomPetAnimationTimers.set(sprite, {
+      state: normalizedState,
+      reducedMotion: prefersReducedMotion,
+      timer,
+    });
+  };
+  step();
+}
+
+function refreshSquidRoomPetAnimations() {
+  pruneSquidRoomPetAnimations();
+  for (const sprite of getSquidRoomPetSpriteElements()) {
+    const pane = sprite.closest?.('[data-squid-room-pet]');
+    const state = String(pane?.dataset?.squidRoomState || sprite.dataset?.avatarState || 'idle').trim().toLowerCase();
+    animateSquidRoomPetSprite(sprite, state);
+  }
+}
+
+function stripSquidRoomMessageNoise(value) {
+  return stripSquidRoomAnsi(String(value || ''))
+    .replace(/\[AGENT MSG[^\]]*\]\s*/gi, '')
+    .replace(/^\((?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*(?:#\d+(?:-[\w-]+)?)?(?:\s*->\s*[A-Z-]+)?\):\s*/i, '')
+    .replace(/^(?:BUILDER|ORACLE|ARCHITECT|CODEX|SYSTEM)\s*:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stripSquidRoomFaceJargon(value) {
+  // LAYER-SPECIFIC rules (pipeline-only tokens) run first; the machine-
+  // identifier strip itself lives ONCE in face-jargon-core.js (S468 dedup:
+  // this and sanitizeSpeechText drifted three times in one day as
+  // hand-maintained twins). Fallback keeps the pipeline alive if the
+  // preload module bridge ever fails.
+  const pipelineSpecific = String(value || '')
+    .replace(/\b(?:builder|oracle|architect)\s*#\d+\s+received\.?\s*/gi, '')
+    .replace(/\b(?:row)\s*[:#=]?\s*[A-Za-z0-9._:-]+\b/gi, '')
+    .replace(/\bUP[-_\s]+[A-Z0-9_-]+(?:\s+[A-Z0-9_-]+){0,4}\b/g, '')
+    .replace(/\s*[\[\(]\s*CURRENT PROJECT[^\]\)]*[\]\)]\s*/gi, ' ')
+    .replace(/\s+[-—]\s+(?=[,.;:!?)]|$)/g, ' ');
+  const core = rendererModules.faceJargonCore?.stripMachineJargon;
+  if (typeof core === 'function') return core(pipelineSpecific);
+  return pipelineSpecific.replace(/\s{2,}/g, ' ').trim();
+}
+
+function getStartupLoadingCopy(windowContext = {}) {
+  return isSquidRoomWindowContext(windowContext)
+    ? STARTUP_LOADING_COPY.squidRoom
+    : STARTUP_LOADING_COPY.main;
+}
+
+function hasSquidRoomFaceMachineMarker(value) {
+  const marker = rendererModules.faceJargonCore?.hasMachineJargonMarker;
+  if (typeof marker === 'function') return marker(value);
+  const text = String(value || '');
+  return /\bkind\s*=|\bsubject\s*=|\bmaterialized\b|\bverdict\s+ledger\b|\bhm--|\bv--/i.test(text);
+}
+
+function sanitizeSquidRoomFaceText(value) {
+  if (hasSquidRoomFaceMachineMarker(value)) return '';
+  const stripped = stripSquidRoomFaceJargon(value);
+  return hasSquidRoomFaceMachineMarker(stripped) ? '' : stripped;
+}
+
+function getSquidRoomCommsText(row = {}) {
+  return String(row?.rawBody || row?.raw_body || row?.body || row?.excerpt || '');
+}
+
+function parseSquidRoomMetadataValue(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string') return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_err) {
+    return {};
+  }
+}
+
+function getSquidRoomCommsMetadata(row = {}) {
+  const direct = parseSquidRoomMetadataValue(row?.metadata);
+  if (Object.keys(direct).length > 0) return direct;
+  const json = parseSquidRoomMetadataValue(row?.metadata_json || row?.metadataJson || row?.meta);
+  if (Object.keys(json).length > 0) return json;
+  if (row?.envelope || row?.display) {
+    return {
+      envelope: row.envelope,
+      display: row.display,
+    };
+  }
+  return {};
+}
+
+function getSquidRoomAuthoredFace(row = {}) {
+  const metadata = getSquidRoomCommsMetadata(row);
+  const candidates = [
+    metadata?.envelope?.display?.face,
+    metadata?.display?.face,
+    row?.envelope?.display?.face,
+    row?.display?.face,
+    row?.authoredFace,
+    row?.authored_face,
+    row?.face,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === null || candidate === undefined) continue;
+    const text = String(candidate).replace(/\s+/g, ' ').trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function isSquidRoomPetNoiseRow(row = {}, role = '') {
+  const targetRole = String(row?.targetRole || row?.target_role || row?.target || '').trim().toLowerCase();
+  const text = getSquidRoomCommsText(row).toLowerCase();
+  if (targetRole.startsWith(`${role}-bg-`) || targetRole.startsWith(`${role}-background-`)) {
+    return true;
+  }
+  return /\bbackground lane for\b/.test(text);
+}
+
+function summarizeSquidRoomPetMessage(row = {}, role = '') {
+  const raw = sanitizeSquidRoomFaceText(stripSquidRoomMessageNoise(getSquidRoomCommsText(row)));
+  if (!raw) return '';
+  const firstSentence = raw.split(/(?<=[.!?])\s+/)[0] || raw;
+  const text = firstSentence.length > 128 ? `${firstSentence.slice(0, 125).trim()}...` : firstSentence;
+  return text || '';
+}
+
+function buildSquidRoomPetFace(row = {}, role = '') {
+  const raw = getSquidRoomCommsText(row);
+  const strippedRaw = stripSquidRoomMessageNoise(raw);
+  const authoredFace = getSquidRoomAuthoredFace(row);
+  const face = authoredFace !== null
+    ? sanitizeSquidRoomFaceText(authoredFace)
+    : summarizeSquidRoomPetMessage(row, role);
+  const normalizedRaw = strippedRaw.replace(/\s+/g, ' ').trim();
+  const normalizedFace = face.replace(/\s+/g, ' ').trim();
+  return {
+    face,
+    raw: raw || strippedRaw || '',
+    hasRawDetails: Boolean(normalizedRaw && normalizedRaw !== normalizedFace),
+    source: authoredFace !== null ? 'authored' : 'legacy',
+  };
+}
+
+function truncateSquidRoomSpeechText(value, maxChars = SQUID_ROOM_PET_SPEECH_MAX_CHARS) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  const limit = Math.max(8, Number(maxChars) || SQUID_ROOM_PET_SPEECH_MAX_CHARS);
+  if (text.length <= limit) return text;
+  const slice = text.slice(0, Math.max(0, limit - 3)).trimEnd();
+  return `${slice.replace(/[,:;.\s]+$/g, '')}...`;
+}
+
+function buildSquidRoomPetSpeechText(state = {}, face = {}, maxChars = SQUID_ROOM_PET_SPEECH_MAX_CHARS) {
+  const label = String(state?.label || 'Ready').trim();
+  const line = String(face?.face || '').trim();
+  if (!line) {
+    return { full: '', short: '' };
+  }
+  const full = line ? `${label}: ${line}` : label;
+  return {
+    full,
+    short: truncateSquidRoomSpeechText(full, maxChars),
+  };
+}
+
+
+// scheduleSquidRoomPetFlourish deleted (S465 purge 2b): its CSS variants
+// died with the sprite-era rules, leaving JS toggling classes with no
+// visual meaning - the wave-4.5 engine behaviors (work-orb, thought dots,
+// z-marks) are the living replacement for "visible doing".
+
+function getSquidRoomPetRowTimestampMs(row = {}) {
+  const candidates = [
+    row.timestampMs,
+    row.timestamp_ms,
+    row.createdAtMs,
+    row.created_at_ms,
+    row.createdAt,
+    row.created_at,
+    row.timestamp,
+    row.ts,
+    row.time,
+    row.sentAt,
+    row.sent_at,
+  ];
+  for (const candidate of candidates) {
+    if (candidate === undefined || candidate === null || candidate === '') continue;
+    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+      return candidate > 0 && candidate < 10000000000 ? candidate * 1000 : candidate;
+    }
+    if (candidate instanceof Date) {
+      const dateMs = candidate.getTime();
+      if (Number.isFinite(dateMs)) return dateMs;
+    }
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric < 10000000000 ? numeric * 1000 : numeric;
+    }
+    const parsed = Date.parse(String(candidate));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getSquidRoomPetMotionClass(row = {}, nowMs = Date.now()) {
+  const timestampMs = getSquidRoomPetRowTimestampMs(row);
+  if (!timestampMs) return 'is-resting';
+  const ageMs = Math.max(0, Number(nowMs) - timestampMs);
+  if (ageMs < SQUID_ROOM_PET_ACTIVE_AGE_MS) return 'is-active';
+  if (ageMs < SQUID_ROOM_PET_SETTLING_AGE_MS) return 'is-settling';
+  return 'is-resting';
+}
+
+function getSquidRoomPetRowIdentity(row = {}) {
+  const candidates = [
+    row.rowId,
+    row.row_id,
+    row.messageId,
+    row.message_id,
+    row.eventId,
+    row.event_id,
+    row.deliveryId,
+    row.delivery_id,
+  ];
+  for (const candidate of candidates) {
+    if (candidate !== undefined && candidate !== null && String(candidate).trim()) {
+      return String(candidate).trim();
+    }
+  }
+  return null;
+}
+
+function getSquidRoomPetRowRole(row = {}) {
+  return String(
+    row.senderRole
+    || row.sender_role
+    || row.sender
+    || row.role
+    || row.sourceRole
+    || row.source_role
+    || ''
+  ).trim().toLowerCase();
+}
+
+function isSquidRoomPetCelebrationEvent(row = {}, role = '') {
+  if (!getSquidRoomPetRowIdentity(row)) return false;
+  const normalizedRole = String(role || '').trim().toLowerCase();
+  const rowRole = getSquidRoomPetRowRole(row);
+  if (rowRole && normalizedRole && rowRole !== normalizedRole) return false;
+
+  const text = stripSquidRoomMessageNoise(getSquidRoomCommsText(row)).toLowerCase();
+  if (!text) return false;
+
+  const oracleGatePass = normalizedRole === 'oracle'
+    && (
+      /\b(?:oracle[-_\s]*)?gate\b.{0,48}\bpass(?:ed)?\b/.test(text)
+      || /\bfinal gate pass\b/.test(text)
+      || /\bconstitution pass\b/.test(text)
+      || /\bseal:\s*pass\b/.test(text)
+      || /\boracle_verify\b/.test(text)
+    );
+  const durableCommit = /\bcommit(?:ted)?\b.{0,80}\b[0-9a-f]{7,40}\b/.test(text)
+    || /\b[0-9a-f]{7,40}\b.{0,80}\bcommit(?:ted)?\b/.test(text)
+    || /\bdurable closeout\b.{0,96}\bcommit\b/.test(text)
+    || (/\bclosed passed\b/.test(text) && /\b(?:commit|durable|worktree clean)\b/.test(text));
+  return oracleGatePass || durableCommit;
+}
+
+function triggerSquidRoomPetCelebration(pane, row = {}, nowMs = Date.now()) {
+  if (!pane || getSquidRoomPetReducedMotionPreference()) return false;
+  const stage = pane.querySelector?.('.sr2-pet-water');
+  if (!stage?.classList) return false;
+  const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
+  if (!isSquidRoomPetCelebrationEvent(row, role)) return false;
+
+  const rowKey = getSquidRoomPetRowIdentity(row);
+  const previous = squidRoomPetCelebrationState.get(role) || {};
+  const elapsed = Number(nowMs) - Number(previous.lastCelebratedAtMs || 0);
+  if (previous.lastRowKey === rowKey) return false;
+  if (elapsed >= 0 && elapsed < SQUID_ROOM_PET_CELEBRATION_COOLDOWN_MS) return false;
+
+  if (previous.timer) window.clearTimeout(previous.timer);
+  pane.dataset.squidRoomCelebrationRowId = rowKey;
+  stage.classList.add('is-celebrating');
+  const timer = window.setTimeout(() => {
+    stage.classList.remove('is-celebrating');
+  }, SQUID_ROOM_PET_CELEBRATION_DURATION_MS);
+  squidRoomPetCelebrationState.set(role, {
+    lastRowKey: rowKey,
+    lastCelebratedAtMs: Number(nowMs),
+    timer,
+  });
+  return true;
+}
+
+// A pane is only "Blocked" when its latest message is a genuine self-report of
+// being stuck — NOT when the message merely mentions blocked/fail/error as the
+// work TOPIC (the team's whole job is discussing bugs, blockers, and failures).
+// Bare-keyword matching produced a permanent false "Blocked" badge while agents
+// were actively working — the room/agent-state incoherence Operator flagged.
+const SQUID_ROOM_PET_RESOLUTION_RE = /\b(unblocked|no longer blocked|not blocked|resolved|fixed|landed|shipped|passed|all green|gates? (?:green|pass(?:ed)?)|no errors?|done|complete[d]?|clean|ready)\b/;
+const SQUID_ROOM_PET_BLOCKED_RE = /\b(blocked on|blocker:|i'?m blocked|we'?re blocked|cannot proceed|can'?t proceed|cannot continue|can'?t continue|stuck on|stuck waiting|failed to|failing to|giving up|hard blocker|blocking (?:me|us))\b/;
+
+function classifySquidRoomPetState(row = {}, role = '') {
+  const text = stripSquidRoomMessageNoise(getSquidRoomCommsText(row)).toLowerCase();
+  if (!SQUID_ROOM_PET_RESOLUTION_RE.test(text) && SQUID_ROOM_PET_BLOCKED_RE.test(text)) {
+    return { state: 'failed', label: 'Blocked' };
+  }
+  if (/\b(watchdog|no response|no .{0,40} reply|nudged|wait|waiting|hold|stood down|stand down|pending)\b/.test(text)) {
+    return { state: 'waiting', label: 'Waiting' };
+  }
+  if (role !== 'oracle' && /\b(work|working|build|building|patch|fix|fixing|implement|commit|spawn)\b/.test(text)) {
+    return { state: 'running', label: 'Working' };
+  }
+  if (role === 'oracle' || /\b(verify|verifying|review|reviewing|check|checking|proof|audit)\b/.test(text)) {
+    return { state: 'review', label: 'Reviewing' };
+  }
+  if (/\b(work|working|build|building|patch|fix|fixing|implement|commit|spawn)\b/.test(text)) {
+    return { state: 'running', label: 'Working' };
+  }
+  return { state: 'idle', label: 'Ready' };
+}
+
+async function queryLatestSquidRoomPetRow(role) {
+  const invoke = typeof window?.squidrun?.invoke === 'function'
+    ? window.squidrun.invoke.bind(window.squidrun)
+    : (typeof ipcRenderer?.invoke === 'function' ? ipcRenderer.invoke.bind(ipcRenderer) : null);
+  if (!invoke) return null;
+  const rows = await invoke(SQUID_ROOM_PET_STATUS_CHANNEL, {
+    senderRole: role,
+    order: 'desc',
+    limit: 8,
+  });
+  if (!Array.isArray(rows)) return null;
+  return rows.find((row) => {
+    if (isSquidRoomPetNoiseRow(row, role)) return false;
+    return getSquidRoomCommsText(row).trim();
+  }) || rows.find((row) => getSquidRoomCommsText(row).trim()) || rows[0] || null;
+}
+
+function updateSquidRoomPetPane(pane, row) {
+  if (!pane || !row) return;
+  const role = String(pane.dataset?.squidRoomPet || '').trim().toLowerCase();
+  let state = classifySquidRoomPetState(row, role);
+  const face = buildSquidRoomPetFace(row, role);
+  const motionClass = getSquidRoomPetMotionClass(row);
+  // Body/label reconcile (S466, Architect-approved): the drowse reads
+  // output age; the label must read the SAME source or the box says
+  // "Working" over closed eyes. Resting output age overrides verb labels -
+  // Blocked stays visible regardless (an old blocker still matters).
+  if (motionClass === 'is-resting' && state.state !== 'failed') {
+    state = { state: 'idle', label: 'Resting' };
+  }
+  // HONEST comms pulse (wave 3): a NEW routed ledger row from this core pet
+  // to the OTHER core pet renders as a luminous pulse + mutual turn. Ledger
+  // identity gates newness; the runtime throttles rendering. Never invented.
+  const rowIdentity = String(row.rowId || row.row_id || '');
+  const previousRowIdentity = String(pane.dataset.squidRoomLastRowId || '');
+  // Speech is Oracle's subsystem: forward the HONEST face pipeline output
+  // (state-labeled face line + full/raw, keyed by row identity - it never
+  // invents; the label prefix is the same composer the old bubble used).
+  if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureSpeech === 'function') {
+    squidRoomCreatureRuntime.setSquidRoomCreatureSpeech(role, {
+      face: buildSquidRoomPetSpeechText(state, face).full,
+      full: face.face || '',
+      raw: face.raw || '',
+      rowIdentity,
+    });
+  }
+  if (rowIdentity && rowIdentity !== previousRowIdentity
+    && typeof squidRoomCreatureRuntime.notifySquidRoomComms === 'function') {
+    const targetRole = String(row.targetRole || row.target_role || row.target || '').trim().toLowerCase();
+    const otherPet = role === 'builder' ? 'oracle' : (role === 'oracle' ? 'builder' : null);
+    if (otherPet && targetRole === otherPet) {
+      squidRoomCreatureRuntime.notifySquidRoomComms(role, otherPet);
+    }
+  }
+  pane.dataset.squidRoomState = state.state;
+  pane.dataset.squidRoomLastRowId = String(row.rowId || row.row_id || '');
+  pane.dataset.squidRoomMotion = motionClass;
+  const sprite = pane.querySelector?.('[data-squid-room-pet-sprite="true"]');
+  if (sprite) {
+    sprite.dataset.avatarState = state.state;
+    animateSquidRoomPetSprite(sprite, state.state);
+  }
+  const stage = pane.querySelector?.('.sr2-pet-water');
+  if (stage?.classList) {
+    stage.classList.toggle('is-active', motionClass === 'is-active');
+    stage.classList.toggle('is-settling', motionClass === 'is-settling');
+    stage.classList.toggle('is-resting', motionClass === 'is-resting');
+    const celebrated = triggerSquidRoomPetCelebration(pane, row);
+    // P1.7 procedural creature: honest activity (real output age) drives
+    // behavior; ink puffs fire only when the REAL celebration gate fired.
+    if (typeof squidRoomCreatureRuntime.setSquidRoomCreatureActivity === 'function') {
+      squidRoomCreatureRuntime.setSquidRoomCreatureActivity(role, motionClass);
+    }
+    if (celebrated === true
+      && typeof squidRoomCreatureRuntime.celebrateSquidRoomCreature === 'function') {
+      squidRoomCreatureRuntime.celebrateSquidRoomCreature(role);
+    }
+  }
+  const stateEl = pane.querySelector?.('.squid-room-pet-state');
+  if (stateEl) stateEl.textContent = state.label;
+  const caption = pane.querySelector?.('.squid-room-pet-caption');
+  if (caption) {
+    const textNode = caption.querySelector?.('.face-line-text');
+    if (textNode) {
+      textNode.textContent = face.face;
+    } else {
+      caption.textContent = face.face;
+    }
+    const details = caption.querySelector?.('.face-details');
+    const rawNode = caption.querySelector?.('.face-raw');
+    if (rawNode) rawNode.textContent = face.raw;
+    if (details) {
+      details.hidden = !face.hasRawDetails;
+      details.open = false;
+    }
+  }
+}
+
+async function refreshSquidRoomPetStatus(windowContext = getCurrentWindowContext()) {
+  if (!isSquidRoomWindowContext(windowContext)) return { ok: false, skipped: true, reason: 'not_squid_room' };
+  const petPanes = getSquidRoomPetPaneElements();
+  if (petPanes.length === 0) return { ok: false, skipped: true, reason: 'no_pet_panes' };
+  // P1.7: bind procedural creature engines to any creature canvases the
+  // shell rendered (idempotent - re-renders get fresh bindings). NEVER fail
+  // silently: a missing runtime or zero-mount is logged so a blank ocean is
+  // diagnosable from app.log instead of by staring at pixels.
+  if (typeof squidRoomCreatureRuntime.mountSquidRoomCreatures === 'function') {
+    try {
+      squidRoomCreatureRuntime.mountSquidRoomCreatures(document);
+      if (!squidRoomCreatureMountReported) {
+        squidRoomCreatureMountReported = true;
+        const canvasCount = document.querySelectorAll('canvas[data-squid-room-creature]').length;
+        const bindings = typeof squidRoomCreatureRuntime.getSquidRoomCreatureDebugState === 'function'
+          ? squidRoomCreatureRuntime.getSquidRoomCreatureDebugState()
+          : 'no_debug_accessor';
+        log.info('SquidRoom', `Creature runtime state: canvases=${canvasCount} bindings=${JSON.stringify(bindings)}`);
+      }
+    } catch (err) {
+      log.error('SquidRoom', `Creature mount failed: ${err?.message || err}`);
+    }
+  } else if (!squidRoomCreatureMountReported) {
+    squidRoomCreatureMountReported = true;
+    log.warn('SquidRoom', 'Creature runtime unavailable in rendererModules - procedural pets cannot mount');
+  }
+  refreshSquidRoomPetAnimations();
+
+  const updates = [];
+  for (const pane of petPanes) {
+    const role = String(pane?.dataset?.squidRoomPet || '').trim().toLowerCase();
+    if (!role) continue;
+    try {
+      const row = await queryLatestSquidRoomPetRow(role);
+      if (!row) continue;
+      updateSquidRoomPetPane(pane, row);
+      updates.push({ role, rowId: row.rowId || row.row_id || null });
+    } catch (err) {
+      log.warn('SquidRoom', `Pet status refresh failed for ${role}: ${err?.message || err}`);
+    }
+  }
+  refreshSquidRoomPetAnimations();
+  return { ok: true, updates };
+}
+
+function scheduleSquidRoomPetStatusRefresh(windowContext = getCurrentWindowContext(), delayMs = 600) {
+  if (!isSquidRoomWindowContext(windowContext)) {
+    if (squidRoomPetStatusTimer) {
+      clearTimeout(squidRoomPetStatusTimer);
+      squidRoomPetStatusTimer = null;
+    }
+    return;
+  }
+  if (squidRoomPetStatusTimer) clearTimeout(squidRoomPetStatusTimer);
+  squidRoomPetStatusTimer = setTimeout(() => {
+    squidRoomPetStatusTimer = null;
+    void refreshSquidRoomPetStatus(getCurrentWindowContext())
+      .finally(() => scheduleSquidRoomPetStatusRefresh(getCurrentWindowContext(), SQUID_ROOM_PET_STATUS_REFRESH_MS));
+  }, delayMs);
+}
+
+function getSquidRoomPaneRuntimeSpec(element) {
+  const paneId = String(element?.dataset?.paneId || '').trim();
+  if (!paneId) return null;
+  return {
+    paneId,
+    label: String(element.dataset.squidRoomLabel || paneId).trim(),
+    roleLabel: String(element.dataset.squidRoomLabel || paneId).trim(),
+    roleId: String(element.dataset.squidRoomRoleId || element.dataset.squidRoomRouteTarget || paneId).trim(),
+    routeTarget: String(element.dataset.squidRoomRouteTarget || paneId).trim(),
+    provider: 'codex',
+    command: String(element.dataset.squidRoomCommand || 'codex --yolo').trim(),
+    commandSourcePaneId: String(element.dataset.squidRoomCommandSourcePaneId || '2').trim(),
+    workingDir: String(element.dataset.squidRoomWorkingDir || 'D:\\projects\\ExampleApp').trim(),
+    startupMessage: String(element.dataset.squidRoomStartupMessage || '').trim(),
+    spawnCommandOnCreate: true,
+  };
+}
+
+function stripSquidRoomAnsi(value) {
+  // S468 weaker-duplicate hunt: delegate to the package-backed strip
+  // (ui/modules/ansi.js) — the old hand-rolled CSI-only regex missed OSC
+  // hyperlinks/charset selects, which CLI output emits and which would
+  // otherwise reach Operator's room faces. Old regex kept ONLY as the
+  // preload-failure fallback.
+  const packageStrip = rendererModules.ansi?.stripAnsi;
+  if (typeof packageStrip === 'function') return packageStrip(value);
+  return String(value || '').replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '');
+}
+
+function hasSquidRoomLiveCliContent(term = {}) {
+  if (!term || term.alive !== true) return false;
+  const tail = stripSquidRoomAnsi(String(term.scrollback || '').slice(-4000));
+  if (!tail.trim()) return false;
+  if (/(^|\n)PS [^\n>]*>\s*$/m.test(tail)) return false;
+  if (/(^|\n)[A-Z]:\\[^\n>]*>\s*$/m.test(tail)) return false;
+  return /codex|claude|gemini|openai|chatgpt|model|\/help|welcome/i.test(tail);
+}
+
+function hasSquidRoomShellOnlyPrompt(term = {}) {
+  if (!term || term.alive !== true) return false;
+  const tail = stripSquidRoomAnsi(String(term.scrollback || '').slice(-2000));
+  if (!tail.trim()) return false;
+  if (hasSquidRoomLiveCliContent(term)) return false;
+  return /(^|\n)PS [^\n>]*>\s*$/m.test(tail)
+    || /(^|\n)[A-Z]:\\[^\n>]*>\s*$/m.test(tail)
+    || /(^|\n)[^\n$#>]+[$#>]\s*$/m.test(tail);
+}
+
+function buildSquidRoomPtyCreateOptions(spec = {}) {
+  return {
+    paneCommand: spec.command,
+    spawnCommandOnCreate: true,
+    preferWorkingDir: true,
+    env: {
+      SQUIDRUN_ROLE: spec.roleId || spec.routeTarget || spec.paneId,
+      SQUIDRUN_PROFILE: getCurrentWindowContext()?.profileName || 'main',
+      SQUIDRUN_SESSION_SCOPE_ID: getCurrentWindowContext()?.sessionScopeId || '',
+      SQUIDRUN_WINDOW_KEY: SQUID_ROOM_WINDOW_KEY,
+      SQUIDRUN_WORKING_DIR: spec.workingDir,
+    },
+  };
+}
+
+function normalizeSquidRoomWorkingDirForCompare(value) {
+  return String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+$/g, '')
+    .toLowerCase();
+}
+
+function isSquidRoomPaneWrongWorkingDir(term = {}, expectedWorkingDir = '') {
+  if (!term || term.alive !== true) return false;
+  const actualWorkingDir = term.cwd || term.workingDir || term.currentWorkingDirectory || '';
+  const actual = normalizeSquidRoomWorkingDirForCompare(actualWorkingDir);
+  const expected = normalizeSquidRoomWorkingDirForCompare(expectedWorkingDir);
+  if (!actual || !expected) return false;
+  return actual !== expected;
+}
+
+async function recreateSquidRoomLivePanePty(spec, element = null) {
+  const paneId = String(spec?.paneId || '');
+  const workingDir = String(spec?.workingDir || '').trim();
+  if (!paneId || !workingDir) {
+    return { ok: false, reason: 'invalid_spec' };
+  }
+  if (!window?.squidrun?.pty?.kill || !window?.squidrun?.pty?.create) {
+    return { ok: false, reason: 'pty_control_unavailable' };
+  }
+
+  try {
+    await window.squidrun.pty.kill(paneId);
+  } catch (err) {
+    log.warn('SquidRoom', `Failed to kill stale live pane ${paneId}: ${err?.message || err}`);
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 250));
+
+  if (typeof terminal.resetTerminalWriteQueue === 'function') {
+    terminal.resetTerminalWriteQueue(paneId);
+  }
+  const terminalInstance = typeof terminal.getTerminal === 'function'
+    ? terminal.getTerminal(paneId)
+    : null;
+  if (terminalInstance && typeof terminalInstance.clear === 'function') {
+    try {
+      terminalInstance.clear();
+    } catch (err) {
+      log.warn('SquidRoom', `Failed to clear stale live pane ${paneId}: ${err?.message || err}`);
+    }
+  }
+
+  await window.squidrun.pty.create(paneId, workingDir, buildSquidRoomPtyCreateOptions(spec));
+  if (typeof terminal.updatePaneStatus === 'function') {
+    terminal.updatePaneStatus(paneId, 'Connected');
+  }
+  if (element) {
+    element.dataset.squidRoomCli = 'recreated';
+  }
+  return { ok: true };
+}
+
+async function getSquidRoomDaemonTermForPane(paneId) {
+  const id = String(paneId);
+  const directSnapshotFn = bridgeApi?.daemon?.terminalSnapshot
+    || window?.squidrun?.daemon?.terminalSnapshot
+    || window?.squidrunAPI?.daemon?.terminalSnapshot;
+  if (typeof directSnapshotFn === 'function') {
+    try {
+      const snapshot = await directSnapshotFn({ timeoutMs: 1500, windowKey: SQUID_ROOM_WINDOW_KEY });
+      if (Array.isArray(snapshot?.terminals)) {
+        return snapshot.terminals.find((term) => String(term?.paneId || '') === id && term.alive === true) || null;
+      }
+    } catch (err) {
+      log.warn('SquidRoom', `Direct daemon snapshot failed for ${id}: ${err?.message || err}`);
+    }
+  }
+
+  try {
+    const snapshot = await ipcRenderer.invoke('get-daemon-terminal-snapshot', { windowKey: SQUID_ROOM_WINDOW_KEY });
+    if (Array.isArray(snapshot?.terminals)) {
+      return snapshot.terminals.find((term) => String(term?.paneId || '') === id && term.alive === true) || null;
+    }
+  } catch (err) {
+    log.warn('SquidRoom', `Daemon terminal snapshot IPC failed for ${id}: ${err?.message || err}`);
+  }
+
+  try {
+    const terminals = await ipcRenderer.invoke('get-daemon-terminals', { paneId: id });
+    if (!Array.isArray(terminals)) return null;
+    return terminals.find((term) => String(term?.paneId || '') === id && term.alive === true) || null;
+  } catch (err) {
+    log.warn('SquidRoom', `Daemon terminal list failed for ${id}: ${err?.message || err}`);
+    return null;
+  }
+}
+
+async function ensureSquidRoomLivePaneAgents(windowContext = getCurrentWindowContext(), options = {}) {
+  if (!isSquidRoomWindowContext(windowContext)) return { ok: false, skipped: true, reason: 'not_squid_room' };
+  const livePaneElements = getSquidRoomLivePaneElements();
+  if (livePaneElements.length === 0) return { ok: false, skipped: true, reason: 'no_live_panes' };
+
+  const ensured = [];
+  for (const element of livePaneElements) {
+    const spec = getSquidRoomPaneRuntimeSpec(element);
+    if (!spec) continue;
+
+    if (typeof terminal.setPaneRuntimeOverride === 'function') {
+      terminal.setPaneRuntimeOverride(spec.paneId, spec);
+    }
+
+    if (!terminal.getTerminal(spec.paneId)) {
+      await terminal.initTerminal(spec.paneId, { workingDir: spec.workingDir, focus: false });
+    }
+
+    let existingTerm = await getSquidRoomDaemonTermForPane(spec.paneId);
+    if (isSquidRoomPaneWrongWorkingDir(existingTerm, spec.workingDir)) {
+      log.warn(
+        'SquidRoom',
+        `Live pane ${spec.paneId} is attached to ${existingTerm?.cwd || 'unknown cwd'}; recreating in ${spec.workingDir}`
+      );
+      const recreate = await recreateSquidRoomLivePanePty(spec, element);
+      if (!recreate.ok) {
+        element.dataset.squidRoomCli = 'cwd_mismatch';
+        ensured.push({ paneId: spec.paneId, status: 'cwd_mismatch', reason: recreate.reason });
+        continue;
+      }
+      squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
+      existingTerm = null;
+    }
+
+    if (hasSquidRoomLiveCliContent(existingTerm)) {
+      squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
+      element.dataset.squidRoomCli = 'live';
+      ensured.push({ paneId: spec.paneId, status: 'live' });
+      continue;
+    }
+
+    const attempt = squidRoomLivePaneSpawnAttempts.get(spec.paneId) || null;
+    const attemptAgeMs = attempt?.attemptedAt ? Date.now() - attempt.attemptedAt : null;
+    const promptOnly = hasSquidRoomShellOnlyPrompt(existingTerm);
+    const timedOut = attemptAgeMs !== null && attemptAgeMs > SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS;
+    const shouldRespawn = promptOnly || timedOut;
+    if (attempt && !shouldRespawn) {
+      ensured.push({ paneId: spec.paneId, status: 'spawn_pending', ageMs: attemptAgeMs });
+      continue;
+    }
+
+    if (shouldRespawn && existingTerm) {
+      log.warn(
+        'SquidRoom',
+        `Live pane ${spec.paneId} has no CLI proof after spawn (${promptOnly ? 'prompt_only' : 'timeout'}); respawning`
+      );
+      const recreate = await recreateSquidRoomLivePanePty(spec, element);
+      if (!recreate.ok) {
+        element.dataset.squidRoomCli = 'respawn_failed';
+        ensured.push({ paneId: spec.paneId, status: 'respawn_failed', reason: recreate.reason });
+        continue;
+      }
+      existingTerm = null;
+    }
+
+    try {
+      const previousAttempts = Number(attempt?.attempts || 0);
+      squidRoomLivePaneSpawnAttempts.set(spec.paneId, {
+        attemptedAt: Date.now(),
+        attempts: previousAttempts + 1,
+      });
+      await terminal.spawnAgent(spec.paneId, 'codex');
+      element.dataset.squidRoomCli = shouldRespawn ? 'respawned' : 'spawned';
+      ensured.push({ paneId: spec.paneId, status: shouldRespawn ? 'respawned' : 'spawned' });
+    } catch (err) {
+      squidRoomLivePaneSpawnAttempts.delete(spec.paneId);
+      element.dataset.squidRoomCli = 'spawn_failed';
+      log.error('SquidRoom', `Failed to spawn live pane ${spec.paneId}:`, err);
+      ensured.push({ paneId: spec.paneId, status: 'spawn_failed', error: err?.message || String(err) });
+    }
+  }
+  if (ensured.some((entry) => ['spawned', 'respawned', 'spawn_pending'].includes(entry.status))) {
+    scheduleSquidRoomLivePaneEnsure(getCurrentWindowContext(), SQUID_ROOM_LIVE_PANE_SPAWN_TIMEOUT_MS + 500);
+  }
+  return { ok: true, ensured };
+}
+
+function scheduleSquidRoomLivePaneEnsure(windowContext = getCurrentWindowContext(), delayMs = 300) {
+  if (!isSquidRoomWindowContext(windowContext)) return;
+  if (squidRoomLivePaneEnsureTimer) clearTimeout(squidRoomLivePaneEnsureTimer);
+  squidRoomLivePaneEnsureTimer = setTimeout(() => {
+    squidRoomLivePaneEnsureTimer = null;
+    void ensureSquidRoomLivePaneAgents(getCurrentWindowContext());
+  }, delayMs);
+}
+
+scheduleSquidRoomLivePaneEnsure(initialWindowContext, 300);
+
+function buildSquidRoomProjectionPayload(windowContext = {}) {
+  if (typeof squidRoomSurfaceModule.buildProjectionRequest === 'function') {
+    return squidRoomSurfaceModule.buildProjectionRequest(windowContext, EXAMPLEAPP_APP_ROOM_ID);
+  }
+  const sessionScopeId = String(windowContext?.sessionScopeId || '').trim();
+  const mainSessionId = sessionScopeId ? sessionScopeId.split(':')[0] : '';
+  return {
+    appRoomId: EXAMPLEAPP_APP_ROOM_ID,
+    ...(mainSessionId ? { sessionId: `${mainSessionId}:${EXAMPLEAPP_APP_ROOM_ID}` } : {}),
+    includeRows: true,
+  };
+}
+
+function renderSquidRoomProjectionInline(projection = {}, elements = getSquidRoomSurfaceElements()) {
+  const registry = projection?.registry || {};
+  const desired = Number(registry.desiredCount || 0);
+  const ready = Number(registry.readyCount || 0);
+  const missing = Number(registry.missingCount || 0);
+  const ok = projection?.ok === true;
+  if (elements.status) {
+    elements.status.textContent = ok ? '' : 'Projection unavailable';
+  }
+  if (elements.counts) {
+    elements.counts.innerHTML = `<span>${desired} arms</span>`;
+  }
+  if (elements.root) {
+    elements.root.dataset.projectionStatus = ok ? 'loaded' : 'unavailable';
+  }
+  return {
+    ok,
+    counts: { desired, ready, missing },
+  };
+}
+
+function renderSquidRoomSurfaceUnavailable(reason = 'projection_unavailable') {
+  const elements = getSquidRoomSurfaceElements();
+  if (!elements.root) return { ok: false, skipped: true, reason: 'surface_unavailable' };
+  const model = renderSquidRoomProjectionInline({ ok: false }, elements);
+  elements.root.dataset.projectionStatus = 'unavailable';
+  elements.root.dataset.projectionReason = String(reason || 'projection_unavailable');
+  return { ok: false, reason, model };
+}
+
+function createSquidRoomSurfaceOptions() {
+  return {
+    document,
+    invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+    getWindowContext: () => getCurrentWindowContext(),
+  };
+}
+
+function ensureSquidRoomSurfaceController() {
+  if (squidRoomSurfaceController?.ok === true) {
+    return squidRoomSurfaceController;
+  }
+  if (typeof initSquidRoomSurface !== 'function') {
+    return null;
+  }
+  const controller = initSquidRoomSurface(createSquidRoomSurfaceOptions());
+  if (controller?.ok === true) {
+    squidRoomSurfaceController = controller;
+  }
+  return controller || null;
+}
+
+async function refreshSquidRoomSurfaceWithoutController(windowContext = getCurrentWindowContext(), reason = 'controller_unavailable') {
+  if (!isSquidRoomWindowContext(windowContext)) {
+    return { ok: false, skipped: true, reason: 'not_squid_room' };
+  }
+  log.info('SquidRoom', `Refreshing without controller reason=${String(reason || 'unknown')}`);
+  if (typeof refreshSquidRoomSurface === 'function') {
+    const moduleResult = await refreshSquidRoomSurface({
+      ...createSquidRoomSurfaceOptions(),
+      getWindowContext: () => windowContext,
+    });
+    if (moduleResult?.skipped !== true) {
+      return moduleResult;
+    }
+    log.info('SquidRoom', `Surface module refresh skipped: ${moduleResult.reason || 'unknown'}`);
+  }
+
+  const elements = getSquidRoomSurfaceElements();
+  if (!elements.root) return { ok: false, skipped: true, reason: 'surface_unavailable' };
+
+  const payload = buildSquidRoomProjectionPayload(windowContext);
+  let projection = null;
+  try {
+    projection = await ipcRenderer.invoke(SQUID_ROOM_PROJECTION_CHANNEL, payload);
+  } catch (err) {
+    return renderSquidRoomSurfaceUnavailable(err?.message || reason || 'projection_failed');
+  }
+
+  const model = renderSquidRoomProjectionInline(projection, elements);
+  log.info('SquidRoom', `Applied projection desired=${model.counts.desired} ready=${model.counts.ready} missing=${model.counts.missing}`);
+  return {
+    ok: model?.ok === true,
+    channel: SQUID_ROOM_PROJECTION_CHANNEL,
+    payload,
+    model,
+    fallbackReason: reason,
+  };
+}
+
+function refreshSquidRoomSurfaceForContext(windowContext = getCurrentWindowContext()) {
+  if (!isSquidRoomWindowContext(windowContext)) {
+    return;
+  }
+  log.info('SquidRoom', `Refresh requested for ${windowContext.windowKey}`);
+  void refreshSquidRoomPetStatus(windowContext);
+  const controller = ensureSquidRoomSurfaceController();
+  if (!controller || typeof controller.refreshForWindowContext !== 'function') {
+    void refreshSquidRoomSurfaceWithoutController(windowContext, 'controller_unavailable');
+    return;
+  }
+  void Promise.resolve(controller.refreshForWindowContext(windowContext))
+    .then((result) => {
+      if (result?.skipped === true) {
+        return refreshSquidRoomSurfaceWithoutController(windowContext, result.reason || 'controller_skipped');
+      }
+      return result;
+    })
+    .catch((err) => {
+      log.warn('SquidRoom', `Controller refresh failed: ${err?.message || err}`);
+      return refreshSquidRoomSurfaceWithoutController(windowContext, 'controller_refresh_failed');
+    });
+}
+
+function handleRendererWindowContext(payload = {}) {
+  const windowContext = windowTeamBootstrap.handleWindowContext(payload || {});
+  if (typeof terminal.setStartupWindowContext === 'function') {
+    terminal.setStartupWindowContext(windowContext);
+  }
+  if (typeof configureWorkspacePaneShell === 'function') {
+    configureWorkspacePaneShell(windowContext, terminal, document);
+    scheduleSquidRoomLivePaneEnsure(windowContext, 300);
+    scheduleSquidRoomPetStatusRefresh(windowContext, 600);
+    refreshSquidRoomPetAnimations();
+  }
+  applyWindowChrome(windowContext);
+  refreshSquidRoomSurfaceForContext(windowContext);
+  if (!initState.autoSpawnChecked) {
+    checkInitComplete();
+  }
+  return windowContext;
+}
+
+const disposeEarlyWindowContextListener = ipcRenderer.on('window-context', (_event, payload) => {
+  handleRendererWindowContext(payload || {});
+});
+
+function isSecondaryWindow(windowContext = getCurrentWindowContext()) {
+  return String(windowContext?.windowKey || 'main').trim() !== 'main';
+}
+
+function getWindowLifecycleMode(windowContext = getCurrentWindowContext()) {
+  const mode = String(windowContext?.lifecycleMode || '').trim();
+  if (mode) return mode;
+  if (windowContext?.standaloneWindow === true) return 'standalone-profile-app';
+  return isSecondaryWindow(windowContext) ? 'secondary-window' : 'main-app';
+}
+
+function getWorkspaceSwitchKey(windowContext = getCurrentWindowContext()) {
+  return 'main';
+}
+
+function updateWorkspaceSwitcher(windowContext = getCurrentWindowContext()) {
+  const activeKey = getWorkspaceSwitchKey(windowContext);
+  document.querySelectorAll('[data-workspace-switch]').forEach((button) => {
+    const targetKey = String(button.dataset.workspaceSwitch || '').trim().toLowerCase();
+    const isActive = targetKey === activeKey;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+}
+
+async function openWorkspaceFromSwitch(targetKey) {
+  const normalizedTarget = String(targetKey || '').trim().toLowerCase();
+  const activeKey = getWorkspaceSwitchKey();
+  if (!normalizedTarget || normalizedTarget === activeKey) return;
+
+  const payload = { windowKey: 'main' };
+  try {
+    await ipcRenderer.invoke('open-app-window', payload);
+  } catch (err) {
+    console.error('[WorkspaceSwitch] open failed:', err);
+  }
+}
+
+function bindWorkspaceSwitcher() {
+  const switcher = document.getElementById('workspaceSwitcher');
+  if (!switcher || switcher.dataset.bound === 'true') return;
+  switcher.dataset.bound = 'true';
+  switcher.addEventListener('click', (event) => {
+    const button = event.target?.closest?.('[data-workspace-switch]');
+    if (!button) return;
+    event.preventDefault();
+    void openWorkspaceFromSwitch(button.dataset.workspaceSwitch);
+  });
+  updateWorkspaceSwitcher();
+}
+
+function applyWindowChrome(windowContext = getCurrentWindowContext()) {
+  const normalized = windowContext && typeof windowContext === 'object'
+    ? windowContext
+    : getCurrentWindowContext();
+  const windowKey = String(normalized?.windowKey || 'main').trim() || 'main';
+  const profileName = String(normalized?.profileName || 'main').trim() || 'main';
+  const sessionScopeId = String(normalized?.sessionScopeId || '').trim();
+  const lifecycleMode = getWindowLifecycleMode(normalized);
+  if (document.body) {
+    document.body.dataset.windowKey = windowKey;
+    document.body.dataset.profileName = profileName;
+    document.body.dataset.sessionScopeId = sessionScopeId;
+  }
+  if (profileName === 'scoped') {
+    document.title = 'SquidRun - Scoped';
+  } else {
+    document.title = windowKey === 'main'
+      ? 'SquidRun'
+      : `SquidRun - ${windowKey === 'scoped' ? 'Scoped Workspace' : windowKey}`;
+  }
+
+  const fullRestartBtn = document.getElementById('fullRestartBtn');
+  if (fullRestartBtn) {
+    if (!fullRestartBtn.dataset.defaultHtml) {
+      fullRestartBtn.dataset.defaultHtml = fullRestartBtn.innerHTML;
+    }
+    if (lifecycleMode === 'main-app') {
+      fullRestartBtn.innerHTML = fullRestartBtn.dataset.defaultHtml;
+      // This RUNTIME assignment is the live tooltip; updating index.html alone
+      // never reaches the user. The scoped branches below stay unchanged —
+      // main keeps polling when a profile app closes.
+      fullRestartBtn.title = 'Quit SquidRun: stop panes, daemon, pollers, and background services. '
+        + 'Telegram polling goes offline too - messages sent while SquidRun is closed will not be '
+        + 'seen or answered until you reopen it.';
+      fullRestartBtn.dataset.windowAction = 'shutdown-app';
+    } else if (lifecycleMode === 'standalone-profile-app') {
+      fullRestartBtn.innerHTML = 'Quit Profile App';
+      fullRestartBtn.title = `Quit this ${windowKey} profile app; main SquidRun keeps running.`;
+      fullRestartBtn.dataset.windowAction = 'quit-profile-app';
+    } else {
+      fullRestartBtn.innerHTML = 'Close This Window';
+      fullRestartBtn.title = profileName === 'scoped'
+        ? 'Close only this Scoped window; main SquidRun and daemon keep running.'
+        : `Close only the ${windowKey} window; main SquidRun and daemon keep running.`;
+      fullRestartBtn.dataset.windowAction = 'close-window';
+    }
+  }
+  updateWorkspaceSwitcher(normalized);
+}
+
+function formatStartupElapsed(ms) {
+  const safeMs = Math.max(0, Number(ms) || 0);
+  const totalSeconds = Math.ceil(safeMs / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
+function buildStartupChecklistHtml(items = []) {
+  return items.map((item) => {
+    const state = String(item?.state || 'pending');
+    const name = String(item?.name || 'Unknown');
+    const detail = String(item?.detail || '').trim();
+    return `
+      <div class="startup-loading-check ${state}">
+        <span class="startup-loading-check-dot" aria-hidden="true"></span>
+        <span class="startup-loading-check-label">
+          <span class="startup-loading-check-name">${name}</span>
+          <span class="startup-loading-check-detail">${detail || '&nbsp;'}</span>
+        </span>
+      </div>
+    `;
+  }).join('');
+}
+
+function computeStartupOverlayModel(status = {}, localState = {}) {
+  const startupCopy = getStartupLoadingCopy(localState?.windowContext || initialWindowContext);
+  const paneHost = status?.paneHost || {};
+  const readyPanes = Array.isArray(paneHost.readyPanes) ? paneHost.readyPanes : [];
+  const missingPanes = Array.isArray(paneHost.missingPanes) ? paneHost.missingPanes : [];
+  const paneHostHealthy = paneHost.hiddenModeEnabled === false
+    || (readyPanes.length >= 3 && missingPanes.length === 0 && paneHost.degraded !== true);
+  const memoryState = status?.memory || {};
+  const supervisor = status?.supervisor || {};
+  const websocket = status?.websocket || {};
+  const daemonConnected = localState.daemonConnected === true || status?.daemon?.connected === true;
+  const capabilitiesLoaded = localState.capabilitiesLoaded === true || status?.capabilities?.loaded === true;
+  const items = [
+    {
+      id: 'ui',
+      name: 'UI shell',
+      state: 'ready',
+      weight: 12,
+      detail: 'Renderer mounted',
+    },
+    {
+      id: 'daemon',
+      name: 'Terminal daemon',
+      state: daemonConnected ? 'ready' : 'loading',
+      weight: 24,
+      detail: daemonConnected ? 'PTYs connected' : 'Connecting terminals…',
+    },
+    {
+      id: 'supervisor',
+      name: 'Supervisor',
+      state: supervisor.healthy ? 'ready' : (supervisor.pid ? 'loading' : 'pending'),
+      weight: 18,
+      detail: supervisor.healthy
+        ? `PID ${supervisor.pid || 'active'}`
+        : (supervisor.pid ? 'Waiting for heartbeat…' : 'Starting runtime loop…'),
+    },
+    {
+      id: 'websocket',
+      name: 'WS broker',
+      state: websocket.running ? 'ready' : 'loading',
+      weight: 14,
+      detail: websocket.running
+        ? `Port ${websocket.port || '9900'}`
+        : 'Binding local broker…',
+    },
+    {
+      id: 'memory',
+      name: 'Memory',
+      state: memoryState.ok || capabilitiesLoaded ? 'ready' : (memoryState.error ? 'degraded' : 'loading'),
+      weight: 14,
+      detail: memoryState.error
+        ? 'Recall degraded'
+        : (memoryState.ok || capabilitiesLoaded ? 'Recall online' : 'Warming memory services…'),
+    },
+    {
+      id: 'paneHost',
+      name: 'Pane hosting',
+      state: paneHostHealthy ? 'ready' : (paneHost.degraded ? 'degraded' : 'loading'),
+      weight: 18,
+      detail: paneHostHealthy
+        ? (paneHost.hiddenModeEnabled === false ? 'Visible mode' : `${readyPanes.length}/3 hidden panes ready`)
+        : (paneHost.degraded ? `Degraded: ${missingPanes.join(', ') || 'retrying'}` : 'Preparing hidden panes…'),
+    },
+  ];
+
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0) || 1;
+  const completedWeight = items.reduce((sum, item) => sum + (item.state === 'ready' ? item.weight : 0), 0);
+  const degraded = items.some((item) => item.state === 'degraded');
+  const nextItem = items.find((item) => item.state !== 'ready') || items[items.length - 1];
+  return {
+    items,
+    percent: Math.max(6, Math.min(100, Math.round((completedWeight / totalWeight) * 100))),
+    ready: items.every((item) => item.state === 'ready'),
+    degraded,
+    headline: nextItem?.state === 'ready'
+      ? startupCopy.readyMessage
+      : (isSquidRoomWindowContext(localState?.windowContext || initialWindowContext)
+        ? startupCopy.message
+        : `Loading ${nextItem?.name || 'services'}…`),
+    subhead: nextItem?.detail || startupCopy.stage,
+  };
+}
+
+function isAutonomyConsentRequired() {
+  if (typeof settings.requiresAutonomyConsent !== 'function') return false;
+  return settings.requiresAutonomyConsent();
+}
+
+function getAutonomyOnboardingElements() {
+  return {
+    overlay: document.getElementById('autonomyOnboardingOverlay'),
+    enableButton: document.getElementById('autonomyEnableBtn'),
+    declineButton: document.getElementById('autonomyDeclineBtn'),
+  };
+}
+
+function showAutonomyOnboarding() {
+  const { overlay } = getAutonomyOnboardingElements();
+  if (!overlay) return;
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
+function hideAutonomyOnboarding() {
+  const { overlay } = getAutonomyOnboardingElements();
+  if (!overlay) return;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+}
+
+function setAutonomyOnboardingBusyState(isBusy) {
+  const { enableButton, declineButton } = getAutonomyOnboardingElements();
+  if (enableButton) enableButton.disabled = isBusy;
+  if (declineButton) declineButton.disabled = isBusy;
+}
+
+async function handleAutonomyOnboardingChoice(enabled) {
+  if (autonomyOnboardingBusy) return;
+  autonomyOnboardingBusy = true;
+  setAutonomyOnboardingBusyState(true);
+  try {
+    const result = await settings.setAutonomyConsentChoice(enabled);
+    if (!result?.success) {
+      showStatusNotice('Failed to save autonomy preference. Please try again.', 'warning', 3500);
+      return;
+    }
+
+    hideAutonomyOnboarding();
+    initState.autoSpawnChecked = false;
+    checkInitComplete();
+    showStatusNotice(
+      enabled
+        ? 'Autonomy enabled. Agents will skip native permission prompts.'
+        : 'Autonomy disabled. Agents will use native permission prompts.',
+      'info',
+      3500
+    );
+  } catch (err) {
+    log.error('Onboarding', 'Failed to save autonomy choice', err);
+    showStatusNotice('Failed to save autonomy preference. Please try again.', 'warning', 3500);
+  } finally {
+    autonomyOnboardingBusy = false;
+    setAutonomyOnboardingBusyState(false);
+  }
+}
+
+function setupAutonomyOnboardingHandlers() {
+  if (autonomyOnboardingHandlersBound) return;
+  autonomyOnboardingHandlersBound = true;
+
+  const { enableButton, declineButton } = getAutonomyOnboardingElements();
+  if (enableButton) {
+    enableButton.addEventListener('click', () => {
+      handleAutonomyOnboardingChoice(true);
+    });
+  }
+  if (declineButton) {
+    declineButton.addEventListener('click', () => {
+      handleAutonomyOnboardingChoice(false);
+    });
+  }
+}
+
+function checkInitComplete() {
+  if (initState.settingsLoaded && initState.terminalsReady && !initState.autoSpawnChecked) {
+    if (windowTeamBootstrap.shouldDeferAutoSpawn()) {
+      log.info('Init', 'Waiting for window context before auto-spawn');
+      return;
+    }
+
+    if (!profileOnboardingState.checkComplete) {
+      log.info('Init', 'Waiting for profile onboarding check before auto-spawn');
+      return;
+    }
+
+    if (profileOnboardingState.required && !profileOnboardingState.completed) {
+      log.info('Init', 'Profile setup required before autonomy/auto-spawn');
+      void openProfileModal({ enforceName: true, reload: false });
+      return;
+    }
+
+    if (isAutonomyConsentRequired()) {
+      log.info('Init', 'Autonomy consent required before auto-spawn');
+      showAutonomyOnboarding();
+      return;
+    }
+
+    initState.autoSpawnChecked = true;
+    log.info('Init', 'Both settings and terminals ready, checking auto-spawn...');
+    const windowContext = windowTeamBootstrap.getState();
+    const autoSpawnPromise = windowContext.windowKey !== 'main' && windowContext.autoBootAgents === true
+      ? windowTeamBootstrap.maybeRunSecondaryAutoBoot({
+          reconnectedToExisting: terminal.getReconnectedToExisting(),
+        })
+      : settings.checkAutoSpawn(
+          terminal.spawnAllAgents,
+          terminal.getReconnectedToExisting()
+        );
+    Promise.resolve(autoSpawnPromise).catch((err) => {
+      log.error('Init', 'Auto-spawn failed', err);
+      showStatusNotice('Auto-boot failed. Check the log and retry.', 'warning', 4000);
+    });
+  }
+}
+
+function markSettingsLoaded() {
+  initState.settingsLoaded = true;
+  log.info('Init', 'Settings loaded');
+  setupPanelsAfterSettingsLoaded();
+  void evaluateProfileOnboardingRequirement();
+  checkInitComplete();
+}
+
+function markTerminalsReady(autoSpawnHandled = false) {
+  initState.terminalsReady = true;
+  if (autoSpawnHandled === true) {
+    initState.autoSpawnChecked = true;
+    log.info('Init', 'Terminals ready; auto-spawn already handled by daemon command-on-create');
+  }
+  log.info('Init', 'Terminals ready');
+
+  checkInitComplete();
+}
+
+async function requestDaemonTerminalSnapshotAfterReload(timeoutMs = 1500) {
+  const windowContext = getCurrentWindowContext();
+  const directSnapshotFn = bridgeApi?.daemon?.terminalSnapshot
+    || window?.squidrun?.daemon?.terminalSnapshot
+    || window?.squidrunAPI?.daemon?.terminalSnapshot;
+
+  if (typeof directSnapshotFn === 'function') {
+    try {
+      const snapshot = await directSnapshotFn({ timeoutMs, windowKey: windowContext.windowKey });
+      if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
+        return snapshot;
+      }
+      log.warn('Init', `Direct daemon snapshot unavailable: ${snapshot?.reason || 'unknown'}`);
+    } catch (err) {
+      log.warn('Init', `Direct daemon snapshot failed: ${err?.message || err}`);
+    }
+  }
+
+  try {
+    const snapshot = await ipcRenderer.invoke('get-daemon-terminal-snapshot', { windowKey: windowContext.windowKey });
+    if (snapshot?.ok && Array.isArray(snapshot.terminals)) {
+      return snapshot;
+    }
+    log.warn('Init', `Main daemon snapshot unavailable: ${snapshot?.reason || 'unknown'}`);
+  } catch (err) {
+    log.warn('Init', `Main daemon snapshot IPC unavailable: ${err?.message || err}`);
+  }
+
+  return null;
+}
+
+async function recoverMissedDaemonConnectedAfterReload(daemonListenerController) {
+  if (initState.terminalsReady) {
+    return { ok: true, skipped: true, reason: 'terminals_ready' };
+  }
+  if (
+    !daemonListenerController
+    || typeof daemonListenerController.replayDaemonConnected !== 'function'
+  ) {
+    log.warn('Init', 'Daemon replay control unavailable after listener attach');
+    return { ok: false, reason: 'replay_unavailable' };
+  }
+
+  const snapshot = await requestDaemonTerminalSnapshotAfterReload();
+  if (initState.terminalsReady) {
+    return { ok: true, skipped: true, reason: 'terminals_ready_after_snapshot' };
+  }
+  if (!snapshot || !Array.isArray(snapshot.terminals) || snapshot.terminals.length === 0) {
+    return { ok: false, reason: 'snapshot_unavailable' };
+  }
+
+  log.info(
+    'Init',
+    `Replaying daemon-connected from ${snapshot.source || 'snapshot'} after listener attach (${snapshot.terminals.length} terminal(s))`
+  );
+  await daemonListenerController.replayDaemonConnected({
+    terminals: snapshot.terminals,
+    replayed: true,
+    source: snapshot.source || 'snapshot',
+  });
+  return { ok: true, replayed: true, terminalCount: snapshot.terminals.length };
+}
+
+function syncStartupOverlayDaemonReplay(startupOverlayState, replayResult = null) {
+  if (
+    startupOverlayState
+    && typeof startupOverlayState === 'object'
+    && replayResult?.replayed === true
+  ) {
+    startupOverlayState.daemonConnected = true;
+  }
+  return startupOverlayState?.daemonConnected === true;
+}
+
+function dismissStartupLoadingOverlay() {
+  const overlay = document.getElementById('startupLoadingOverlay');
+  if (!overlay || overlay.dataset.dismissed === 'true') return;
+  overlay.dataset.dismissed = 'true';
+  overlay.classList.add('hidden');
+  setTimeout(() => {
+    if (overlay.parentNode) {
+      overlay.parentNode.removeChild(overlay);
+    }
+  }, STARTUP_OVERLAY_FADE_MS + 40);
+}
+
+function setStartupLoadingOverlayState({
+  message = null,
+  stage = null,
+  eta = null,
+  percent = null,
+  checks = null,
+  error = false,
+  hideSpinner = false,
+} = {}) {
+  const overlay = document.getElementById('startupLoadingOverlay');
+  if (!overlay || overlay.dataset.dismissed === 'true') return;
+
+  const textElement = document.getElementById('startupLoadingText');
+  const stageElement = document.getElementById('startupLoadingStageText');
+  const etaElement = document.getElementById('startupLoadingEta');
+  const percentElement = document.getElementById('startupLoadingPercent');
+  const checksElement = document.getElementById('startupLoadingChecks');
+  const progressFill = document.getElementById('startupLoadingProgressFill');
+  const spinner = overlay.querySelector('.startup-loading-spinner');
+
+  if (textElement && typeof message === 'string' && message.trim()) {
+    textElement.textContent = message.trim();
+  }
+  if (stageElement && typeof stage === 'string' && stage.trim()) {
+    stageElement.textContent = stage.trim();
+  }
+  if (etaElement && typeof eta === 'string' && eta.trim()) {
+    etaElement.textContent = eta.trim();
+  }
+  if (percentElement && Number.isFinite(Number(percent))) {
+    percentElement.textContent = `${Math.max(0, Math.min(100, Math.round(Number(percent))))}%`;
+  }
+  if (progressFill && Number.isFinite(Number(percent))) {
+    progressFill.style.width = `${Math.max(0, Math.min(100, Number(percent)))}%`;
+  }
+  if (checksElement && Array.isArray(checks)) {
+    checksElement.innerHTML = buildStartupChecklistHtml(checks);
+  }
+
+  overlay.classList.toggle('error', Boolean(error));
+
+  if (spinner) {
+    spinner.classList.toggle('hidden', Boolean(hideSpinner));
+  }
+}
+
+function handleDaemonStartupTimeout(payload = null) {
+  setStartupLoadingOverlayState({
+    message: DAEMON_TIMEOUT_FALLBACK_MESSAGE,
+    error: true,
+    hideSpinner: true,
+  });
+  setTimeout(() => {
+    dismissStartupLoadingOverlay();
+  }, STARTUP_OVERLAY_ERROR_DISMISS_MS);
+  updateConnectionStatus('Daemon unavailable. Open Settings or restart after installing Node.js 18+.');
+  showStatusNotice(DAEMON_TIMEOUT_FALLBACK_MESSAGE, 12000);
+  const timeoutMs = Number(payload?.timeoutMs) || 0;
+  if (timeoutMs > 0) {
+    log.warn('Init', `Daemon startup timeout after ${timeoutMs}ms`);
+  } else {
+    log.warn('Init', 'Daemon startup timeout received');
+  }
+}
+
+function formatPreflightReportForDisplay(report) {
+  if (!report || !Array.isArray(report.checks)) {
+    return 'Preflight failed: invalid report payload.';
+  }
+  return report.checks.map((check) => {
+    const status = check?.ok ? 'PASS' : 'FAIL';
+    const label = String(check?.label || check?.id || 'check');
+    const detail = String(check?.detail || '').trim();
+    return `${status}: ${label}${detail ? `\n  ${detail}` : ''}`;
+  }).join('\n');
+}
+
+async function runStartupPreflightCheck() {
+  try {
+    const report = await ipcRenderer.invoke('run-preflight-check');
+    const summary = report?.summary || {};
+    const total = Number(summary.total) || 0;
+    const passed = Number(summary.passed) || 0;
+    const failed = Number(summary.failed) || Math.max(0, total - passed);
+    showStatusNotice(`Preflight: ${passed}/${total} checks passed`, 6000);
+
+    if (failed > 0) {
+      const details = formatPreflightReportForDisplay(report);
+      window.alert(
+        `SquidRun startup preflight found ${failed} failing check(s).\n\n${details}`
+      );
+    }
+  } catch (err) {
+    log.error('Preflight', 'Startup preflight failed:', err);
+    showStatusNotice('Preflight check failed to run.', 6000);
+  }
+}
+
+function createFallbackRendererApi() {
+  return {
+    pty: {
+      create: (paneId, workingDir, options = {}) => ipcRenderer.invoke('pty-create', paneId, workingDir, options),
+      write: (paneId, data, kernelMeta = null) => ipcRenderer.invoke('pty-write', paneId, data, kernelMeta),
+      writeChunked: (paneId, fullText, options = {}, kernelMeta = null) =>
+        ipcRenderer.invoke('pty-write-chunked', paneId, fullText, options, kernelMeta),
+      sendTrustedEnter: () => ipcRenderer.invoke('send-trusted-enter'),
+      clipboardWriteText: (text) => ipcRenderer.invoke('clipboard-write', text),
+      clipboardPasteText: (text) => ipcRenderer.invoke('clipboard-paste-text', text),
+      resize: (paneId, cols, rows, kernelMeta = null) => ipcRenderer.invoke('pty-resize', paneId, cols, rows, kernelMeta),
+      claimStartupInjection: (payload = {}) => ipcRenderer.invoke('startup-injection-claim', payload),
+      releaseStartupInjection: (payload = {}) => ipcRenderer.invoke('startup-injection-release', payload),
+      beginPaneRestart: (payload = {}) => ipcRenderer.invoke('pane-restart-begin', payload),
+      completePaneRestart: (payload = {}) => ipcRenderer.invoke('pane-restart-complete', payload),
+      kill: (paneId, options = {}) => ipcRenderer.invoke('pty-kill', paneId, options),
+      pause: (paneId) => ipcRenderer.invoke('pty-pause', paneId),
+      resume: (paneId) => ipcRenderer.invoke('pty-resume', paneId),
+      onData: (paneId, callback) => {
+        const channel = `pty-data-${paneId}`;
+        const listener = (_event, data) => callback(data);
+        trackDynamicPtyIpcChannel(channel);
+        const off = ipcRenderer.on(channel, listener);
+        return () => {
+          if (typeof off === 'function') {
+            off();
+          } else {
+            ipcRenderer.removeListener(channel, listener);
+          }
+          untrackDynamicPtyIpcChannel(channel);
+        };
+      },
+      removeAllDataListeners: (paneId) => {
+        const channel = `pty-data-${paneId}`;
+        ipcRenderer.removeAllListeners(channel);
+        untrackDynamicPtyIpcChannel(channel);
+      },
+      onExit: (paneId, callback) => {
+        const channel = `pty-exit-${paneId}`;
+        const listener = (_event, code) => callback(code);
+        trackDynamicPtyIpcChannel(channel);
+        const off = ipcRenderer.on(channel, listener);
+        return () => {
+          if (typeof off === 'function') {
+            off();
+          } else {
+            ipcRenderer.removeListener(channel, listener);
+          }
+          untrackDynamicPtyIpcChannel(channel);
+        };
+      },
+      removeAllExitListeners: (paneId) => {
+        const channel = `pty-exit-${paneId}`;
+        ipcRenderer.removeAllListeners(channel);
+        untrackDynamicPtyIpcChannel(channel);
+      },
+      onKernelBridgeEvent: (callback) => ipcRenderer.on('kernel:bridge-event', (_event, data) => callback(data)),
+      onKernelBridgeStats: (callback) => ipcRenderer.on('kernel:bridge-stats', (_event, data) => callback(data)),
+    },
+    input: {
+      editAction: (action) => ipcRenderer.invoke('input-edit-action', action),
+    },
+    claude: {
+      spawn: (paneId, workingDir, options = {}) => ipcRenderer.invoke('spawn-claude', paneId, workingDir, options),
+    },
+    paneHost: {
+      inject: (paneId, payload = {}) => ipcRenderer.invoke('pane-host-inject', paneId, payload),
+    },
+    context: {
+      read: () => ipcRenderer.invoke('read-shared-context'),
+      write: (content) => ipcRenderer.invoke('write-shared-context', content),
+      getPath: () => ipcRenderer.invoke('get-shared-context-path'),
+    },
+    project: {
+      select: () => ipcRenderer.invoke('select-project'),
+      get: () => ipcRenderer.invoke('get-project'),
+      setContext: (payload = null) => ipcRenderer.invoke('set-project-context', payload),
+      clearContext: () => ipcRenderer.invoke('clear-project-context'),
+    },
+    friction: {
+      list: () => ipcRenderer.invoke('list-friction'),
+      read: (filename) => ipcRenderer.invoke('read-friction', filename),
+      delete: (filename) => ipcRenderer.invoke('delete-friction', filename),
+      clear: () => ipcRenderer.invoke('clear-friction'),
+    },
+    screenshot: {
+      save: (base64Data, originalName) => ipcRenderer.invoke('save-screenshot', base64Data, originalName),
+      list: (options = null) => ipcRenderer.invoke('list-screenshots', options),
+      delete: (filename) => ipcRenderer.invoke('delete-screenshot', filename),
+      getPath: (filename) => ipcRenderer.invoke('get-screenshot-path', filename),
+    },
+    process: {
+      spawn: (command, args, cwd) => ipcRenderer.invoke('spawn-process', command, args, cwd),
+      list: () => ipcRenderer.invoke('list-processes'),
+      kill: (processId) => ipcRenderer.invoke('kill-process', processId),
+      getOutput: (processId) => ipcRenderer.invoke('get-process-output', processId),
+    },
+    voice: {
+      transcribe: (audioBuffer) => ipcRenderer.invoke('voice:transcribe', audioBuffer),
+    },
+  };
+}
+
+// Merge renderer-local helpers into preload bridge API.
+const fallbackApi = createFallbackRendererApi();
+const squidrunApi = Object.assign({}, fallbackApi, bridgeApi, {
+  settings: {
+    get: () => settings.getSettings(),
+    isDebugMode: () => settings.getSettings()?.debugMode || false,
+  },
+});
+window.squidrun = squidrunApi;
+window.squidrunAPI = squidrunApi;
+
+function updateConnectionStatus(status) {
+  const statusEl = document.getElementById('connectionStatus');
+  if (statusEl) {
+    statusEl.textContent = status;
+  }
+}
+
+// Pane expansion state
+let expandedPaneId = null;
+
+function getPaneRoleBundle(paneId) {
+  const id = String(paneId || '');
+  const configuredBundle = PANE_ROLE_BUNDLES[id];
+  const fallbackRole = PANE_ROLES[id] || `Pane ${id}`;
+  const heading = configuredBundle?.heading || fallbackRole;
+  const members = Array.isArray(configuredBundle?.members) && configuredBundle.members.length > 0
+    ? configuredBundle.members
+    : [fallbackRole];
+  return { id, heading, members };
+}
+
+function closePaneRoleModal() {
+  const overlay = document.getElementById('paneRoleModalOverlay');
+  if (!overlay || !overlay.classList.contains('open')) return false;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  return true;
+}
+
+function openPaneRoleModal(paneId) {
+  const overlay = document.getElementById('paneRoleModalOverlay');
+  const titleEl = document.getElementById('paneRoleModalTitle');
+  const subtitleEl = document.getElementById('paneRoleModalSubtitle');
+  const listEl = document.getElementById('paneRoleModalList');
+  if (!overlay || !titleEl || !subtitleEl || !listEl) return;
+
+  const bundle = getPaneRoleBundle(paneId);
+  titleEl.textContent = `${bundle.heading} Role Bundle`;
+  subtitleEl.textContent = `${bundle.heading} (Pane ${bundle.id})`;
+  listEl.innerHTML = '';
+  bundle.members.forEach((member) => {
+    const item = document.createElement('li');
+    item.textContent = member;
+    listEl.appendChild(item);
+  });
+
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+}
+
+const PROFILE_EDITABLE_FIELDS = Object.freeze([
+  'name',
+  'experience_level',
+  'communication_style',
+  'domain_expertise',
+  'notes',
+]);
+
+const PROFILE_EXPERIENCE_ORDER = Object.freeze(['beginner', 'tinkerer', 'developer', 'expert']);
+const PROFILE_COMMUNICATION_ORDER = Object.freeze(['detailed', 'balanced', 'terse']);
+
+const PROFILE_FALLBACK_SCHEMA = Object.freeze({
+  experience_level: Object.freeze({
+    beginner: 'Learning to code - explain concepts, avoid jargon, confirm before destructive actions',
+    tinkerer: 'Builds real things but not formally trained - explain architecture decisions, skip basics, use plain language',
+    developer: 'Junior dev, knows fundamentals - use technical terms freely, explain only non-obvious tradeoffs',
+    expert: 'Pro dev - be terse, skip explanations unless asked, assume deep knowledge',
+  }),
+  communication_style: Object.freeze({
+    detailed: 'Explain what you are doing and why',
+    balanced: 'Brief context, focus on action',
+    terse: 'Just do it, minimal commentary',
+  }),
+});
+
+let profileModalBusy = false;
+let profileModalSchema = null;
+let profileOnboardingEnforced = false;
+
+function cloneJsonValue(value) {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_) {
+    return null;
+  }
+}
+
+function getProfileFallbackSchema() {
+  const cloned = cloneJsonValue(PROFILE_FALLBACK_SCHEMA);
+  return cloned && typeof cloned === 'object' ? cloned : {};
+}
+
+function isObjectRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function getProfileModalElements() {
+  return {
+    overlay: document.getElementById('profileModalOverlay'),
+    form: document.getElementById('profileModalForm'),
+    closeBtn: document.getElementById('profileModalClose'),
+    cancelBtn: document.getElementById('profileModalCancel'),
+    saveBtn: document.getElementById('profileModalSave'),
+    nameInput: document.getElementById('profileNameInput'),
+    nameRequiredIndicator: document.getElementById('profileNameRequiredIndicator'),
+    experienceSelect: document.getElementById('profileExperienceSelect'),
+    communicationSelect: document.getElementById('profileCommunicationStyleSelect'),
+    domainTextarea: document.getElementById('profileDomainExpertiseInput'),
+    notesTextarea: document.getElementById('profileNotesInput'),
+    experienceHelper: document.getElementById('profileExperienceHelper'),
+    communicationHelper: document.getElementById('profileCommunicationHelper'),
+  };
+}
+
+function setProfileOnboardingMode(enforced) {
+  profileOnboardingEnforced = Boolean(enforced);
+  const {
+    overlay,
+    closeBtn,
+    cancelBtn,
+    nameInput,
+    nameRequiredIndicator,
+  } = getProfileModalElements();
+
+  if (overlay) {
+    overlay.classList.toggle('profile-modal-enforced', profileOnboardingEnforced);
+  }
+  if (closeBtn) {
+    closeBtn.style.display = profileOnboardingEnforced ? 'none' : '';
+  }
+  if (cancelBtn) {
+    cancelBtn.style.display = profileOnboardingEnforced ? 'none' : '';
+  }
+  if (nameInput) {
+    nameInput.required = profileOnboardingEnforced;
+    nameInput.classList.toggle('profile-onboarding-required', profileOnboardingEnforced);
+    nameInput.setAttribute('aria-required', profileOnboardingEnforced ? 'true' : 'false');
+  }
+  if (nameRequiredIndicator) {
+    nameRequiredIndicator.hidden = !profileOnboardingEnforced;
+  }
+}
+
+function closeProfileModal(options = {}) {
+  const force = options.force === true;
+  if (profileOnboardingEnforced && !force) return false;
+  const { overlay } = getProfileModalElements();
+  if (!overlay || !overlay.classList.contains('open')) return false;
+  overlay.classList.remove('open');
+  overlay.setAttribute('aria-hidden', 'true');
+  setProfileOnboardingMode(false);
+  return true;
+}
+
+function setProfileModalBusyState(isBusy) {
+  profileModalBusy = Boolean(isBusy);
+  const { saveBtn, cancelBtn, closeBtn } = getProfileModalElements();
+  if (saveBtn) saveBtn.disabled = profileModalBusy;
+  if (cancelBtn) cancelBtn.disabled = profileModalBusy;
+  if (closeBtn) closeBtn.disabled = profileModalBusy;
+}
+
+function toDisplayLabel(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  return raw
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function normalizeProfileSchemaSection(schema, key, fallback) {
+  const candidate = isObjectRecord(schema) && isObjectRecord(schema[key]) ? schema[key] : null;
+  if (candidate) return candidate;
+  return fallback;
+}
+
+function buildOptionOrder(schemaSection, fallbackOrder = []) {
+  const seen = new Set();
+  const ordered = [];
+  for (const key of fallbackOrder) {
+    if (!schemaSection || !Object.prototype.hasOwnProperty.call(schemaSection, key)) continue;
+    ordered.push(key);
+    seen.add(key);
+  }
+  for (const key of Object.keys(schemaSection || {})) {
+    if (seen.has(key)) continue;
+    ordered.push(key);
+  }
+  return ordered;
+}
+
+function renderProfileHelper(container, schemaSection, optionOrder, selectedValue) {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const list = document.createElement('div');
+  list.className = 'profile-modal-helper-list';
+
+  optionOrder.forEach((optionKey) => {
+    const item = document.createElement('div');
+    item.className = 'profile-modal-helper-item';
+    item.dataset.optionKey = optionKey;
+    if (optionKey === selectedValue) {
+      item.classList.add('selected');
+    }
+
+    const keyEl = document.createElement('span');
+    keyEl.className = 'profile-modal-helper-key';
+    keyEl.textContent = toDisplayLabel(optionKey);
+
+    const textEl = document.createElement('span');
+    textEl.className = 'profile-modal-helper-text';
+    textEl.textContent = String(schemaSection?.[optionKey] || '');
+
+    item.appendChild(keyEl);
+    item.appendChild(textEl);
+    list.appendChild(item);
+  });
+
+  container.appendChild(list);
+}
+
+function highlightProfileHelperSelection(container, selectedValue) {
+  if (!container) return;
+  const items = container.querySelectorAll('.profile-modal-helper-item');
+  items.forEach((item) => {
+    item.classList.toggle('selected', item.dataset.optionKey === String(selectedValue || ''));
+  });
+}
+
+function populateProfileSelect(selectEl, schemaSection, fallbackOrder, selectedValue) {
+  if (!selectEl) return '';
+
+  const current = typeof selectedValue === 'string' ? selectedValue : '';
+  const firstOption = selectEl.querySelector('option[value=""]');
+  const placeholderLabel = firstOption ? firstOption.textContent : 'Select option';
+
+  selectEl.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = placeholderLabel;
+  selectEl.appendChild(placeholder);
+
+  const optionOrder = buildOptionOrder(schemaSection, fallbackOrder);
+  optionOrder.forEach((optionKey) => {
+    const option = document.createElement('option');
+    option.value = optionKey;
+    option.textContent = toDisplayLabel(optionKey);
+    selectEl.appendChild(option);
+  });
+
+  if (current && !optionOrder.includes(current)) {
+    const custom = document.createElement('option');
+    custom.value = current;
+    custom.textContent = toDisplayLabel(current);
+    selectEl.appendChild(custom);
+    optionOrder.push(current);
+  }
+
+  selectEl.value = current;
+  return current;
+}
+
+function normalizeProfilePayload(profile) {
+  const payload = isObjectRecord(profile) ? profile : {};
+  const normalized = {};
+  PROFILE_EDITABLE_FIELDS.forEach((field) => {
+    normalized[field] = typeof payload[field] === 'string' ? payload[field] : '';
+  });
+  return normalized;
+}
+
+function applyProfileToModal(profile) {
+  const {
+    nameInput,
+    experienceSelect,
+    communicationSelect,
+    domainTextarea,
+    notesTextarea,
+    experienceHelper,
+    communicationHelper,
+  } = getProfileModalElements();
+
+  const normalized = normalizeProfilePayload(profile);
+  const schemaSource = isObjectRecord(profile?.schema) ? profile.schema : getProfileFallbackSchema();
+  profileModalSchema = cloneJsonValue(schemaSource) || getProfileFallbackSchema();
+
+  const experienceSchema = normalizeProfileSchemaSection(
+    schemaSource,
+    'experience_level',
+    PROFILE_FALLBACK_SCHEMA.experience_level
+  );
+  const communicationSchema = normalizeProfileSchemaSection(
+    schemaSource,
+    'communication_style',
+    PROFILE_FALLBACK_SCHEMA.communication_style
+  );
+
+  if (nameInput) nameInput.value = normalized.name;
+  if (domainTextarea) domainTextarea.value = normalized.domain_expertise;
+  if (notesTextarea) notesTextarea.value = normalized.notes;
+
+  const selectedExperience = populateProfileSelect(
+    experienceSelect,
+    experienceSchema,
+    PROFILE_EXPERIENCE_ORDER,
+    normalized.experience_level
+  );
+  const selectedCommunication = populateProfileSelect(
+    communicationSelect,
+    communicationSchema,
+    PROFILE_COMMUNICATION_ORDER,
+    normalized.communication_style
+  );
+
+  renderProfileHelper(
+    experienceHelper,
+    experienceSchema,
+    buildOptionOrder(experienceSchema, PROFILE_EXPERIENCE_ORDER),
+    selectedExperience
+  );
+  renderProfileHelper(
+    communicationHelper,
+    communicationSchema,
+    buildOptionOrder(communicationSchema, PROFILE_COMMUNICATION_ORDER),
+    selectedCommunication
+  );
+}
+
+async function openProfileModal(options = {}) {
+  const enforceName = options.enforceName === true
+    || (profileOnboardingState.required && !profileOnboardingState.completed);
+  const reload = options.reload !== false;
+  const { overlay, form } = getProfileModalElements();
+  if (!overlay || !form) return;
+
+  const alreadyOpen = overlay.classList.contains('open');
+  setProfileOnboardingMode(enforceName);
+  overlay.classList.add('open');
+  overlay.setAttribute('aria-hidden', 'false');
+
+  if (alreadyOpen && !reload) {
+    return;
+  }
+
+  if (profileModalBusy) return;
+  setProfileModalBusyState(true);
+
+  try {
+    const result = await ipcRenderer.invoke('get-user-profile');
+    if (!result?.success) {
+      applyProfileToModal({});
+      showStatusNotice(result?.error || 'Failed to load user profile. You can still save a new one.', 'warning', 3200);
+      return;
+    }
+    applyProfileToModal(result.profile || {});
+  } catch (err) {
+    log.error('ProfileModal', `Failed to load profile: ${err?.message || err}`);
+    applyProfileToModal({});
+    showStatusNotice('Failed to load user profile. You can still save a new one.', 'warning', 3200);
+  } finally {
+    setProfileModalBusyState(false);
+  }
+}
+
+function buildProfileSavePayload() {
+  const {
+    nameInput,
+    experienceSelect,
+    communicationSelect,
+    domainTextarea,
+    notesTextarea,
+  } = getProfileModalElements();
+
+  return {
+    name: nameInput?.value || '',
+    experience_level: experienceSelect?.value || '',
+    communication_style: communicationSelect?.value || '',
+    domain_expertise: domainTextarea?.value || '',
+    notes: notesTextarea?.value || '',
+    schema: cloneJsonValue(profileModalSchema) || getProfileFallbackSchema(),
+  };
+}
+
+async function saveProfileFromModal() {
+  if (profileModalBusy) return;
+  setProfileModalBusyState(true);
+
+  try {
+    const payload = buildProfileSavePayload();
+    if (profileOnboardingEnforced && !String(payload.name || '').trim()) {
+      const { nameInput } = getProfileModalElements();
+      showStatusNotice('Name is required to continue setup.', 'warning', 2800);
+      if (nameInput && typeof nameInput.focus === 'function') {
+        nameInput.focus();
+      }
+      return;
+    }
+    const result = await ipcRenderer.invoke('save-user-profile', payload);
+    if (!result?.success) {
+      showStatusNotice(result?.error || 'Failed to save user profile.', 'warning', 3200);
+      return;
+    }
+
+    const savedSchema = isObjectRecord(result.profile?.schema)
+      ? result.profile.schema
+      : payload.schema;
+    profileModalSchema = cloneJsonValue(savedSchema) || getProfileFallbackSchema();
+    const completedOnboarding = profileOnboardingEnforced && String(result.profile?.name || payload.name || '').trim().length > 0;
+    if (completedOnboarding) {
+      let onboardingPersisted = false;
+      try {
+        const onboardingResult = await ipcRenderer.invoke('complete-onboarding', {
+          user_name: String(result.profile?.name || payload.name || '').trim(),
+        });
+        onboardingPersisted = onboardingResult?.success === true;
+      } catch (err) {
+        log.warn('Init', `Unable to persist onboarding completion state: ${err?.message || err}`);
+      }
+      if (!onboardingPersisted) {
+        log.warn('Init', 'complete-onboarding IPC did not return success; closing modal anyway (onboarding state already written by save-user-profile)');
+      }
+      profileOnboardingState.required = false;
+      profileOnboardingState.completed = true;
+      closeProfileModal({ force: true });
+      if (initState.settingsLoaded && isAutonomyConsentRequired()) {
+        showAutonomyOnboarding();
+      }
+      checkInitComplete();
+    } else {
+      closeProfileModal({ force: true });
+    }
+    showStatusNotice('User profile saved.', 'info', 2200);
+  } catch (err) {
+    log.error('ProfileModal', `Failed to save profile: ${err?.message || err}`);
+    showStatusNotice('Failed to save user profile.', 'warning', 3200);
+  } finally {
+    setProfileModalBusyState(false);
+  }
+}
+
+async function evaluateProfileOnboardingRequirement() {
+  if (profileOnboardingState.checkComplete || profileOnboardingState.checking) return;
+  profileOnboardingState.checking = true;
+
+  try {
+    const onboardingStateResult = await ipcRenderer.invoke('get-onboarding-state');
+    const onboardingComplete = onboardingStateResult?.onboardingComplete === true
+      || onboardingStateResult?.state?.onboarding_complete === true
+      || onboardingStateResult?.state?.onboardingComplete === true;
+    if (onboardingComplete) {
+      profileOnboardingState.required = false;
+      profileOnboardingState.completed = true;
+      return;
+    }
+
+    const result = await ipcRenderer.invoke('get-user-profile');
+    const existingName = String(result?.profile?.name || '').trim();
+    const requiresProfile = existingName.length === 0;
+    profileOnboardingState.required = requiresProfile;
+    profileOnboardingState.completed = !requiresProfile;
+
+    if (requiresProfile) {
+      log.info('Init', 'First-run profile setup required');
+      void openProfileModal({ enforceName: true, reload: true });
+    } else if (initState.settingsLoaded && isAutonomyConsentRequired()) {
+      showAutonomyOnboarding();
+    }
+  } catch (err) {
+    log.error('Init', `Failed profile onboarding check: ${err?.message || err}`);
+    try {
+      const profileResult = await ipcRenderer.invoke('get-user-profile');
+      const existingName = String(profileResult?.profile?.name || '').trim();
+      const requiresProfile = existingName.length === 0;
+      profileOnboardingState.required = requiresProfile;
+      profileOnboardingState.completed = !requiresProfile;
+      if (requiresProfile) {
+        void openProfileModal({ enforceName: true, reload: true });
+      }
+    } catch (profileErr) {
+      log.error('Init', `Profile fallback check also failed: ${profileErr?.message || profileErr}`);
+      profileOnboardingState.required = true;
+      profileOnboardingState.completed = false;
+      void openProfileModal({ enforceName: true, reload: true });
+    }
+  } finally {
+    profileOnboardingState.checking = false;
+    profileOnboardingState.checkComplete = true;
+    checkInitComplete();
+  }
+}
+
+function toggleExpandPane(paneId) {
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const paneLayout = document.querySelector('.pane-layout');
+  if (!pane || !paneLayout) return;
+
+  if (typeof toggleSquidRoomPaneExpansion === 'function') {
+    const squidRoomToggle = toggleSquidRoomPaneExpansion({
+      body: document.body,
+      pane,
+      paneLayout,
+      expandedPaneId,
+    });
+    if (squidRoomToggle?.handled) {
+      expandedPaneId = squidRoomToggle.expandedPaneId;
+      return;
+    }
+  }
+
+  if (pane.classList.contains('pane-expanded')) {
+    // Collapse
+    expandedPaneId = null;
+    pane.classList.remove('pane-expanded');
+    paneLayout.classList.remove('has-expanded-pane');
+  } else {
+    // Collapse any previously expanded pane
+    if (expandedPaneId) {
+      const prevPane = document.querySelector(`.pane[data-pane-id="${expandedPaneId}"]`);
+      if (prevPane) prevPane.classList.remove('pane-expanded');
+    }
+    // Expand this pane
+    expandedPaneId = paneId;
+    pane.classList.add('pane-expanded');
+    paneLayout.classList.add('has-expanded-pane');
+  }
+  // ResizeObserver in terminal.js handles resize automatically when element dimensions change
+}
+
+function getExpandButtonFromEvent(event) {
+  const target = event?.target;
+  if (!target || typeof target.closest !== 'function') return null;
+  return target.closest('.expand-btn');
+}
+
+function handlePaneExpandButtonClick(event, toggleFn = toggleExpandPane) {
+  const button = getExpandButtonFromEvent(event);
+  const paneId = button?.dataset?.paneId;
+  if (!paneId || typeof toggleFn !== 'function') return false;
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  toggleFn(paneId);
+  return true;
+}
+
+// Per-app-section collapse/expand. Each Squid Room app is a <details class="squid-room-app">;
+// this gives it a discoverable labeled button instead of relying on a click on the header text.
+function syncSquidRoomAppSectionToggle(details) {
+  if (!details) return;
+  const button = details.querySelector?.('.squid-room-app-toggle-btn');
+  if (!button) return;
+  const open = details.open === true;
+  const label = open ? 'Collapse' : 'Expand';
+  const tip = open ? 'Collapse this app section' : 'Expand this app section';
+  button.setAttribute?.('aria-expanded', String(open));
+  button.setAttribute?.('aria-label', tip);
+  if (button.dataset) {
+    button.dataset.expanded = String(open);
+    button.dataset.tooltip = tip;
+  }
+  const labelEl = button.querySelector?.('.squid-room-app-toggle-label');
+  if (labelEl) labelEl.textContent = label;
+}
+
+function handleSquidRoomAppToggleClick(event) {
+  const target = event?.target;
+  if (!target || typeof target.closest !== 'function') return false;
+  const button = target.closest('.squid-room-app-toggle-btn');
+  if (!button) return false;
+  const details = button.closest?.('details.squid-room-app');
+  if (!details) return false;
+  // Stop the native <summary> toggle so we own a single, deterministic toggle.
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  details.open = !details.open;
+  syncSquidRoomAppSectionToggle(details);
+  return true;
+}
+
+function initSquidRoomAppSectionToggles(doc = document) {
+  const sections = doc?.querySelectorAll?.('details.squid-room-app');
+  if (!sections) return;
+  sections.forEach((details) => {
+    if (details.dataset && details.dataset.appToggleBound !== 'true') {
+      details.dataset.appToggleBound = 'true';
+      // Keep the button label correct even when collapsed via the summary text itself.
+      details.addEventListener?.('toggle', () => syncSquidRoomAppSectionToggle(details));
+    }
+    syncSquidRoomAppSectionToggle(details);
+  });
+}
+
+function getSquidRoomPaneMenuFixedPosition(triggerRect = {}, panelRect = {}, viewport = {}) {
+  const gap = 8;
+  const margin = 10;
+  const width = Math.max(180, Number(panelRect.width) || 224);
+  const height = Math.max(80, Number(panelRect.height) || 220);
+  const viewportWidth = Math.max(width + margin * 2, Number(viewport.width) || 0);
+  const viewportHeight = Math.max(height + margin * 2, Number(viewport.height) || 0);
+  const triggerLeft = Number(triggerRect.left) || 0;
+  const triggerRight = Number(triggerRect.right) || triggerLeft;
+  const triggerTop = Number(triggerRect.top) || 0;
+  const triggerBottom = Number(triggerRect.bottom) || triggerTop;
+
+  const maxLeft = viewportWidth - width - margin;
+  const left = Math.min(Math.max(triggerRight - width, margin), maxLeft);
+  let top = triggerBottom + gap;
+  let placement = 'below';
+  if (top + height > viewportHeight - margin && triggerTop - height - gap >= margin) {
+    top = triggerTop - height - gap;
+    placement = 'above';
+  }
+  const maxTop = viewportHeight - height - margin;
+  top = Math.min(Math.max(top, margin), maxTop);
+  return { left, top, width, placement };
+}
+
+function positionSquidRoomPaneMenu(menu) {
+  if (!menu?.open) return false;
+  const doc = menu.ownerDocument || document;
+  const view = doc.defaultView || window;
+  const panel = menu.squidRoomDetachedPanel || menu.querySelector?.('.squid-room-pane-menu-panel');
+  const trigger = menu.querySelector?.('.squid-room-pane-menu-trigger');
+  if (!panel || !trigger || typeof trigger.getBoundingClientRect !== 'function') return false;
+  // Portal: the frosted pane cards use backdrop-filter, which hijacks
+  // position:fixed to be card-relative, and the scroll container clips the
+  // panel at the window bottom. Fixed-at-body is the only escape.
+  if (doc.body && panel.parentNode !== doc.body) {
+    menu.squidRoomDetachedPanel = panel;
+    doc.body.appendChild(panel);
+  }
+  const triggerRect = trigger.getBoundingClientRect();
+  const panelRect = typeof panel.getBoundingClientRect === 'function'
+    ? panel.getBoundingClientRect()
+    : { width: 224, height: 220 };
+  const position = getSquidRoomPaneMenuFixedPosition(triggerRect, panelRect, {
+    width: doc.documentElement?.clientWidth || view.innerWidth,
+    height: doc.documentElement?.clientHeight || view.innerHeight,
+  });
+  panel.style.position = 'fixed';
+  panel.style.left = `${Math.round(position.left)}px`;
+  panel.style.top = `${Math.round(position.top)}px`;
+  panel.style.right = 'auto';
+  panel.style.width = `${Math.round(position.width)}px`;
+  panel.style.zIndex = '10000';
+  panel.dataset.placement = position.placement;
+  menu.classList?.add?.('is-fixed-positioned');
+  return true;
+}
+
+function restoreSquidRoomPaneMenuPanel(menu) {
+  const panel = menu?.squidRoomDetachedPanel;
+  if (!panel) return;
+  menu.squidRoomDetachedPanel = null;
+  panel.style.position = '';
+  panel.style.left = '';
+  panel.style.top = '';
+  panel.style.right = '';
+  panel.style.width = '';
+  panel.style.zIndex = '';
+  delete panel.dataset.placement;
+  menu.appendChild?.(panel);
+  menu.classList?.remove?.('is-fixed-positioned');
+}
+
+function closeOtherSquidRoomPaneMenus(currentMenu, doc = document) {
+  const menus = doc?.querySelectorAll?.('.squid-room-pane-menu[open]');
+  if (!menus) return;
+  menus.forEach((menu) => {
+    if (menu !== currentMenu) menu.open = false;
+  });
+}
+
+function initSquidRoomPaneMenus(doc = document) {
+  if (doc?.body?.dataset?.squidRoomPaneMenuGlobalBound === 'true') return;
+  if (doc?.body?.dataset) doc.body.dataset.squidRoomPaneMenuGlobalBound = 'true';
+  // Delegated in capture phase ('toggle' does not bubble) so menus inside
+  // app sections built AFTER renderer init still get viewport positioning.
+  doc.addEventListener?.('toggle', (event) => {
+    const menu = event?.target;
+    if (!menu?.classList?.contains?.('squid-room-pane-menu')) return;
+    if (menu.open) {
+      closeOtherSquidRoomPaneMenus(menu, doc);
+      positionSquidRoomPaneMenu(menu);
+    } else {
+      restoreSquidRoomPaneMenuPanel(menu);
+    }
+  }, true);
+  const reposition = () => {
+    doc.querySelectorAll?.('.squid-room-pane-menu[open]')?.forEach((menu) => {
+      positionSquidRoomPaneMenu(menu);
+    });
+  };
+  const view = doc.defaultView || window;
+  view.addEventListener?.('resize', reposition);
+  view.addEventListener?.('scroll', reposition, true);
+  doc.addEventListener?.('click', (event) => {
+    const target = event?.target;
+    if (target?.closest?.('.squid-room-pane-menu')) return;
+    // Open panels are portaled to <body>, so they are not inside the menu.
+    if (target?.closest?.('.squid-room-pane-menu-panel')) return;
+    doc.querySelectorAll?.('.squid-room-pane-menu[open]')?.forEach((menu) => {
+      menu.open = false;
+    });
+  });
+}
+
+// Drawer-mirror suspension (S463): mirrors in a CLOSED drawer stop rendering
+// (writes dropped - the daemon owns the history); opening the drawer resumes
+// and repaints full history from daemon scrollback. Three renderer-death
+// explosions each began the moment a big agent packet hit a mirrored pane.
+function setSquidRoomDrawerMirrorsSuspended(suspended, doc = document) {
+  if (typeof terminal?.setPaneRenderSuspended !== 'function') return;
+  const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
+  const panes = drawer?.querySelectorAll?.('.pane[data-pane-id]') || [];
+  for (const pane of panes) {
+    const paneId = pane?.dataset?.paneId;
+    if (paneId) terminal.setPaneRenderSuspended(paneId, suspended);
+  }
+}
+
+function setSquidRoomTerminalDrawerOpen(open, doc = document) {
+  const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
+  if (!drawer?.classList) return false;
+  const isOpen = Boolean(open);
+  const wasOpen = drawer.classList.contains('is-open');
+  if (wasOpen === isOpen) return false;
+  drawer.classList.toggle('is-open', isOpen);
+  drawer.setAttribute?.('aria-hidden', String(!isOpen));
+  doc.querySelectorAll?.('[data-squid-room-terminal-drawer-open="true"]')?.forEach((button) => {
+    button.setAttribute?.('aria-expanded', String(isOpen));
+  });
+  setSquidRoomDrawerMirrorsSuspended(!isOpen, doc);
+  return true;
+}
+
+function initSquidRoomTerminalDrawer(doc = document) {
+  if (!doc?.body || doc.body.dataset?.squidRoomTerminalDrawerBound === 'true') return;
+  if (doc.body.dataset) doc.body.dataset.squidRoomTerminalDrawerBound = 'true';
+  // The drawer starts CLOSED: suspend its mirrors from the first frame
+  // (delayed so pane containers/terminals from shell config exist).
+  setTimeout(() => {
+    const drawer = doc?.querySelector?.('#squidRoomTerminalDrawer');
+    if (drawer && !drawer.classList?.contains?.('is-open')) {
+      setSquidRoomDrawerMirrorsSuspended(true, doc);
+    }
+  }, 1500);
+  doc.addEventListener?.('click', (event) => {
+    const target = event?.target;
+    if (!target?.closest) return;
+    if (target.closest('[data-squid-room-terminal-drawer-close="true"]')) {
+      event.preventDefault?.();
+      setSquidRoomTerminalDrawerOpen(false, doc);
+      return;
+    }
+    if (target.closest('[data-squid-room-terminal-drawer-open="true"]')) {
+      event.preventDefault?.();
+      // Click delight (wave 3): a happy wiggle + bubbles from the clicked
+      // creature. Emotional only - all TEXT stays honest; the drawer opens
+      // exactly as before.
+      const creatureCard = target.closest('[data-squid-room-pet]');
+      const petId = creatureCard?.dataset?.squidRoomPet;
+      if (petId && typeof squidRoomCreatureRuntime.delightSquidRoomCreature === 'function') {
+        squidRoomCreatureRuntime.delightSquidRoomCreature(petId);
+      }
+      setSquidRoomTerminalDrawerOpen(true, doc);
+    }
+  });
+  doc.addEventListener?.('keydown', (event) => {
+    if (event?.key !== 'Enter' && event?.key !== ' ') return;
+    const target = event?.target;
+    if (!target?.closest?.('[data-squid-room-terminal-drawer-open="true"]')) return;
+    event.preventDefault?.();
+    setSquidRoomTerminalDrawerOpen(true, doc);
+  });
+}
+
+function emitPaneVisibilityChangedForExpandClick(event, eventBus = bus) {
+  const button = getExpandButtonFromEvent(event);
+  const paneId = button?.dataset?.paneId;
+  if (!paneId || typeof eventBus?.emit !== 'function') return false;
+  const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+  const isTeamToggle = button?.dataset?.squidRoomTeamToggle === 'true'
+    || button?.classList?.contains?.('squid-room-team-expand-btn');
+  const visible = isTeamToggle
+    ? button.dataset?.expanded !== 'false'
+    : (pane ? pane.classList.contains('pane-expanded') : true);
+  eventBus.emit('pane.visibility.changed', {
+    paneId,
+    payload: { paneId, visible },
+    source: 'renderer.js',
+  });
+  return true;
+}
+
+function findExpandedPaneId() {
+  if (expandedPaneId) {
+    const expandedPane = document.querySelector(`.pane[data-pane-id="${expandedPaneId}"]`);
+    if (expandedPane?.classList?.contains('pane-expanded')) {
+      return expandedPaneId;
+    }
+  }
+  const expandedPane = document.querySelector(
+    '.squid-room-live-panes .pane.pane-expanded, '
+    + '.pane.pane-expanded'
+  );
+  return expandedPane?.dataset?.paneId || null;
+}
+
+function collapseExpandedPane() {
+  const paneId = findExpandedPaneId();
+  if (!paneId) return false;
+  toggleExpandPane(paneId);
+  return true;
+}
+
+function appendTemporaryStatusMessage(doc, text, timeoutFn = setTimeout, timeoutMs = 2000) {
+  const statusBar = doc?.querySelector?.('.status-bar');
+  if (!statusBar || !doc?.createElement) return null;
+  const msg = doc.createElement('span');
+  msg.textContent = text;
+  msg.style.color = '#4fc3f7';
+  statusBar.appendChild(msg);
+  timeoutFn(() => {
+    if (typeof msg.remove === 'function') {
+      msg.remove();
+    } else if (msg.parentNode && typeof msg.parentNode.removeChild === 'function') {
+      msg.parentNode.removeChild(msg);
+    }
+  }, timeoutMs);
+  return msg;
+}
+
+function handleGlobalEscapePressed({
+  collapseExpandedPaneFn = collapseExpandedPane,
+  terminalApi = terminal,
+  doc = document,
+  timeoutFn = setTimeout,
+} = {}) {
+  const collapsed = Boolean(collapseExpandedPaneFn());
+  if (terminalApi && typeof terminalApi.blurAllTerminals === 'function') {
+    terminalApi.blurAllTerminals();
+  }
+  if (doc?.activeElement && typeof doc.activeElement.blur === 'function') {
+    doc.activeElement.blur();
+  }
+  appendTemporaryStatusMessage(
+    doc,
+    collapsed ? ' | Expanded pane collapsed' : ' | Keyboard released',
+    timeoutFn,
+    2000
+  );
+  return { collapsed, interrupted: false };
+}
+
+// Status Strip - imported from modules/status-strip.js
+
+function createRafTextareaAutoGrow(input, options = {}) {
+  const maxHeight = Number.isFinite(options.maxHeight) ? options.maxHeight : 120;
+  const requestFrame = typeof options.requestAnimationFrame === 'function'
+    ? options.requestAnimationFrame
+    : (typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (callback) => setTimeout(callback, 16));
+  const cancelFrame = typeof options.cancelAnimationFrame === 'function'
+    ? options.cancelAnimationFrame
+    : (typeof cancelAnimationFrame === 'function'
+      ? cancelAnimationFrame
+      : (id) => clearTimeout(id));
+
+  let frameId = null;
+  let lastAppliedHeight = input?.style?.height || '';
+  let lastValueLength = String(input?.value || '').length;
+
+  const apply = () => {
+    frameId = null;
+    if (!input || !input.style) return;
+
+    const currentValueLength = String(input.value || '').length;
+    const currentHeight = input.style.height || '';
+    const mayShrink = currentValueLength < lastValueLength;
+
+    if (!mayShrink && currentHeight && currentHeight === lastAppliedHeight) {
+      const measuredHeight = `${Math.min(input.scrollHeight || 0, maxHeight)}px`;
+      if (measuredHeight === lastAppliedHeight) {
+        lastValueLength = currentValueLength;
+        return;
+      }
+    }
+
+    input.style.height = 'auto';
+    const nextHeight = `${Math.min(input.scrollHeight || 0, maxHeight)}px`;
+    if (nextHeight !== lastAppliedHeight || input.style.height !== nextHeight) {
+      input.style.height = nextHeight;
+    }
+    lastAppliedHeight = nextHeight;
+    lastValueLength = currentValueLength;
+  };
+
+  const schedule = () => {
+    if (frameId !== null) return;
+    frameId = requestFrame(apply);
+  };
+
+  const cancel = () => {
+    if (frameId === null) return;
+    cancelFrame(frameId);
+    frameId = null;
+  };
+
+  return { schedule, cancel, flush: apply };
+}
+
+function createCommandBarMessageRouter(options = {}) {
+  const now = typeof options.now === 'function' ? options.now : () => Date.now();
+  const rateLimitMs = Number.isFinite(options.rateLimitMs) ? options.rateLimitMs : 500;
+  const logInfo = typeof options.logInfo === 'function' ? options.logInfo : () => {};
+  const setDeliveryStatus = typeof options.setDeliveryStatus === 'function'
+    ? options.setDeliveryStatus
+    : () => {};
+  const routeTask = typeof options.routeTask === 'function' ? options.routeTask : async () => false;
+  const sendMira = typeof options.sendMira === 'function' ? options.sendMira : async () => false;
+  const sendArchitect = typeof options.sendArchitect === 'function'
+    ? options.sendArchitect
+    : async (text) => {
+      terminal.broadcast(text);
+      return true;
+    };
+
+  let lastSentAt = -Infinity;
+
+  return async function routeCommandBarMessage(message) {
+    const sentAt = now();
+    if (sentAt - lastSentAt < rateLimitMs) {
+      logInfo('Broadcast', 'Rate limited');
+      return false;
+    }
+    lastSentAt = sentAt;
+
+    setDeliveryStatus('sending');
+
+    const trimmed = String(message || '').trim();
+    if (trimmed.toLowerCase().startsWith('/task ')) {
+      return await routeTask(trimmed.slice(6));
+    }
+
+    if (trimmed.toLowerCase().startsWith('/mira ')) {
+      return await sendMira(trimmed.slice(6));
+    }
+
+    return await sendArchitect(trimmed);
+  };
+}
+
+// Wire up module callbacks
+terminal.setStatusCallbacks(null, updateConnectionStatus);
+tabs.setConnectionStatusCallback(updateConnectionStatus);
+settings.setConnectionStatusCallback(updateConnectionStatus);
+settings.setSettingsLoadedCallback(markSettingsLoaded);
+daemonHandlers.setStatusCallbacks(updateConnectionStatus);
+
+
+// Setup event listeners
+function setupEventListeners() {
+  if (setupEventListenersBound) return;
+  setupEventListenersBound = true;
+
+  // Window resize handled by ResizeObserver in terminal.js (observes .pane-terminal containers)
+
+  // Keyboard shortcuts (consolidated — Ctrl+N focus + ESC collapse)
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && closeProfileModal()) {
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'Escape' && closePaneRoleModal()) {
+      e.preventDefault();
+      return;
+    }
+    // Ctrl+number focuses the three permanent agent panes.
+    if (e.ctrlKey && terminal.PANE_IDS.includes(e.key)) {
+      e.preventDefault();
+      terminal.focusPane(e.key);
+      return;
+    }
+    if (e.key === 'Escape' && setSquidRoomTerminalDrawerOpen(false, document)) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      return;
+    }
+    // ESC to collapse expanded pane
+    if (e.key === 'Escape' && collapseExpandedPane()) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      return;
+    }
+  });
+
+  // Command bar input - Enter re-enabled (ghost text fix is in xterm, not here)
+  const broadcastInput = document.getElementById('broadcastInput');
+  const commandDeliveryStatus = document.getElementById('commandDeliveryStatus');
+  const voiceInputBtn = document.getElementById('voiceInputBtn');
+  const voiceStatus = document.getElementById('voiceStatus');
+  let voiceEnabled = false;
+  let voiceAutoSend = false;
+  let voiceListening = false;
+  let voiceCapabilityAvailable = true; // optimistic until capabilities load
+  let voiceBase = '';
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let audioStream = null;
+  let recordingStartTime = 0;
+  const MIN_RECLiveOpsNG_MS = 500;
+  const WHISPER_HALLUCINATIONS = new Set([
+    'you', 'thank you', 'thanks', 'bye', 'goodbye', 'hey',
+    'thanks for watching', 'thank you for watching',
+    'please subscribe', 'like and subscribe',
+    'the end', 'so', 'um', 'uh', 'hmm', 'ah', 'oh',
+  ]);
+
+  // Keep command bar copy explicit now that target selection UI is removed.
+  function updateCommandPlaceholder() {
+    if (!broadcastInput) return;
+    broadcastInput.placeholder = 'Message Architect / pane 1 (Enter to send)';
+    broadcastInput.title = 'Send message to Architect pane';
+  }
+
+  // showStatusNotice now imported from ./modules/notifications
+
+  function updateVoiceUI(statusText) {
+    if (voiceInputBtn) {
+      voiceInputBtn.disabled = !voiceEnabled || !voiceCapabilityAvailable;
+      voiceInputBtn.classList.toggle('is-listening', voiceListening);
+      voiceInputBtn.setAttribute('aria-pressed', voiceListening ? 'true' : 'false');
+      if (!voiceCapabilityAvailable) {
+        voiceInputBtn.title = 'Set OpenAI key in Keys tab for voice input';
+      } else {
+        voiceInputBtn.title = 'Toggle voice input';
+      }
+    }
+    if (broadcastInput) {
+      broadcastInput.classList.toggle('voice-listening', voiceListening);
+    }
+    if (voiceStatus) {
+      voiceStatus.textContent = statusText;
+      voiceStatus.classList.toggle('is-listening', voiceListening);
+    }
+  }
+
+  async function stopVoiceRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+    return new Promise((resolve) => {
+      mediaRecorder.onstop = async () => {
+        voiceListening = false;
+
+        const elapsed = Date.now() - recordingStartTime;
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        audioChunks = [];
+
+        // Gate: discard recordings shorter than MIN_RECLiveOpsNG_MS
+        if (elapsed < MIN_RECLiveOpsNG_MS) {
+          log.info('Voice', `Recording too short (${elapsed}ms), discarding`);
+          updateVoiceUI('Too short');
+          if (audioStream) { audioStream.getTracks().forEach(t => t.stop()); audioStream = null; }
+          mediaRecorder = null;
+          resolve();
+          return;
+        }
+
+        updateVoiceUI('Transcribing...');
+
+        try {
+          const arrayBuf = await audioBlob.arrayBuffer();
+          const result = await window.squidrun.voice.transcribe(new Uint8Array(arrayBuf));
+          if (result.success && result.text) {
+            const trimmed = result.text.trim();
+            // Filter known Whisper silence hallucinations
+            if (WHISPER_HALLUCINATIONS.has(trimmed.toLowerCase().replace(/[.!?,]+$/g, ''))) {
+              log.info('Voice', `Filtered hallucination: "${trimmed}"`);
+              updateVoiceUI('No speech detected');
+            } else {
+              const combined = `${voiceBase}${trimmed}`.trim();
+              if (broadcastInput) {
+                broadcastInput.value = combined;
+                broadcastInput.dispatchEvent(new Event('input'));
+              }
+              if (voiceAutoSend && combined) {
+                if (await sendBroadcast(combined)) {
+                  if (broadcastInput) {
+                    broadcastInput.value = '';
+                    broadcastInput.style.height = '';
+                    broadcastInput.focus();
+                  }
+                }
+              }
+              updateVoiceUI('Voice ready');
+            }
+          } else {
+            log.error('Voice', 'Whisper transcription failed:', result.error);
+            updateVoiceUI(result.code === 'MISSING_OPENAI_KEY' ? 'No API key' : 'Transcription failed');
+          }
+        } catch (err) {
+          log.error('Voice', 'Whisper IPC error:', err);
+          updateVoiceUI('Voice error');
+        }
+
+        // Release mic
+        if (audioStream) {
+          audioStream.getTracks().forEach(t => t.stop());
+          audioStream = null;
+        }
+        mediaRecorder = null;
+        resolve();
+      };
+      mediaRecorder.stop();
+    });
+  }
+
+  async function startVoiceRecording() {
+    if (!voiceEnabled) {
+      updateVoiceUI('Voice off');
+      return;
+    }
+    try {
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+
+      voiceBase = (broadcastInput?.value || '').trim();
+      if (voiceBase) voiceBase += ' ';
+
+      mediaRecorder.start();
+      recordingStartTime = Date.now();
+      voiceListening = true;
+      updateVoiceUI(voiceAutoSend ? 'Recording (auto-send)' : 'Recording');
+    } catch (err) {
+      log.error('Voice', 'Mic access failed:', err);
+      if (err.name === 'NotAllowedError') {
+        updateVoiceUI('Mic blocked');
+        showStatusNotice('Microphone access denied. Check system permissions.', 8000);
+      } else {
+        updateVoiceUI('Mic error');
+      }
+    }
+  }
+
+  function refreshVoiceSettings(nextSettings) {
+    const source = nextSettings || settings.getSettings() || {};
+    voiceEnabled = !!source.voiceInputEnabled;
+    voiceAutoSend = !!source.voiceAutoSend;
+    if (!voiceEnabled) {
+      stopVoiceRecording();
+      updateVoiceUI('Voice off');
+      return;
+    }
+    updateVoiceUI('Voice ready');
+  }
+
+  async function routeNaturalTask(message) {
+    try {
+      const result = await ipcRenderer.invoke('route-task-input', message);
+      if (result?.success) {
+        const routedCount = result.routed?.length || 0;
+        const capabilityNotice = result?.problemCase?.case?.userFacing?.shortNotice || null;
+        showStatusNotice(capabilityNotice || `Auto-routed ${routedCount} task${routedCount === 1 ? '' : 's'}`);
+        showDeliveryStatus('queued');
+        return true;
+      }
+      if (result?.ambiguity?.isAmbiguous) {
+        showDeliveryStatus('failed');
+        const questions = result.ambiguity.questions?.join(' ') || 'Clarification needed.';
+        const capabilityNotice = result?.problemCase?.case?.userFacing?.shortNotice || null;
+        showStatusNotice(capabilityNotice || `Clarify: ${questions}`, 9000);
+        return false;
+      }
+      showDeliveryStatus('failed');
+      showStatusNotice('Auto-route failed. Check task description.', 7000);
+      return false;
+    } catch (err) {
+      log.error('AutoRoute', 'Failed to route task:', err);
+      showDeliveryStatus('failed');
+      showStatusNotice('Auto-route error. See logs.', 7000);
+      return false;
+    }
+  }
+
+  // Show delivery status indicator
+  function showDeliveryStatus(status) {
+    if (!commandDeliveryStatus) return;
+    commandDeliveryStatus.className = 'command-delivery-status visible ' + status;
+    if (status === 'sending') {
+      commandDeliveryStatus.textContent = '⏳';
+    } else if (status === 'queued' || status === 'unverified') {
+      commandDeliveryStatus.textContent = '…';
+      setTimeout(() => {
+        commandDeliveryStatus.classList.remove('visible');
+      }, 2500);
+    } else if (status === 'delivered') {
+      commandDeliveryStatus.textContent = '✓';
+      setTimeout(() => {
+        commandDeliveryStatus.classList.remove('visible');
+      }, 2000);
+    } else if (status === 'failed') {
+      commandDeliveryStatus.textContent = '✕';
+      setTimeout(() => {
+        commandDeliveryStatus.classList.remove('visible');
+      }, 3000);
+    }
+  }
+
+  let activeBroadcastContextMenu = null;
+  let activeBroadcastContextMenuCleanup = null;
+
+  function dismissBroadcastContextMenu() {
+    if (typeof activeBroadcastContextMenuCleanup === 'function') {
+      try {
+        activeBroadcastContextMenuCleanup();
+      } catch (_) {}
+    }
+    activeBroadcastContextMenuCleanup = null;
+    if (activeBroadcastContextMenu?.parentNode) {
+      activeBroadcastContextMenu.parentNode.removeChild(activeBroadcastContextMenu);
+    }
+    activeBroadcastContextMenu = null;
+  }
+
+  function createBroadcastContextMenuItem(label, shortcut, disabled, onClick) {
+    const item = document.createElement('div');
+    item.className = `context-menu-item${disabled ? ' disabled' : ''}`;
+    item.setAttribute('role', 'menuitem');
+    item.setAttribute('tabindex', disabled ? '-1' : '0');
+
+    const icon = document.createElement('span');
+    icon.className = 'icon';
+    icon.textContent = '';
+    item.appendChild(icon);
+
+    const text = document.createElement('span');
+    text.textContent = label;
+    item.appendChild(text);
+
+    if (shortcut) {
+      const badge = document.createElement('span');
+      badge.className = 'shortcut';
+      badge.textContent = shortcut;
+      item.appendChild(badge);
+    }
+
+    if (!disabled && typeof onClick === 'function') {
+      item.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      });
+    }
+
+    return item;
+  }
+
+  async function runBroadcastInputFallbackAction(input, action) {
+    if (!input) return false;
+    switch (action) {
+      case 'selectAll':
+        input.select();
+        return true;
+      case 'paste': {
+        const clipboardApi = (typeof navigator !== 'undefined' && navigator && navigator.clipboard)
+          ? navigator.clipboard
+          : null;
+        if (!clipboardApi || typeof clipboardApi.readText !== 'function') return false;
+        try {
+          const clipboardText = await clipboardApi.readText();
+          if (typeof input.setRangeText === 'function') {
+            const start = typeof input.selectionStart === 'number' ? input.selectionStart : input.value.length;
+            const end = typeof input.selectionEnd === 'number' ? input.selectionEnd : input.value.length;
+            input.setRangeText(clipboardText, start, end, 'end');
+          } else {
+            input.value += clipboardText;
+          }
+          input.dispatchEvent(new Event('input'));
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      case 'undo':
+      case 'cut':
+      case 'copy':
+        if (typeof document?.execCommand !== 'function') return false;
+        return document.execCommand(action);
+      default:
+        return false;
+    }
+  }
+
+  async function runBroadcastInputAction(input, action) {
+    if (!input) return false;
+    input.focus();
+
+    const editAction = window.squidrun?.input?.editAction;
+    if (typeof editAction === 'function') {
+      try {
+        const result = await editAction(action);
+        if (result?.success === true) {
+          return true;
+        }
+      } catch (_) {}
+    }
+
+    return runBroadcastInputFallbackAction(input, action);
+  }
+
+  function openBroadcastContextMenu(event, input) {
+    if (!input) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dismissBroadcastContextMenu();
+    input.focus();
+
+    const hasSelection = typeof input.selectionStart === 'number'
+      && typeof input.selectionEnd === 'number'
+      && input.selectionStart !== input.selectionEnd;
+    const hasText = String(input.value || '').length > 0;
+    const isEditable = !(input.disabled || input.readOnly);
+
+    const menu = document.createElement('div');
+    menu.className = 'context-menu';
+    menu.setAttribute('role', 'menu');
+
+    menu.appendChild(createBroadcastContextMenuItem('Copy', 'Ctrl+C', !hasSelection, () => {
+      void runBroadcastInputAction(input, 'copy');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Paste', 'Ctrl+V', !isEditable, () => {
+      void runBroadcastInputAction(input, 'paste');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Cut', 'Ctrl+X', !isEditable || !hasSelection, () => {
+      void runBroadcastInputAction(input, 'cut');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Select All', 'Ctrl+A', !hasText, () => {
+      void runBroadcastInputAction(input, 'selectAll');
+      dismissBroadcastContextMenu();
+    }));
+    menu.appendChild(createBroadcastContextMenuItem('Undo', 'Ctrl+Z', !isEditable, () => {
+      void runBroadcastInputAction(input, 'undo');
+      dismissBroadcastContextMenu();
+    }));
+
+    document.body.appendChild(menu);
+    activeBroadcastContextMenu = menu;
+
+    const rect = menu.getBoundingClientRect();
+    const maxLeft = Math.max(0, window.innerWidth - rect.width - 8);
+    const maxTop = Math.max(0, window.innerHeight - rect.height - 8);
+    const left = Math.max(8, Math.min(event.clientX, maxLeft));
+    const top = Math.max(8, Math.min(event.clientY, maxTop));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    const onPointerDown = (pointerEvent) => {
+      if (!menu.contains(pointerEvent.target)) {
+        dismissBroadcastContextMenu();
+      }
+    };
+    const onKeyDown = (keyEvent) => {
+      if (keyEvent.key === 'Escape') {
+        dismissBroadcastContextMenu();
+      }
+    };
+    const onWindowBlur = () => dismissBroadcastContextMenu();
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('contextmenu', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('blur', onWindowBlur, true);
+
+    activeBroadcastContextMenuCleanup = () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('contextmenu', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('blur', onWindowBlur, true);
+    };
+  }
+
+  updateCommandPlaceholder();
+
+  function getMiraLiveSessionId() {
+    if (typeof normalizeMiraLiveSessionId !== 'function') return undefined;
+    const badge = document.getElementById('headerSessionBadge');
+    return normalizeMiraLiveSessionId(badge?.textContent);
+  }
+
+  function renderMiraLiveReplySurface(result) {
+    const surface = document.getElementById('miraLiveReply');
+    if (!surface) return;
+    const message = String(result?.message || '').trim();
+    if (!message) {
+      surface.textContent = '';
+      surface.dataset.state = 'idle';
+      surface.hidden = true;
+      return;
+    }
+    surface.textContent = message;
+    surface.dataset.state = result?.state || (result?.ok ? 'ready' : 'unavailable');
+    surface.hidden = false;
+  }
+
+  async function sendMiraLiveMessage(message) {
+    if (typeof sendMiraLivePrompt !== 'function') {
+      const result = {
+        ok: false,
+        state: 'unavailable',
+        message: 'Mira is unavailable. Check Team Room for status.',
+      };
+      renderMiraLiveReplySurface(result);
+      showDeliveryStatus('failed');
+      return false;
+    }
+
+    const result = await sendMiraLivePrompt(
+      {
+        prompt: message,
+        sessionId: getMiraLiveSessionId(),
+      },
+      {
+        invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
+      }
+    );
+
+    renderMiraLiveReplySurface(result);
+    showDeliveryStatus(result.ok ? 'delivered' : 'failed');
+    return Boolean(result.ok);
+  }
+
+  const sendBroadcast = createCommandBarMessageRouter({
+    now: () => Date.now(),
+    logInfo: (...args) => log.info(...args),
+    setDeliveryStatus: showDeliveryStatus,
+    routeTask: routeNaturalTask,
+    sendMira: sendMiraLiveMessage,
+  });
+
+  if (broadcastInput) {
+    const autoGrow = createRafTextareaAutoGrow(broadcastInput);
+    broadcastInput.addEventListener('input', autoGrow.schedule);
+    registerRendererLifecycleCleanup(() => {
+      broadcastInput.removeEventListener('input', autoGrow.schedule);
+      autoGrow.cancel();
+    });
+    broadcastInput.addEventListener('contextmenu', (event) => {
+      openBroadcastContextMenu(event, broadcastInput);
+    });
+
+    broadcastInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        // Only allow trusted (real user) Enter presses
+        if (!e.isTrusted) {
+          e.preventDefault();
+          log.info('Broadcast', 'Blocked untrusted Enter');
+          return;
+        }
+        
+        const input = broadcastInput;
+        const message = input.value.trim();
+        
+        if (message) {
+          e.preventDefault();
+          // FIX: Clear immediately before async call to prevent race/stuck text on Windows
+          input.value = '';
+          input.style.height = '';
+          input.focus();
+          await sendBroadcast(message);
+        }
+      }
+    });
+
+    // Safeguard for Windows: clear any leftover newlines on keyup after Enter
+    broadcastInput.addEventListener('keyup', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        if (broadcastInput.value === '\n' || broadcastInput.value === '\r\n') {
+          broadcastInput.value = '';
+          broadcastInput.style.height = '';
+        }
+      }
+    });
+  }
+
+  // Broadcast button - also works (for accessibility)
+  const broadcastBtn = document.getElementById('broadcastBtn');
+  if (broadcastBtn) {
+    broadcastBtn.addEventListener('click', async (e) => {
+      // Must be trusted click event
+      if (!e.isTrusted) {
+        log.info('Broadcast', 'Blocked untrusted click');
+        return;
+      }
+      const input = document.getElementById('broadcastInput');
+      if (input && input.value && input.value.trim()) {
+        const message = input.value.trim();
+        // FIX: Clear immediately before async call
+        input.value = '';
+        input.style.height = '';
+        input.focus();
+        await sendBroadcast(message);
+      }
+    });
+  }
+
+  if (voiceInputBtn) {
+    voiceInputBtn.addEventListener('click', (e) => {
+      if (!e.isTrusted) {
+        log.info('Voice', 'Blocked untrusted click');
+        return;
+      }
+      if (!voiceEnabled) {
+        updateVoiceUI('Enable in settings');
+        return;
+      }
+      if (voiceListening) {
+        stopVoiceRecording();
+      } else {
+        startVoiceRecording();
+      }
+    });
+  }
+
+  window.addEventListener('squidrun-settings-updated', (event) => {
+    refreshVoiceSettings(event.detail);
+    if (typeof terminal.refreshMirrorModeBindings === 'function') {
+      terminal.refreshMirrorModeBindings();
+    }
+  });
+  refreshVoiceSettings(settings.getSettings());
+  if (typeof terminal.refreshMirrorModeBindings === 'function') {
+    terminal.refreshMirrorModeBindings();
+  }
+
+  // Fetch initial voice capability
+  ipcRenderer.invoke('get-feature-capabilities').then(caps => {
+    if (caps) {
+      voiceCapabilityAvailable = !!caps.voiceTranscriptionAvailable;
+      updateVoiceUI(voiceCapabilityAvailable ? 'Voice ready' : 'No API key');
+    }
+  }).catch(() => {});
+
+  // Listen for dynamic capability updates (scoped for consistent cleanup)
+  registerScopedIpcListener('renderer-voice', 'feature-capabilities-updated', (event, caps) => {
+    if (caps) {
+      voiceCapabilityAvailable = !!caps.voiceTranscriptionAvailable;
+      updateVoiceUI(voiceCapabilityAvailable ? 'Voice ready' : 'No API key');
+    }
+  });
+
+  // Spawn all button (debounced)
+  const spawnAllBtn = document.getElementById('spawnAllBtn');
+  if (spawnAllBtn) {
+    spawnAllBtn.addEventListener('click', debounceButton('spawnAll', terminal.spawnAllAgents));
+  }
+
+  // Pane action buttons: Interrupt, Enter, Restart
+  document.querySelectorAll('.interrupt-btn').forEach(btn => {
+    btn.addEventListener('click', async (_e) => {
+      const paneId = btn.dataset.paneId;
+      if (paneId) {
+        log.info('Health', `Sending interrupt (Ctrl+C) to pane ${paneId}`);
+        await terminal.interruptPane(paneId);
+      }
+    });
+  });
+
+  document.querySelectorAll('.unstick-btn').forEach(btn => {
+    btn.addEventListener('click', (_e) => {
+      const paneId = btn.dataset.paneId;
+      if (paneId) {
+        log.info('Health', `Sending Enter to pane ${paneId}`);
+        terminal.nudgePane(paneId);
+      }
+    });
+  });
+
+  // Per-pane Respawn+Kickoff button - kill and restart agent with startup prompt
+  document.querySelectorAll('.kickoff-btn').forEach(btn => {
+    btn.addEventListener('click', debounceButton(`kickoff-${btn.dataset.paneId}`, async () => {
+      const paneId = btn.dataset.paneId;
+      if (!paneId) return;
+
+      log.info('Kickoff', `Respawn+Kickoff for pane ${paneId}`);
+      // restartPane handles: kill → wait → reset identity → spawn (with identity injection)
+      const success = await terminal.restartPane(paneId);
+      if (!success) {
+        log.warn('Kickoff', `Restart returned false for pane ${paneId}`);
+      }
+    }));
+  });
+
+  const handleFreshSessionButtonClick = async (event) => {
+    const btn = event.target?.closest?.('.fresh-session-btn');
+    if (!btn) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const paneId = btn.dataset.paneId;
+    if (!paneId) return;
+    if (!confirm(`Start a fresh session for pane ${paneId}?\n\nThis cold-starts only this pane on its current model and sends the SquidRun startup context.`)) {
+      return;
+    }
+
+    log.info('FreshSession', `Fresh session restart for pane ${paneId}`);
+    showStatusNotice(`Starting fresh session for pane ${paneId}...`);
+    btn.disabled = true;
+    try {
+      const success = await terminal.restartPane(paneId, null, {
+        source: 'renderer-fresh-session-button',
+        freshSession: true,
+      });
+      if (!success) {
+        showStatusNotice(`Fresh session failed for pane ${paneId}`, 'error');
+        log.warn('FreshSession', `Fresh session restart returned false for pane ${paneId}`);
+      }
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  document.addEventListener('click', handleFreshSessionButtonClick);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', handleFreshSessionButtonClick));
+
+
+  // ESC collapse handler consolidated into setupEventListeners keyboard shortcuts listener
+
+  // Shutdown button - kill daemon and exit app cleanly
+  const fullRestartBtn = document.getElementById('fullRestartBtn');
+  if (fullRestartBtn) {
+    fullRestartBtn.addEventListener('click', async () => {
+      const windowContext = getCurrentWindowContext();
+      const lifecycleMode = getWindowLifecycleMode(windowContext);
+      if (lifecycleMode === 'secondary-window' || lifecycleMode === 'standalone-profile-app') {
+        const isStandaloneProfile = lifecycleMode === 'standalone-profile-app';
+        const prompt = isStandaloneProfile
+          ? `Quit the ${windowContext.windowKey} profile app?\n\nThis closes the profile process and its local panes/daemon/pollers. Main SquidRun keeps running.\n\nContinue?`
+          : `Close the ${windowContext.windowKey} window?\n\nMain SquidRun and the shared daemon will keep running.\n\nContinue?`;
+        if (confirm(prompt)) {
+          updateConnectionStatus(isStandaloneProfile ? 'Quitting profile app...' : 'Closing window...');
+          try {
+            const result = await ipcRenderer.invoke('close-app-window', { windowKey: windowContext.windowKey });
+            if (result?.ok === false) {
+              updateConnectionStatus(`Close failed: ${result.reason || 'unknown error'}`);
+            }
+          } catch (err) {
+            log.error('Window', 'Scoped close failed:', err);
+            updateConnectionStatus('Window close failed - try manually');
+          }
+        }
+        return;
+      }
+
+      if (confirm('Quit SquidRun?\n\nThis stops panes, daemon, pollers, and background services.\n\n'
+        + 'Telegram polling goes offline too: messages sent while SquidRun is closed will not be seen or answered until you reopen it. Telegram may hold them for pickup within its retention window.'
+        + '\n\nContinue?')) {
+        updateConnectionStatus('Quitting SquidRun...');
+        try {
+          await ipcRenderer.invoke('full-restart');
+        } catch (err) {
+          log.error('Shutdown', 'Full shutdown failed:', err);
+          updateConnectionStatus('Shutdown failed - try manually');
+        }
+      }
+    });
+  }
+
+  // Select Project button
+  const selectProjectBtn = document.getElementById('selectProjectBtn');
+  if (selectProjectBtn) {
+    selectProjectBtn.addEventListener('click', daemonHandlers.selectProject);
+  }
+
+  // Pane click: focus the pane (pane positions are fixed)
+  document.querySelectorAll('.pane').forEach(pane => {
+    pane.addEventListener('click', (event) => {
+      // Ignore clicks on buttons and model selector dropdowns
+      if (event.target && (event.target.closest('button') || event.target.closest('.model-selector'))) {
+        return;
+      }
+      const paneId = pane.dataset.paneId;
+      if (!paneId) return;
+      terminal.focusPane(paneId);
+    });
+  });
+
+  // Expand button for worker panes - delegated so rebuilt Squid Room headers still work.
+  document.addEventListener('click', handlePaneExpandButtonClick);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', handlePaneExpandButtonClick));
+
+  // Per-app-section collapse/expand button - delegated for the same reason.
+  document.addEventListener('click', handleSquidRoomAppToggleClick);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', handleSquidRoomAppToggleClick));
+  initSquidRoomAppSectionToggles();
+  initSquidRoomPaneMenus();
+  initSquidRoomTerminalDrawer();
+
+  // Role bundle info button + modal
+  document.querySelectorAll('.pane-role-info-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const paneId = btn.dataset.paneId;
+      if (paneId) openPaneRoleModal(paneId);
+    });
+  });
+  const paneRoleModalOverlay = document.getElementById('paneRoleModalOverlay');
+  const paneRoleModalClose = document.getElementById('paneRoleModalClose');
+  if (paneRoleModalClose) {
+    paneRoleModalClose.addEventListener('click', () => {
+      closePaneRoleModal();
+    });
+  }
+  if (paneRoleModalOverlay) {
+    paneRoleModalOverlay.addEventListener('click', (e) => {
+      if (e.target === paneRoleModalOverlay) {
+        closePaneRoleModal();
+      }
+    });
+  }
+
+  // User profile modal controls
+  const profileModalOverlay = document.getElementById('profileModalOverlay');
+  const profileModalClose = document.getElementById('profileModalClose');
+  const profileModalCancel = document.getElementById('profileModalCancel');
+  const profileModalSave = document.getElementById('profileModalSave');
+  const profileModalForm = document.getElementById('profileModalForm');
+  const profileExperienceSelect = document.getElementById('profileExperienceSelect');
+  const profileCommunicationSelect = document.getElementById('profileCommunicationStyleSelect');
+  const profileExperienceHelper = document.getElementById('profileExperienceHelper');
+  const profileCommunicationHelper = document.getElementById('profileCommunicationHelper');
+
+  if (profileModalClose) {
+    profileModalClose.addEventListener('click', () => {
+      closeProfileModal();
+    });
+  }
+  if (profileModalCancel) {
+    profileModalCancel.addEventListener('click', () => {
+      closeProfileModal();
+    });
+  }
+  if (profileModalSave) {
+    profileModalSave.addEventListener('click', () => {
+      void saveProfileFromModal();
+    });
+  }
+  if (profileModalForm) {
+    profileModalForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void saveProfileFromModal();
+    });
+  }
+  if (profileModalOverlay) {
+    profileModalOverlay.addEventListener('click', (event) => {
+      if (event.target === profileModalOverlay) {
+        closeProfileModal();
+      }
+    });
+  }
+  if (profileExperienceSelect) {
+    profileExperienceSelect.addEventListener('change', () => {
+      highlightProfileHelperSelection(profileExperienceHelper, profileExperienceSelect.value);
+    });
+  }
+  if (profileCommunicationSelect) {
+    profileCommunicationSelect.addEventListener('change', () => {
+      highlightProfileHelperSelection(profileCommunicationHelper, profileCommunicationSelect.value);
+    });
+  }
+
+  // Lock icon click handler - toggle input lock for pane
+  document.querySelectorAll('.lock-icon').forEach(icon => {
+    icon.addEventListener('click', (e) => {
+      e.stopPropagation(); // Don't trigger pane click/focus
+      const paneId = icon.dataset.paneId;
+      if (paneId) {
+        terminal.toggleInputLock(paneId);
+      }
+    });
+  });
+
+  const closePaneMenus = (except = null) => {
+    document.querySelectorAll('.pane-menu[open]').forEach((menu) => {
+      if (menu !== except) menu.removeAttribute('open');
+    });
+  };
+  document.querySelectorAll('.pane-menu').forEach((menu) => {
+    menu.addEventListener('toggle', () => {
+      if (menu.open) closePaneMenus(menu);
+    });
+  });
+  document.addEventListener('click', (event) => {
+    const menu = event.target?.closest?.('.pane-menu');
+    if (!menu) {
+      closePaneMenus();
+      return;
+    }
+    if (event.target?.closest?.('.pane-menu-action')) {
+      queueMicrotask(() => menu.removeAttribute('open'));
+    }
+  });
+
+  // Command palette (Ctrl+K)
+  const commandPaletteOptions = {
+    openAppWindow: (windowKey) => ipcRenderer.invoke('open-app-window', { windowKey }),
+    selectProject: () => daemonHandlers.selectProject(),
+  };
+  initCommandPalette(commandPaletteOptions);
+  if (typeof window !== 'undefined' && typeof getCommandPaletteCommands === 'function') {
+    window.__squidrunCommandPalette = {
+      getCommands: () => getCommandPaletteCommands(commandPaletteOptions),
+      smoke: () => (typeof smokeCommandPaletteCommands === 'function'
+        ? smokeCommandPaletteCommands(getCommandPaletteCommands(commandPaletteOptions), commandPaletteOptions)
+        : []),
+    };
+  }
+
+  // Fix: Blur terminals when UI input/textarea gets focus (NOT xterm's internal textarea)
+  // This prevents xterm from capturing keyboard input meant for form fields
+  document.addEventListener('focusin', (e) => {
+    // xterm uses a hidden textarea with class 'xterm-helper-textarea' for keyboard input
+    // We must NOT blur terminals when that textarea gets focus, or typing won't work
+    const isXtermTextarea = e.target.classList && e.target.classList.contains('xterm-helper-textarea');
+    if ((e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') && !isXtermTextarea) {
+      // Blur all terminals so they don't capture keyboard input
+      terminal.blurAllTerminals();
+    }
+  });
+}
+
+// Command Palette - imported from modules/command-palette.js
+
+// applyShortcutTooltips - imported from modules/utils.js
+
+// Model Selector - imported from modules/model-selector.js
+
+// Initialize on DOM load
+document.addEventListener('DOMContentLoaded', async () => {
+  ensureLifecycleUnloadHook();
+  clearRendererLifecycleBindings();
+  clearRendererIpcListeners();
+  bindTeamRoomOpenButton();
+  if (typeof daemonHandlers.teardownDaemonListeners === 'function') {
+    daemonHandlers.teardownDaemonListeners();
+  }
+  let startupOverlayResolved = false;
+  const startupOverlayStartedAtMs = Date.now();
+  const startupOverlayState = {
+    windowContext: initialWindowContext,
+    daemonConnected: false,
+    capabilitiesLoaded: false,
+  };
+  let startupOverlayPollTimer = null;
+  let startupOverlayStallTimer = null;
+  let startupOverlayLastPercent = 0;
+  let startupOverlayStalled = false;
+
+  const setTrackedStartupLoadingOverlayState = (state = {}) => {
+    if (Number.isFinite(Number(state.percent))) {
+      startupOverlayLastPercent = Math.max(0, Math.min(100, Number(state.percent)));
+    }
+    setStartupLoadingOverlayState(state);
+  };
+
+  const initialStartupCopy = getStartupLoadingCopy(initialWindowContext);
+  setTrackedStartupLoadingOverlayState({
+    message: initialStartupCopy.message,
+    stage: initialStartupCopy.stage,
+    eta: 'Estimating...',
+    percent: STARTUP_OVERLAY_INITIAL_PERCENT,
+    checks: [
+      { name: 'UI shell', state: 'ready', detail: 'Renderer mounted' },
+      { name: 'Terminal daemon', state: 'loading', detail: 'Connecting terminals…' },
+      { name: 'Supervisor', state: 'pending', detail: 'Waiting for runtime…' },
+      { name: 'WS broker', state: 'pending', detail: 'Waiting for runtime…' },
+      { name: 'Memory', state: 'pending', detail: 'Preparing recall…' },
+      { name: 'Pane hosting', state: 'pending', detail: 'Preparing hidden panes…' },
+    ],
+    error: false,
+    hideSpinner: false,
+  });
+
+  const resolveStartupOverlay = (reason, payload = null) => {
+    if (startupOverlayResolved) return;
+    startupOverlayResolved = true;
+    if (startupOverlayPollTimer) {
+      clearInterval(startupOverlayPollTimer);
+      startupOverlayPollTimer = null;
+    }
+    if (startupOverlayStallTimer) {
+      clearTimeout(startupOverlayStallTimer);
+      startupOverlayStallTimer = null;
+    }
+    if (reason === 'daemon-timeout') {
+      handleDaemonStartupTimeout(payload);
+    } else {
+      const startupCopy = getStartupLoadingCopy(startupOverlayState.windowContext);
+      const elapsedMs = Date.now() - startupOverlayStartedAtMs;
+      const remainingMs = Math.max(0, STARTUP_OVERLAY_MIN_VISIBLE_MS - elapsedMs);
+      setTrackedStartupLoadingOverlayState({
+        message: startupCopy.readyMessage,
+        stage: reason === 'degraded-startup'
+          ? startupCopy.degradedStage
+          : startupCopy.readyStage,
+        eta: 'Ready',
+        percent: 100,
+        hideSpinner: true,
+      });
+      setTimeout(() => {
+        dismissStartupLoadingOverlay();
+      }, remainingMs);
+    }
+    void refreshHeaderSessionBadge();
+  };
+
+  ipcRenderer.once('daemon-connected', () => {
+    startupOverlayState.daemonConnected = true;
+  });
+
+  ipcRenderer.once('daemon-timeout', (_event, payload) => {
+    resolveStartupOverlay('daemon-timeout', payload);
+  });
+
+  startupOverlayStallTimer = setTimeout(() => {
+    if (startupOverlayResolved || startupOverlayLastPercent > STARTUP_OVERLAY_INITIAL_PERCENT) return;
+    startupOverlayStalled = true;
+    const startupCopy = getStartupLoadingCopy(startupOverlayState.windowContext);
+    setTrackedStartupLoadingOverlayState({
+      message: 'Startup is stuck',
+      stage: 'The window bridge never reported ready',
+      eta: startupCopy.stuckEta,
+      percent: startupOverlayLastPercent,
+      error: true,
+      hideSpinner: true,
+    });
+  }, STARTUP_OVERLAY_STALL_WATCHDOG_MS);
+
+  const refreshStartupOverlay = async () => {
+    if (startupOverlayResolved || startupOverlayStalled) return;
+    const elapsedMs = Date.now() - startupOverlayStartedAtMs;
+    let serviceStatus = null;
+    try {
+      serviceStatus = await ipcRenderer.invoke('get-startup-services-status');
+    } catch (err) {
+      log.warn('Init', `Failed reading startup services status: ${err?.message || err}`);
+    }
+
+    const model = computeStartupOverlayModel(serviceStatus || {}, startupOverlayState);
+    const rawEtaMs = model.percent > 0
+      ? Math.max(0, ((elapsedMs / model.percent) * (100 - model.percent)))
+      : STARTUP_OVERLAY_MAX_WAIT_MS;
+    const etaText = model.ready
+      ? 'Ready'
+      : `ETA ${formatStartupElapsed(Math.min(rawEtaMs, STARTUP_OVERLAY_MAX_WAIT_MS))}`;
+
+    setTrackedStartupLoadingOverlayState({
+      message: model.headline,
+      stage: model.subhead,
+      eta: etaText,
+      percent: model.percent,
+      checks: model.items,
+      error: false,
+      hideSpinner: model.ready,
+    });
+
+    if (model.ready && elapsedMs >= STARTUP_OVERLAY_MIN_VISIBLE_MS) {
+      resolveStartupOverlay('startup-complete');
+      return;
+    }
+
+    if (elapsedMs >= STARTUP_OVERLAY_MAX_WAIT_MS && startupOverlayState.daemonConnected) {
+      resolveStartupOverlay('degraded-startup');
+    }
+  };
+
+  startupOverlayPollTimer = setInterval(() => {
+    void refreshStartupOverlay();
+  }, STARTUP_OVERLAY_POLL_MS);
+  void refreshStartupOverlay();
+
+  // Refresh session badge when main process writes the session number.
+  ipcRenderer.on('session-updated', (_event, data) => {
+    if (data?.session) {
+      updateHeaderSessionBadge(data.session);
+    } else {
+      void refreshHeaderSessionBadge();
+    }
+  });
+
+  // Setup all event handlers
+  refreshSquidRoomSurfaceForContext(getCurrentWindowContext());
+  setupEventListeners();
+  setupAutonomyOnboardingHandlers();
+  initMainPaneState();
+  bindWorkspaceSwitcher();
+  applyWindowChrome(initialWindowContext);
+  // Enhance shortcut tooltips for controls with keyboard hints
+  applyShortcutTooltips();
+
+  // Initialize global UI focus tracker for multi-pane focus restore
+  terminal.initUIFocusTracker();
+
+  // Status Strip - task counts at a glance
+  initStatusStrip();
+  initPaneVisibilityControls({
+    bus,
+    profileName: document.body?.dataset?.profileName || initialWindowContext?.profileName || 'main',
+    forceRebind: true,
+    onVisibilityChanged: ({ paneId, visible }) => {
+      if (!visible && expandedPaneId === paneId) {
+        toggleExpandPane(paneId);
+      }
+    },
+  });
+  await refreshHeaderSessionBadge();
+
+  try {
+    await ipcRenderer.invoke('get-feature-capabilities');
+    startupOverlayState.capabilitiesLoaded = true;
+    void refreshStartupOverlay();
+  } catch (err) {
+    log.warn('Init', `Feature capability fetch failed during startup overlay: ${err?.message || err}`);
+  }
+
+  // Model Selector - per-pane model switching
+  setupModelSelectorListeners();
+  setupModelChangeListener();
+  initModelSelectors();
+
+  // Global ESC key handler - collapse expanded UI and release keyboard.
+  // Interrupting a process is an explicit pane-header button action.
+  ipcRenderer.on('global-escape-pressed', () => {
+    handleGlobalEscapePressed();
+  });
+
+  // Watchdog alert - all agents stuck, notify user
+  // Auto-triggers aggressive nudge and uses it for click handler
+  ipcRenderer.on('watchdog-alert', (event, data) => {
+    log.info('Watchdog', 'Alert received:', data);
+
+    // Auto-trigger aggressive nudge when watchdog fires
+    log.info('Watchdog', 'Auto-triggering aggressive nudge on all panes');
+    terminal.aggressiveNudgeAll();
+
+    // Show desktop notification
+    if (Notification.permission === 'granted') {
+      new Notification('SquidRun Alert', {
+        body: 'Agents stuck - auto-nudged with ESC+Enter',
+        icon: 'assets/squidrun-favicon-64.png',
+        requireInteraction: true
+      });
+    } else if (Notification.permission !== 'denied') {
+      Notification.requestPermission().then(perm => {
+        if (perm === 'granted') {
+          new Notification('SquidRun Alert', {
+            body: 'Agents stuck - auto-nudged with ESC+Enter',
+            requireInteraction: true
+          });
+        }
+      });
+    }
+
+    // Play alert sound
+    try {
+      const audio = new Audio('assets/alert.mp3');
+      audio.play().catch(() => log.info('Watchdog', 'Could not play alert sound'));
+    } catch (_e) {
+      log.info('Watchdog', 'Audio not available');
+    }
+
+    // Show visual alert in status bar (click for additional nudge if needed)
+    const statusBar = document.querySelector('.status-bar');
+    if (statusBar) {
+      const alert = document.createElement('span');
+      alert.className = 'watchdog-alert';
+      alert.textContent = ' ⚠️ Auto-nudged - Click for another nudge';
+      alert.style.cssText = 'color: #ff5722; font-weight: bold; cursor: pointer; animation: pulse 1s infinite;';
+      alert.onclick = () => {
+        terminal.aggressiveNudgeAll();
+        alert.remove();
+      };
+      statusBar.appendChild(alert);
+    }
+  });
+
+  // Heartbeat state indicator. A frozen-green badge is the one lie a
+  // heartbeat must never tell: if the emitter dies, no event ever comes to
+  // change the class, so the renderer keeps its own staleness deadman - no
+  // event for 2x the advertised interval flips the badge to STALE.
+  let heartbeatStaleTimer = null;
+  ipcRenderer.on('heartbeat-state-changed', (event, data) => {
+    const { state, interval } = data;
+    const indicator = document.getElementById('heartbeatIndicator');
+    if (indicator) {
+      // Format interval for display
+      const minutes = Math.round(interval / 60000);
+      const seconds = Math.round(interval / 1000);
+      const displayInterval = minutes >= 1 ? `${minutes}m` : `${seconds}s`;
+
+      // Update text and class
+      indicator.textContent = `HB: ${state.toUpperCase()} (${displayInterval})`;
+      indicator.className = `heartbeat-indicator ${state}`;
+      indicator.style.display = 'inline-flex';
+
+      log.info('Heartbeat', `State changed: ${state}, interval: ${displayInterval}`);
+
+      if (heartbeatStaleTimer) clearTimeout(heartbeatStaleTimer);
+      const staleAfterMs = Math.max(30000, Number(interval) > 0 ? Number(interval) * 2 : 120000);
+      heartbeatStaleTimer = setTimeout(() => {
+        const staleIndicator = document.getElementById('heartbeatIndicator');
+        if (staleIndicator) {
+          staleIndicator.textContent = 'HB: STALE';
+          staleIndicator.className = 'heartbeat-indicator stale';
+          staleIndicator.style.display = 'inline-flex';
+        }
+        log.warn('Heartbeat', `No heartbeat-state-changed event for ${Math.round(staleAfterMs / 1000)}s; showing STALE`);
+      }, staleAfterMs);
+    }
+  });
+
+  // Self-healing recovery actions
+  ipcRenderer.on('pane-enter', async (event, data) => {
+    const paneId = String(data?.paneId || '');
+    if (!paneId) return;
+    const hiddenPaneHostMode = settings.getSettings()?.hiddenPaneHostsEnabled === true;
+    if (hiddenPaneHostMode && window.squidrun?.paneHost?.inject) {
+      try {
+        await window.squidrun.paneHost.inject(paneId, { message: '' });
+        return;
+      } catch (err) {
+        log.warn('PaneControl', `pane-host Enter fallback for pane ${paneId}: ${err.message}`);
+      }
+    }
+
+    const capabilities = typeof terminal.getPaneInjectionCapabilities === 'function'
+      ? terminal.getPaneInjectionCapabilities(paneId)
+      : null;
+
+    try {
+      if (capabilities?.enterMethod === 'pty') {
+        terminal.lastTypedTime[paneId] = Date.now();
+        await window.squidrun.pty.write(paneId, '\r');
+        return;
+      }
+
+      terminal.focusPane(paneId);
+      if (typeof terminal.sendEnterToPane === 'function') {
+        await terminal.sendEnterToPane(paneId);
+      } else {
+        await window.squidrun.pty.sendTrustedEnter();
+      }
+    } catch (err) {
+      log.error('PaneControl', `pane-enter failed for pane ${paneId}: ${err.message}`);
+    }
+  });
+
+  ipcRenderer.on('unstick-pane', (event, data) => {
+    const paneId = data?.paneId;
+    if (paneId) {
+      terminal.sendUnstick(String(paneId));
+    }
+  });
+
+  if (typeof disposeEarlyWindowContextListener === 'function') {
+    disposeEarlyWindowContextListener();
+  }
+  ipcRenderer.on('window-context', (_event, payload) => {
+    handleRendererWindowContext(payload || {});
+  });
+
+  // Task list updates handled by status-strip.js (SSOT for task-list-updated IPC)
+
+  // Single agent stuck detection - notify user (we can't auto-ESC via PTY)
+  // Track shown alerts to avoid spamming
+  const stuckAlertShown = new Set();
+  ipcRenderer.on('agent-stuck-detected', (event, data) => {
+    const { paneId, idleTime, message: _message } = data;
+
+    // Only show once per stuck detection (reset after 60 seconds)
+    if (stuckAlertShown.has(paneId)) return;
+    stuckAlertShown.add(paneId);
+    setTimeout(() => stuckAlertShown.delete(paneId), 60000);
+
+    log.info('StuckDetection', `Pane ${paneId} stuck for ${Math.round(idleTime / 1000)}s`);
+
+    // Flash the stuck pane header
+    const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+    if (pane) {
+      const header = pane.querySelector('.pane-header');
+      if (header) {
+        header.style.boxShadow = '0 0 10px #ff5722';
+        setTimeout(() => header.style.boxShadow = '', 3000);
+      }
+    }
+
+    // Show brief status bar notification
+    const statusBar = document.querySelector('.status-bar');
+    if (statusBar) {
+      const alert = document.createElement('span');
+      alert.textContent = ` | Pane ${paneId} may be stuck - click pane and press ESC`;
+      alert.style.cssText = 'color: #f0a000; cursor: pointer;';
+      alert.onclick = () => {
+        terminal.focusPane(paneId);
+        alert.remove();
+      };
+      statusBar.appendChild(alert);
+      setTimeout(() => alert.remove(), 5000);
+    }
+  });
+
+  // CLI Identity Badge listener
+  ipcRenderer.on('pane-cli-identity', (event, data) => {
+    if (!data) return;
+    const { paneId, label, provider } = data;
+    const el = document.getElementById(`cli-badge-${paneId}`);
+    if (!el) return;
+    const pane = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+    const key = (label || provider || '').toLowerCase();
+    el.textContent = label || provider || '';
+    el.className = 'cli-badge visible';
+    if (pane) {
+      pane.classList.remove('cli-claude', 'cli-codex', 'cli-gemini');
+    }
+    if (key.includes('claude')) {
+      el.classList.add('claude');
+      if (pane) pane.classList.add('cli-claude');
+      setPaneCliAttribute(paneId, 'claude');
+      terminal.unregisterCodexPane(paneId);
+    } else if (key.includes('codex')) {
+      el.classList.add('codex');
+      if (pane) pane.classList.add('cli-codex');
+      setPaneCliAttribute(paneId, 'codex');
+      terminal.registerCodexPane(paneId);
+    } else if (key.includes('gemini')) {
+      el.classList.add('gemini');
+      if (pane) pane.classList.add('cli-gemini');
+      setPaneCliAttribute(paneId, 'gemini');
+      terminal.unregisterCodexPane(paneId);
+    }
+  });
+
+  // Setup daemon handlers (dead session-timer accounting removed, audit #5)
+  daemonHandlers.setupClaudeStateListener();
+  daemonHandlers.setupCostAlertListener();
+  daemonHandlers.setupRefreshButtons(terminal.sendToPane);
+  daemonHandlers.setupSyncIndicator();
+  daemonHandlers.setupProjectListener();
+  daemonHandlers.setupAutoTriggerListener();  // AT2: Auto-trigger feedback
+  daemonHandlers.setupHandoffListener();      // AH2: Handoff notification
+  daemonHandlers.setupConflictResolutionListener(); // CR2: Conflict resolution
+  daemonHandlers.setupRollbackListener();     // RB2: Rollback UI
+
+  // Setup UI panels
+  settings.setupSettings();
+  // Setup daemon listeners (for terminal reconnection)
+  // Pass markTerminalsReady callback to fix auto-spawn race condition
+  const daemonListenerController = daemonHandlers.setupDaemonListeners(
+    terminal.initTerminals,
+    terminal.reattachTerminal,
+    terminal.setReconnectedToExisting,
+    markTerminalsReady
+  );
+  const daemonReplayResult = await recoverMissedDaemonConnectedAfterReload(daemonListenerController);
+  syncStartupOverlayDaemonReplay(startupOverlayState, daemonReplayResult);
+  await ensureSquidRoomLivePaneAgents(getCurrentWindowContext(), { force: true });
+
+  // Load initial project path
+  await daemonHandlers.loadInitialProject();
+
+  // CB1: Load initial agent tasks on startup
+  await daemonHandlers.loadInitialAgentTasks();
+
+  // MP2: Setup per-pane project indicators
+  daemonHandlers.setupPaneProjectClicks();
+  await daemonHandlers.loadPaneProjects();
+
+  // Secondary windows should not block their renderer boot on the main-window preflight modal.
+  if (!isSecondaryWindow()) {
+    await runStartupPreflightCheck();
+  }
+
+  // Auto-spawn now handled by checkInitComplete() when both
+  // settings are loaded AND terminals are ready (no more race condition)
+
+  // ============================================================
+  // Event Kernel Phase 4: Wire renderer events to event bus
+  // ============================================================
+
+  // 1. Overlay events — observe settings panel + command palette open/close
+  const settingsPanel = document.getElementById('settingsPanel');
+  const cmdPaletteOverlay = document.getElementById('commandPaletteOverlay');
+  const paneRoleModalOverlay = document.getElementById('paneRoleModalOverlay');
+  const profileModalOverlay = document.getElementById('profileModalOverlay');
+
+  // Aggregate overlay state: open if ANY overlay is open
+  function updateOverlayState() {
+    const settingsOpen = settingsPanel && settingsPanel.classList.contains('open');
+    const paletteOpen = cmdPaletteOverlay && cmdPaletteOverlay.classList.contains('open');
+    const roleModalOpen = paneRoleModalOverlay && paneRoleModalOverlay.classList.contains('open');
+    const profileModalOpen = profileModalOverlay && profileModalOverlay.classList.contains('open');
+    bus.updateState('system', { overlay: { open: !!(settingsOpen || paletteOpen || roleModalOpen || profileModalOpen) } });
+  }
+
+  if (settingsPanel) {
+    const overlayObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = settingsPanel.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'settings' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    overlayObserver.observe(settingsPanel, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => overlayObserver.disconnect());
+  }
+
+  if (cmdPaletteOverlay) {
+    const paletteObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = cmdPaletteOverlay.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'command-palette' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    paletteObserver.observe(cmdPaletteOverlay, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => paletteObserver.disconnect());
+  }
+  if (paneRoleModalOverlay) {
+    const roleModalObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = paneRoleModalOverlay.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'role-modal' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    roleModalObserver.observe(paneRoleModalOverlay, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => roleModalObserver.disconnect());
+  }
+  if (profileModalOverlay) {
+    const profileModalObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === 'class') {
+          const isOpen = profileModalOverlay.classList.contains('open');
+          bus.emit(isOpen ? 'overlay.opened' : 'overlay.closed', { paneId: 'system', payload: { overlay: 'profile-modal' }, source: 'renderer.js' });
+          updateOverlayState();
+        }
+      }
+    });
+    profileModalObserver.observe(profileModalOverlay, { attributes: true, attributeFilter: ['class'] });
+    registerRendererLifecycleCleanup(() => profileModalObserver.disconnect());
+  }
+
+  // 2. resize.requested — panel toggle (right panel). Raw window resize used
+  // to emit this synchronously on every drag pixel despite having no runtime
+  // consumer. Terminal geometry is now owned by terminal.js's quiet-period
+  // resize settler, so the dead per-pixel kernel work is intentionally gone.
+  const panelBtn = document.getElementById('panelBtn');
+  if (panelBtn) {
+    const onPanelToggleResizeRequested = () => {
+      bus.emit('resize.requested', {
+        paneId: 'system',
+        payload: { trigger: 'panel_toggle' },
+        source: 'renderer.js',
+      });
+    };
+    panelBtn.addEventListener('click', onPanelToggleResizeRequested);
+    registerRendererLifecycleCleanup(() => panelBtn.removeEventListener('click', onPanelToggleResizeRequested));
+  }
+
+  // 3. pane.visibility.changed — pane expand/collapse
+  const onPaneVisibilityChanged = (event) => {
+    emitPaneVisibilityChangedForExpandClick(event);
+  };
+  document.addEventListener('click', onPaneVisibilityChanged);
+  registerRendererLifecycleCleanup(() => document.removeEventListener('click', onPaneVisibilityChanged));
+
+  // 4. ui.longtask.detected — PerformanceObserver for long tasks
+  if (typeof PerformanceObserver !== 'undefined') {
+    try {
+      const longTaskObserver = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          bus.emit('ui.longtask.detected', {
+            paneId: 'system',
+            payload: { durationMs: entry.duration, startTime: entry.startTime },
+            source: 'renderer.js',
+          });
+        }
+      });
+      longTaskObserver.observe({ entryTypes: ['longtask'] });
+      registerRendererLifecycleCleanup(() => {
+        if (typeof longTaskObserver.takeRecords === 'function') {
+          longTaskObserver.takeRecords();
+        }
+        if (typeof longTaskObserver.disconnect === 'function') {
+          longTaskObserver.disconnect();
+        }
+      });
+    } catch (_e) {
+      // PerformanceObserver for longtask not supported — skip gracefully
+    }
+  }
+
+});
+
+// Exact startup probe seam: this line runs only after the full renderer script
+// parsed and registered its lifecycle. The restart gate reads it from a hidden,
+// isolated real Electron window before the working app is ever shut down.
+document.documentElement.dataset.squidrunRendererScriptReady = 'true';
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    formatTeamRoomOpenFailure,
+    createCommandBarMessageRouter,
+    createRafTextareaAutoGrow,
+    emitPaneVisibilityChangedForExpandClick,
+    handlePaneExpandButtonClick,
+    handleSquidRoomAppToggleClick,
+    syncSquidRoomAppSectionToggle,
+    handleGlobalEscapePressed,
+    isSquidRoomWindowContext,
+    getStartupLoadingCopy,
+    computeStartupOverlayModel,
+    isSquidRoomPaneWrongWorkingDir,
+    normalizeSquidRoomWorkingDirForCompare,
+    renderSquidRoomProjectionInline,
+    classifySquidRoomPetState,
+    buildSquidRoomPetFace,
+    buildSquidRoomPetSpeechText,
+    truncateSquidRoomSpeechText,
+    getSquidRoomPaneMenuFixedPosition,
+    setSquidRoomTerminalDrawerOpen,
+    isSquidRoomPetCelebrationEvent,
+    triggerSquidRoomPetCelebration,
+    getSquidRoomPetMotionClass,
+    getSquidRoomPetRowTimestampMs,
+    syncStartupOverlayDaemonReplay,
+  };
+}

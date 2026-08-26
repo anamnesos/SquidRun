@@ -1,0 +1,2945 @@
+/**
+ * Comprehensive PTY Handler Tests
+ * Target: Full coverage of pty-handlers.js
+ */
+
+const {
+  createIpcHarness,
+  createDefaultContext,
+  createDepsMock,
+} = require('./helpers/ipc-harness');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { encodeClaudeProjectDir } = require('../modules/cli-resume-invocation');
+const { loadPaneSessionIds } = require('../modules/pane-session-id-store');
+const {
+  captureBinding: captureCodexPaneBinding,
+  loadStore: loadCodexPaneSessionStore,
+} = require('../modules/codex-pane-session-store');
+const {
+  buildCodexComputerUseProofInvocation: buildActualCodexComputerUseProofInvocation,
+  sha256File: sha256ActualFile,
+} = require('../modules/main/codex-computer-use-proof');
+const { SOURCE_PROJECT_ROOT } = require('../modules/codex-seat-model-policy');
+const { getProjectRoot, setProjectRoot } = require('../config');
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CODEX_TEST_IDS = {
+  builder: '11111111-1111-4111-8111-111111111111',
+  oracle: '22222222-2222-4222-8222-222222222222',
+  rotatedBuilder: '33333333-3333-4333-8333-333333333333',
+};
+
+function seedCodexPaneBinding({ deps, cwd, paneId, role, sessionId }) {
+  const sessionRoot = path.join(deps.resumeHomeDir, '.codex', 'sessions', '2026', '08', '20');
+  fs.mkdirSync(sessionRoot, { recursive: true });
+  const transcriptPath = path.join(sessionRoot, `rollout-test-${sessionId}.jsonl`);
+  fs.writeFileSync(transcriptPath, `${JSON.stringify({
+    type: 'session_meta',
+    payload: { session_id: sessionId, id: sessionId, cwd },
+  })}\n`, 'utf8');
+  const result = captureCodexPaneBinding(deps.codexPaneSessionsFilePath, {
+    paneId,
+    role,
+    profile: 'main',
+    sessionId,
+    threadId: sessionId,
+    envSessionId: sessionId,
+    envThreadId: sessionId,
+    cwd,
+    projectRoot: cwd,
+    expectedCwd: cwd,
+    transcriptPath,
+    paneLaunchId: `pl_${String(paneId).repeat(32)}`,
+    appGeneration: 'app-session-518',
+  }, { homeDir: deps.resumeHomeDir });
+  expect(result).toMatchObject({ ok: true });
+  return transcriptPath;
+}
+
+// Mock electron clipboard
+jest.mock('electron', () => ({
+  clipboard: {
+    readText: jest.fn(() => 'original-clipboard'),
+    writeText: jest.fn(),
+  },
+}));
+
+const { registerPtyHandlers, _internals } = require('../modules/ipc/pty-handlers');
+
+function withPlatform(platformValue, callback) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  const restore = () => {
+    Object.defineProperty(process, 'platform', descriptor);
+  };
+  Object.defineProperty(process, 'platform', { value: platformValue });
+  try {
+    const result = callback();
+    if (result && typeof result.then === 'function') {
+      return result.finally(restore);
+    }
+    restore();
+    return result;
+  } catch (err) {
+    restore();
+    throw err;
+  }
+}
+
+describe('PTY Handlers', () => {
+  let harness;
+  let ctx;
+  let deps;
+  let tmpDir;
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-handlers-'));
+    harness = createIpcHarness();
+    ctx = createDefaultContext({ ipcMain: harness.ipcMain });
+    deps = createDepsMock();
+    deps.paneSessionIdsFilePath = path.join(tmpDir, 'pane-session-ids.json');
+    deps.codexPaneSessionsFilePath = path.join(tmpDir, 'codex-pane-sessions.json');
+    deps.resumeHomeDir = path.join(tmpDir, 'home');
+    deps.claudeModelHomeDir = path.join(tmpDir, 'claude-model-home');
+    deps.codexComputerUsePreflightClaims = new Map();
+    registerPtyHandlers(ctx, deps);
+    ctx.daemonClient.spawnAndWait.mockResolvedValue({
+      ok: true,
+      status: 'spawned',
+      reason: 'daemon_pane_spawn_observed',
+      paneId: '2',
+      pid: 4518,
+    });
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+    jest.clearAllMocks();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  describe('windows temp compatibility', () => {
+    test('resolves a spaceless non-.squidrun temp dir for Claude on Windows', () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      const cwd = 'D:\\projects\\squidrun';
+      const expected = 'D:\\squidrun-tmp';
+
+      const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd));
+
+      expect(result).toBe(expected);
+      expect(result).not.toMatch(/\s/);
+      expect(_internals.isInsideSquidRunPrivateRoot(result)).toBe(false);
+      expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
+      mkdirSpy.mockRestore();
+    });
+
+    test('skips explicit Windows temp roots inside .squidrun', () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      const cwd = 'D:\\projects\\squidrun';
+      const rejectedTemp = path.win32.join(cwd, '.squidrun', 'tmp');
+      const expected = 'D:\\squidrun-tmp';
+
+      const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd, {
+        SQUIDRUN_WINDOWS_TMP: rejectedTemp,
+        SystemDrive: 'D:',
+      }));
+
+      expect(result).toBe(expected);
+      expect(_internals.isInsideSquidRunPrivateRoot(result)).toBe(false);
+      expect(mkdirSpy).not.toHaveBeenCalledWith(rejectedTemp, { recursive: true });
+      expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
+      mkdirSpy.mockRestore();
+    });
+
+    test('falls back to drive-root temp when cwd contains spaces', () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      const cwd = 'D:\\Users\\Example User\\project';
+      const expected = 'D:\\squidrun-tmp';
+
+      const result = withPlatform('win32', () => _internals.resolveWindowsClaudeTempDir(cwd));
+
+      expect(result).toBe(expected);
+      expect(result).not.toMatch(/\s/);
+      expect(mkdirSpy).toHaveBeenCalledWith(expected, { recursive: true });
+      mkdirSpy.mockRestore();
+    });
+  });
+
+  describe('pty-create', () => {
+    test('returns error when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      const result = await harness.invoke('pty-create', '1', '/test/dir');
+      expect(result).toEqual({ error: 'Daemon not connected' });
+    });
+
+    test('refuses restart create without a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir', { requireRestartClaim: true });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'missing_restart_claim',
+        stage: 'pty-create',
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('allows restart create with a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'restart-claim-create' } })),
+      };
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-create',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ paneId: '1' }));
+      expect(deps.paneRestartArbiter.authorizeOperation).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-create',
+        operation: 'pty-create',
+      }));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalled();
+    });
+
+    test('spawns terminal with resolver cwd when available', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('pty-create', '1', '/fallback/dir');
+
+      expect(ctx.daemonClient.spawn).toHaveBeenCalled();
+      expect(result.paneId).toBe('1');
+      expect(result.dryRun).toBe(false);
+    });
+
+    test('uses paneProjects cwd for known panes when assigned', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneProjects = { '1': '/assigned/project' };
+
+      const result = await harness.invoke('pty-create', '1', '/fallback/dir');
+      const expectedCwd = path.resolve('/assigned/project');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
+
+      expect(result.cwd).toBe(expectedCwd);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '1',
+        expectedCwd,
+        false,
+        null,
+        expectedEnv,
+        { paneCommand: '' }
+      );
+    });
+
+    test('uses active state.project when pane has no explicit assignment', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.watcher.readState = jest.fn(() => ({ project: '/active/project' }));
+      ctx.currentSettings.paneProjects = {};
+
+      const result = await harness.invoke('pty-create', '2', '/fallback/dir');
+      const expectedCwd = path.resolve('/active/project');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
+
+      expect(result.cwd).toBe(expectedCwd);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '2',
+        expectedCwd,
+        false,
+        null,
+        expectedEnv,
+        { paneCommand: '' }
+      );
+    });
+
+    test('does not read or use state.project when operatingMode is developer', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.operatingMode = 'developer';
+      ctx.currentSettings.paneProjects = {};
+      ctx.watcher.readState = jest.fn(() => ({ project: '/active/project' }));
+
+      const result = await harness.invoke('pty-create', '2', '/fallback/dir');
+      const stateProjectCwd = path.resolve('/active/project');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
+
+      expect(ctx.watcher.readState).not.toHaveBeenCalled();
+      expect(result.cwd).not.toBe(stateProjectCwd);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '2',
+        result.cwd,
+        false,
+        null,
+        expectedEnv,
+        { paneCommand: '' }
+      );
+    });
+
+    test('uses workingDir when pane cwd resolver has no mapping', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('pty-create', '99', '/custom/dir');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
+
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '99',
+        '/custom/dir',
+        false,
+        null,
+        expectedEnv,
+        { paneCommand: '' }
+      );
+    });
+
+    test('can create dynamic Squid Room arm panes with command, env, and workingDir at spawn time', async () => {
+      ctx.daemonClient.connected = true;
+      const workingDir = 'D:\\projects\\ExampleApp';
+
+      const result = await harness.invoke('pty-create', 'exampleapp-app', workingDir, {
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        env: {
+          SQUIDRUN_ROLE: 'exampleapp-app',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
+          SQUIDRUN_PROFILE: 'main',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        paneId: 'exampleapp-app',
+        cwd: workingDir,
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      }));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        'exampleapp-app',
+        workingDir,
+        false,
+        null,
+        expect.objectContaining({
+          SQUIDRUN_ROLE: 'exampleapp-app',
+          SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
+          SQUIDRUN_PROFILE: 'main',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        }),
+        {
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
+    test('pins spawn-on-create Claude arm panes with a per-pane session id', async () => {
+      ctx.daemonClient.connected = true;
+      const workingDir = 'D:\\projects\\ExampleApp';
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
+
+      const result = await harness.invoke('pty-create', 'exampleapp-app', workingDir, {
+        paneCommand: 'claude',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        env: {
+          SQUIDRUN_ROLE: 'exampleapp-app',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        paneId: 'exampleapp-app',
+        cwd: workingDir,
+        spawnCommandOnCreate: true,
+      }));
+      expect(result.paneCommand).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
+      expect(store.panes['exampleapp-app']).toBeTruthy();
+      expect(result.paneCommand).toBe(`claude --session-id ${store.panes['exampleapp-app']}`);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        'exampleapp-app',
+        workingDir,
+        false,
+        null,
+        expect.objectContaining({
+          SQUIDRUN_ROLE: 'exampleapp-app',
+          SQUIDRUN_WINDOW_KEY: 'squid-room',
+          SQUIDRUN_WORKING_DIR: workingDir,
+        }),
+        {
+          paneCommand: result.paneCommand,
+          spawnCommandOnCreate: true,
+        }
+      );
+      expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
+        store.panes['exampleapp-app'],
+        expect.objectContaining({
+          paneId: 'exampleapp-app',
+          cwd: workingDir,
+          source: 'pty-create',
+        })
+      );
+    });
+
+    test('spawns codex panes with null mode (interactive PTY, not codex-exec)', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '2': 'codex --mode exec' };
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+        })
+        : null;
+
+      await harness.invoke('pty-create', '2', '/test/dir');
+
+      // All panes use interactive PTY mode — codex-exec mode removed
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '2',
+        expect.any(String),
+        false,
+        null,
+        expectedEnv,
+        { paneCommand: 'codex --mode exec' }
+      );
+    });
+
+    test('adds autonomy flags to spawn-on-create standard pane commands', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+      ctx.currentSettings.allowAllPermissions = true;
+      ctx.currentSettings.paneCommands = { '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '3', '/test/dir', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'codex',
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        paneId: '3',
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      }));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '3',
+        expect.any(String),
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        {
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
+    test('initial auto-spawn resumes panes 2 and 3 by their separate exact Codex ids', async () => {
+      const cwd = path.join(tmpDir, 'shared-codex-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawn.mockReturnValue(true);
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const builder = await harness.invoke('pty-create', '2', cwd, { spawnCommandOnCreate: true });
+      const oracle = await harness.invoke('pty-create', '3', cwd, { spawnCommandOnCreate: true });
+
+      expect(builder.paneCommand).toBe(`codex resume ${CODEX_TEST_IDS.builder}`);
+      expect(oracle.paneCommand).toBe(`codex resume ${CODEX_TEST_IDS.oracle}`);
+      expect(builder.paneCommand).not.toContain('--last');
+      expect(oracle.paneCommand).not.toContain('--last');
+    });
+
+    test('fresh initial auto-spawn clears only the selected Codex binding after acceptance', async () => {
+      const cwd = path.join(tmpDir, 'fresh-codex-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      const builderTranscript = seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawn.mockReturnValue(true);
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.paneCommand).toBe('codex');
+      expect(ctx.daemonClient.spawnAndWait).toHaveBeenCalledWith(
+        '2',
+        cwd,
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        { paneCommand: 'codex', spawnCommandOnCreate: true }
+      );
+      expect(result.clearedCodexBinding).toMatchObject({ ok: true, cleared: true, paneId: '2' });
+      expect(store.store.panes['2']).toBeUndefined();
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+      expect(fs.existsSync(builderTranscript)).toBe(true);
+    });
+
+    test('fresh initial auto-spawn preserves a new binding captured by the hook before clear', async () => {
+      const cwd = path.join(tmpDir, 'fresh-hook-race-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawnAndWait.mockImplementation(async () => {
+        seedCodexPaneBinding({
+          deps,
+          cwd,
+          paneId: '2',
+          role: 'builder',
+          sessionId: CODEX_TEST_IDS.rotatedBuilder,
+        });
+        return { ok: true, status: 'spawned', paneId: '2', pid: 4519 };
+      });
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.success).toBe(true);
+      expect(result.clearedCodexBinding).toMatchObject({
+        ok: true,
+        cleared: false,
+        rotated: true,
+        currentSessionId: CODEX_TEST_IDS.rotatedBuilder,
+      });
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.rotatedBuilder);
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+    });
+
+    test('fresh initial auto-spawn rolls back and stays unconsumed when post-accept clear fails', async () => {
+      const cwd = path.join(tmpDir, 'fresh-clear-failure-cwd');
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.kill.mockReturnValue(true);
+      ctx.daemonClient.spawnAndWait.mockImplementation(async () => {
+        fs.writeFileSync(deps.codexPaneSessionsFilePath, '{ malformed after spawn', 'utf8');
+        return { ok: true, status: 'spawned', paneId: '2', pid: 4520 };
+      });
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: 'codex_fresh_binding_clear_failed',
+        reason: 'binding_store_malformed',
+        freshSessionConsumed: false,
+        targetedPaneStopAccepted: true,
+      });
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('2');
+    });
+
+    test.each([
+      ['daemon error', { ok: false, status: 'spawn_failed', reason: 'daemon_pane_spawn_failed' }],
+      ['daemon disconnect', { ok: false, status: 'disconnected', reason: 'daemon_disconnected_before_spawn_observed' }],
+      ['daemon timeout', { ok: false, status: 'ack_timeout', reason: 'daemon pane spawn observation timeout after 5000ms' }],
+    ])('fresh initial auto-spawn preserves the binding after %s', async (_label, observation) => {
+      const cwd = path.join(tmpDir, `fresh-observation-failure-${observation.status}`);
+      fs.mkdirSync(cwd, { recursive: true });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawnAndWait.mockResolvedValueOnce({
+        ...observation,
+        paneId: '2',
+      });
+      ctx.daemonClient.kill.mockReturnValue(true);
+      ctx.currentSettings.autonomyConsentGiven = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '2', cwd, {
+        spawnCommandOnCreate: true,
+        freshSession: true,
+      });
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result).toMatchObject({
+        success: false,
+        error: 'codex_fresh_spawn_not_accepted',
+        reason: observation.reason,
+        freshSessionConsumed: false,
+        targetedPaneStopAccepted: true,
+      });
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('2');
+    });
+
+    test('fresh spawn-on-create Claude panes remint only the requested pane session id', async () => {
+      ctx.daemonClient.connected = true;
+      const workingDir = 'D:\\projects\\ExampleApp';
+      fs.mkdirSync(path.dirname(deps.paneSessionIdsFilePath), { recursive: true });
+      fs.writeFileSync(deps.paneSessionIdsFilePath, JSON.stringify({
+        schema: 'squidrun.pane_session_ids.v0',
+        panes: {
+          'exampleapp-app': '11111111-1111-4111-8111-111111111111',
+          'exampleapp-invoice': '22222222-2222-4222-8222-222222222222',
+        },
+      }, null, 2), 'utf8');
+
+      const result = await harness.invoke('pty-create', 'exampleapp-app', workingDir, {
+        paneCommand: 'claude',
+        spawnCommandOnCreate: true,
+        preferWorkingDir: true,
+        remintClaudeSessionId: true,
+      });
+      const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
+
+      expect(result.remintedClaudeSessionId).toBe(true);
+      expect(result.previousClaudeSessionId).toBe('11111111-1111-4111-8111-111111111111');
+      expect(result.claudeSessionId).toMatch(UUID_RE);
+      expect(result.claudeSessionId).not.toBe(result.previousClaudeSessionId);
+      expect(store.panes['exampleapp-app']).toBe(result.claudeSessionId);
+      expect(store.panes['exampleapp-invoice']).toBe('22222222-2222-4222-8222-222222222222');
+      expect(result.paneCommand).toBe(`claude --session-id ${result.claudeSessionId}`);
+    });
+
+    test('spawn-on-create standard panes use assigned paneProjects cwd without explicit preferWorkingDir', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+      ctx.currentSettings.allowAllPermissions = true;
+      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\Client\\workspace' };
+      ctx.currentSettings.paneCommands = { '3': 'codex' };
+
+      const result = await harness.invoke('pty-create', '3', 'D:\\SquidRun\\Client\\versions\\0.1.34-test', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'codex',
+      });
+
+      expect(result.cwd).toBe(path.resolve('D:\\SquidRun\\Client\\workspace'));
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '3',
+        path.resolve('D:\\SquidRun\\Client\\workspace'),
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        {
+          paneCommand: 'codex --yolo',
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
+    test('injects installed data root into pane spawn env for packaged installs', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.installedDeployment = {
+        active: true,
+        dataRoot: 'D:\\SquidRun\\Client',
+        source: 'manifest:D:\\SquidRun\\Client\\versions\\0.1.34-test\\squidrun-install.json',
+      };
+      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\Client\\workspace' };
+      ctx.currentSettings.paneCommands = { '3': 'codex' };
+
+      await harness.invoke('pty-create', '3', 'D:\\SquidRun\\Client\\versions\\0.1.34-test', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'codex',
+        env: {
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
+        },
+      });
+
+      const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
+      expect(spawnCall[4]).toEqual(expect.objectContaining({
+        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
+        SQUIDRUN_DATA_ROOT: path.resolve('D:\\SquidRun\\Client'),
+      }));
+    });
+
+    test('does not inject data root into pane spawn env for dev main', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.installedDeployment = {
+        active: false,
+        dataRoot: 'D:\\SquidRun\\Client',
+        source: 'default',
+      };
+
+      await harness.invoke('pty-create', '2', 'D:\\projects\\squidrun', {
+        env: {
+          SQUIDRUN_PROJECT_ROOT: 'D:\\projects\\squidrun',
+        },
+      });
+
+      const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
+      expect(spawnCall[4]).toEqual(expect.objectContaining({
+        SQUIDRUN_PROJECT_ROOT: 'D:\\projects\\squidrun',
+      }));
+      expect(spawnCall[4].SQUIDRUN_DATA_ROOT).toBeUndefined();
+    });
+
+    test('adds Claude autonomy flag before spawn-on-create session pinning', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+      ctx.currentSettings.allowAllPermissions = true;
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir', {
+        spawnCommandOnCreate: true,
+        paneCommand: 'claude',
+      });
+
+      expect(result.paneCommand).toMatch(/^claude --dangerously-skip-permissions --session-id [0-9a-f-]{36}$/);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '1',
+        expect.any(String),
+        false,
+        null,
+        process.platform === 'win32'
+          ? expect.objectContaining({ TEMP: expect.any(String), TMP: expect.any(String) })
+          : null,
+        {
+          paneCommand: result.paneCommand,
+          spawnCommandOnCreate: true,
+        }
+      );
+    });
+
+    test('spawns with null mode for claude command', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+
+      await harness.invoke('pty-create', '1', '/test/dir');
+
+      const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
+      expect(spawnCall[0]).toBe('1');
+      expect(spawnCall[2]).toBe(false);
+      expect(spawnCall[3]).toBe(null);
+      expect(spawnCall[5]).toEqual({ paneCommand: 'claude' });
+      if (process.platform === 'win32') {
+        expect(spawnCall[4]).toEqual(expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        }));
+      } else {
+        expect(spawnCall[4]).toBe(null);
+      }
+    });
+
+    test('injects spaceless TEMP/TMP/TMPDIR for Claude panes on Windows', async () => {
+      const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '99': 'claude' };
+      const workingDir = 'D:\\projects\\squidrun';
+      const expectedTemp = 'D:\\squidrun-tmp';
+
+      await withPlatform('win32', async () => {
+        await harness.invoke('pty-create', '99', workingDir);
+      });
+
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '99',
+        workingDir,
+        false,
+        null,
+        expect.objectContaining({
+          TEMP: expectedTemp,
+          TMP: expectedTemp,
+          TMPDIR: expectedTemp,
+        }),
+        { paneCommand: 'claude' }
+      );
+      expect(_internals.isInsideSquidRunPrivateRoot(expectedTemp)).toBe(false);
+      mkdirSpy.mockRestore();
+    });
+
+    test('respects dryRun setting', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.dryRun = true;
+
+      const result = await harness.invoke('pty-create', '1', '/test');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+          TMPDIR: expect.any(String),
+        })
+        : null;
+
+      expect(result.dryRun).toBe(true);
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '1',
+        expect.any(String),
+        true,
+        null,
+        expectedEnv,
+        { paneCommand: '' }
+      );
+    });
+
+    test('sets GEMINI_SYSTEM_MD env for gemini panes in project mode', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.operatingMode = 'project';
+      ctx.currentSettings.paneCommands = { '3': 'gemini --yolo' };
+      deps.firmwareManager = {
+        ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/oracle.md' })),
+      };
+
+      const result = await harness.invoke('pty-create', '3', '/fallback/dir');
+      const expectedEnv = process.platform === 'win32'
+        ? expect.objectContaining({
+          GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md',
+          TEMP: expect.any(String),
+          TMP: expect.any(String),
+        })
+        : { GEMINI_SYSTEM_MD: '/tmp/fw/oracle.md' };
+
+      expect(result.paneId).toBe('3');
+      expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('3');
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
+        '3',
+        expect.any(String),
+        false,
+        null,
+        expectedEnv,
+        { paneCommand: 'gemini --yolo' }
+      );
+    });
+  });
+
+  describe('pty-write', () => {
+    test('writes data when daemon connected', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(true);
+      const result = await harness.invoke('pty-write', '1', 'test data');
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('1', 'test data');
+      expect(result).toEqual({ success: true });
+    });
+
+    test('returns daemon_not_connected when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      const result = await harness.invoke('pty-write', '1', 'test data');
+
+      expect(ctx.daemonClient.write).not.toHaveBeenCalled();
+      expect(result).toEqual({ success: false, error: 'daemon_not_connected' });
+    });
+
+    test('returns daemon_not_connected when daemonClient is null', async () => {
+      ctx.daemonClient = null;
+      const result = await harness.invoke('pty-write', '1', 'test data');
+      expect(result).toEqual({ success: false, error: 'daemon_not_connected' });
+    });
+
+    test('returns daemon_write_failed when daemon rejects write', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(false);
+
+      const result = await harness.invoke('pty-write', '1', 'test data');
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('1', 'test data');
+      expect(result).toEqual({ success: false, error: 'daemon_write_failed' });
+    });
+
+    test('passes optional kernelMeta to daemon client', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(true);
+      const kernelMeta = { eventId: 'evt-1', correlationId: 'corr-1', source: 'injection.js' };
+
+      const result = await harness.invoke('pty-write', '1', 'test data', kernelMeta);
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith(
+        '1',
+        'test data',
+        expect.objectContaining({
+          eventId: 'evt-1',
+          correlationId: 'corr-1',
+          traceId: 'corr-1',
+          source: 'injection.js',
+        })
+      );
+      expect(result).toEqual({ success: true });
+    });
+
+    test('writes large payload (chunking now handled pre-IPC)', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(true);
+      const payload = 'X'.repeat(2500);
+
+      const invokePromise = harness.invoke('pty-write', '1', payload);
+      await jest.runAllTimersAsync();
+      const result = await invokePromise;
+
+      expect(result).toEqual({ success: true, chunked: true, chunks: 10, chunkSize: 256 });
+      expect(ctx.daemonClient.write).toHaveBeenCalled();
+    });
+
+    test('returns failure when large write fails', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(false);
+      const payload = 'Y'.repeat(2500);
+
+      const result = await harness.invoke('pty-write', '1', payload);
+
+      expect(ctx.daemonClient.write).toHaveBeenCalled();
+      expect(result).toEqual({ success: false, error: 'Failed to send write to daemon' });
+    });
+  });
+
+  describe('pty-write-chunked', () => {
+    test('writes chunked data when daemon connected', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = 'A'.repeat(4200);
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 });
+
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 2048 });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(3);
+      const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
+      expect(sent).toBe(payload);
+    });
+
+    test('honors 256-byte chunks for hm-send visible fallback writes', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = `HEAD-${'M'.repeat(740)}-MIDDLE-${'T'.repeat(740)}-TAIL`;
+      const result = await harness.invoke('pty-write-chunked', '1', payload, {
+        chunkSize: 256,
+        yieldEveryChunks: 0,
+      });
+
+      expect(result).toEqual({ success: true, chunks: 6, chunkSize: 256 });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(6);
+      expect(ctx.daemonClient.write.mock.calls[0][1]).toContain('HEAD-');
+      expect(ctx.daemonClient.write.mock.calls[2][1]).toContain('MIDDLE');
+      expect(ctx.daemonClient.write.mock.calls[5][1]).toContain('-TAIL');
+      const sent = ctx.daemonClient.write.mock.calls.map(call => call[1]).join('');
+      expect(sent).toBe(payload);
+    });
+
+    test('does nothing when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      const result = await harness.invoke('pty-write-chunked', '1', 'test data', { chunkSize: 2048 });
+
+      expect(result).toBeUndefined();
+      expect(ctx.daemonClient.write).not.toHaveBeenCalled();
+    });
+
+    test('clamps chunk size to allowed bounds', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = 'B'.repeat(20000);
+
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 9999 });
+
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 8192 });
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(3);
+      expect(ctx.daemonClient.write.mock.calls[0][1]).toHaveLength(8192);
+    });
+
+    test('forwards chunk kernel metadata with unique event ids', async () => {
+      ctx.daemonClient.connected = true;
+      const payload = 'C'.repeat(3000);
+      const kernelMeta = {
+        eventId: 'evt-1',
+        correlationId: 'corr-1',
+        parentEventId: 'evt-parent-1',
+        source: 'injection.js',
+      };
+
+      await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 }, kernelMeta);
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledTimes(2);
+      expect(ctx.daemonClient.write.mock.calls[0][2]).toEqual(expect.objectContaining({
+        correlationId: 'corr-1',
+        traceId: 'corr-1',
+        parentEventId: 'evt-parent-1',
+        source: 'injection.js',
+        eventId: 'evt-1-c1',
+      }));
+      expect(ctx.daemonClient.write.mock.calls[1][2]).toEqual(expect.objectContaining({
+        correlationId: 'corr-1',
+        traceId: 'corr-1',
+        parentEventId: 'evt-parent-1',
+        source: 'injection.js',
+        eventId: 'evt-1-c2',
+      }));
+    });
+
+    test('uses writeAndWaitAck when daemon supports ack handshake', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.writeAndWaitAck = jest.fn().mockResolvedValue({ success: true, status: 'accepted' });
+      const payload = 'D'.repeat(4200);
+
+      const result = await harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 });
+
+      expect(result).toEqual({ success: true, chunks: 3, chunkSize: 2048 });
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(3);
+    });
+
+    test('waits for each chunk ack before sending the next chunk', async () => {
+      ctx.daemonClient.connected = true;
+      const resolvers = [];
+      ctx.daemonClient.writeAndWaitAck = jest.fn(() => new Promise((resolve) => {
+        resolvers.push(resolve);
+      }));
+      const payload = 'E'.repeat(4200);
+
+      const resultPromise = harness.invoke('pty-write-chunked', '1', payload, { chunkSize: 2048 });
+      await Promise.resolve();
+
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(1);
+      expect(ctx.daemonClient.writeAndWaitAck.mock.calls[0][1]).toBe(payload.slice(0, 2048));
+
+      resolvers.shift()({ success: true, status: 'accepted' });
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(2);
+      expect(ctx.daemonClient.writeAndWaitAck.mock.calls[1][1]).toBe(payload.slice(2048, 4096));
+
+      resolvers.shift()({ success: true, status: 'accepted' });
+      for (let i = 0; i < 5; i += 1) await Promise.resolve();
+
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(3);
+      expect(ctx.daemonClient.writeAndWaitAck.mock.calls[2][1]).toBe(payload.slice(4096));
+
+      resolvers.shift()({ success: true, status: 'accepted' });
+      await expect(resultPromise).resolves.toEqual({ success: true, chunks: 3, chunkSize: 2048 });
+    });
+
+    test('returns failure when writeAndWaitAck fails', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.writeAndWaitAck = jest.fn().mockResolvedValue({
+        success: false,
+        status: 'ack_timeout',
+        error: 'write ack timeout after 2500ms',
+      });
+
+      const result = await harness.invoke('pty-write-chunked', '1', 'hello world', { chunkSize: 2048 });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('write ack timeout');
+      expect(ctx.daemonClient.writeAndWaitAck).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('interrupt-pane', () => {
+    test('returns error when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      const result = await harness.invoke('interrupt-pane', '1');
+
+      expect(result).toEqual({ success: false, error: 'Daemon not connected' });
+    });
+
+    test('returns error when paneId not provided', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('interrupt-pane', null);
+
+      expect(result).toEqual({ success: false, error: 'paneId required' });
+    });
+
+    test('sends Ctrl+C to pane when valid', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('interrupt-pane', '3');
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\x03');
+      expect(result).toEqual({ success: true });
+    });
+
+    test('returns error when daemon rejects interrupt write', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.write.mockReturnValue(false);
+
+      const result = await harness.invoke('interrupt-pane', '3');
+
+      expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\x03');
+      expect(result).toEqual({ success: false, error: 'daemon_write_failed' });
+    });
+  });
+
+  describe('send-trusted-enter', () => {
+    test('sends enter key events to main window', async () => {
+      await harness.invoke('send-trusted-enter');
+
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledTimes(3);
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledWith({ type: 'keyDown', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledWith({ type: 'char', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledWith({ type: 'keyUp', keyCode: 'Return' });
+    });
+
+    test('does nothing when mainWindow is null', async () => {
+      ctx.mainWindow = null;
+      await harness.invoke('send-trusted-enter');
+      // Should not throw
+    });
+
+    test('does nothing when webContents is null', async () => {
+      ctx.mainWindow.webContents = null;
+      await harness.invoke('send-trusted-enter');
+      // Should not throw
+    });
+  });
+
+  describe('clipboard-paste-text', () => {
+    test('injects text via webContents.insertText without touching clipboard', async () => {
+      const { clipboard } = require('electron');
+      ctx.mainWindow.webContents.insertText = jest.fn().mockResolvedValue(undefined);
+
+      const result = await harness.invoke('clipboard-paste-text', 'pasted text');
+
+      expect(result).toEqual({ success: true, method: 'insertText', insertedLength: 11 });
+      expect(ctx.mainWindow.webContents.insertText).toHaveBeenCalledWith('pasted text');
+      expect(ctx.mainWindow.webContents.sendInputEvent).not.toHaveBeenCalled();
+      expect(clipboard.readText).not.toHaveBeenCalled();
+      expect(clipboard.writeText).not.toHaveBeenCalled();
+    });
+
+    test('falls back to sendInputEvent when insertText is unavailable', async () => {
+      delete ctx.mainWindow.webContents.insertText;
+
+      const result = await harness.invoke('clipboard-paste-text', 'a\r\nb');
+
+      expect(result).toEqual({ success: true, method: 'sendInputEvent', insertedLength: 4, fallback: true });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenCalledTimes(5);
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(1, { type: 'char', keyCode: 'a' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(2, { type: 'keyDown', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(3, { type: 'char', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(4, { type: 'keyUp', keyCode: 'Return' });
+      expect(ctx.mainWindow.webContents.sendInputEvent).toHaveBeenNthCalledWith(5, { type: 'char', keyCode: 'b' });
+    });
+
+    test('returns noop when text is empty', async () => {
+      ctx.mainWindow.webContents.insertText = jest.fn().mockResolvedValue(undefined);
+
+      const result = await harness.invoke('clipboard-paste-text', '');
+
+      expect(result).toEqual({ success: true, method: 'noop', insertedLength: 0 });
+      expect(ctx.mainWindow.webContents.insertText).not.toHaveBeenCalled();
+      expect(ctx.mainWindow.webContents.sendInputEvent).not.toHaveBeenCalled();
+    });
+
+    test('returns structured error when mainWindow is null', async () => {
+      ctx.mainWindow = null;
+      const result = await harness.invoke('clipboard-paste-text', 'text');
+
+      expect(result).toEqual({
+        success: false,
+        method: null,
+        insertedLength: 0,
+        error: 'mainWindow not available',
+      });
+    });
+  });
+
+  describe('clipboard-write', () => {
+    test('writes provided text into the native clipboard', async () => {
+      const { clipboard } = require('electron');
+
+      const result = await harness.invoke('clipboard-write', 'selected text');
+
+      expect(result).toEqual({ success: true });
+      expect(clipboard.writeText).toHaveBeenCalledWith('selected text');
+    });
+
+    test('returns error when clipboard write throws', async () => {
+      const { clipboard } = require('electron');
+      clipboard.writeText.mockImplementationOnce(() => {
+        throw new Error('write failed');
+      });
+
+      const result = await harness.invoke('clipboard-write', 'text');
+
+      expect(result).toEqual({ success: false, error: 'write failed' });
+    });
+  });
+
+  describe('input-edit-action', () => {
+    test('invokes mapped webContents edit method', async () => {
+      ctx.mainWindow.webContents.copy = jest.fn();
+
+      const result = await harness.invoke('input-edit-action', 'copy');
+
+      expect(ctx.mainWindow.webContents.copy).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ success: true });
+    });
+
+    test('returns unsupported_action for invalid action', async () => {
+      const result = await harness.invoke('input-edit-action', 'redo');
+      expect(result).toEqual({ success: false, error: 'unsupported_action' });
+    });
+
+    test('returns error when mainWindow is unavailable', async () => {
+      ctx.mainWindow = null;
+      const result = await harness.invoke('input-edit-action', 'paste');
+      expect(result).toEqual({ success: false, error: 'mainWindow not available' });
+    });
+  });
+
+  describe('pty-resize', () => {
+    test('blocks resize requests from hidden pane-host windows', async () => {
+      ctx.daemonClient.connected = true;
+      const handler = harness.handlers.get('pty-resize');
+      const paneHostEvent = {
+        senderFrame: {
+          url: 'file:///<project-root>/ui/pane-host.html?paneId=1',
+        },
+      };
+
+      const result = await handler(paneHostEvent, '1', 120, 40);
+
+      expect(result).toEqual({ ignored: true, reason: 'pane_host_resize_blocked' });
+      expect(ctx.daemonClient.resize).not.toHaveBeenCalled();
+    });
+
+    test('resizes when daemon connected', async () => {
+      ctx.daemonClient.connected = true;
+      await harness.invoke('pty-resize', '1', 120, 40);
+
+      expect(ctx.daemonClient.resize).toHaveBeenCalledWith('1', 120, 40);
+    });
+
+    test('does nothing when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      await harness.invoke('pty-resize', '1', 120, 40);
+
+      expect(ctx.daemonClient.resize).not.toHaveBeenCalled();
+    });
+
+    test('passes optional kernelMeta to daemon resize', async () => {
+      ctx.daemonClient.connected = true;
+      const kernelMeta = { correlationId: 'corr-resize', source: 'renderer.js' };
+
+      await harness.invoke('pty-resize', '1', 120, 40, kernelMeta);
+
+      expect(ctx.daemonClient.resize).toHaveBeenCalledWith(
+        '1',
+        120,
+        40,
+        expect.objectContaining({
+          correlationId: 'corr-resize',
+          traceId: 'corr-resize',
+          source: 'renderer.js',
+        })
+      );
+    });
+  });
+
+  describe('pty-kill', () => {
+    test('kills terminal when daemon connected', async () => {
+      ctx.daemonClient.connected = true;
+      await harness.invoke('pty-kill', '1');
+
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+
+    test('does nothing when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      await harness.invoke('pty-kill', '1');
+
+      expect(ctx.daemonClient.kill).not.toHaveBeenCalled();
+    });
+
+    test('refuses restart kill without a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      const result = await harness.invoke('pty-kill', '1', { requireRestartClaim: true });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'missing_restart_claim',
+      }));
+      expect(ctx.daemonClient.kill).not.toHaveBeenCalled();
+    });
+
+    test('allows restart kill with a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'restart-claim-1' } })),
+      };
+
+      const result = await harness.invoke('pty-kill', '1', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-1',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ success: true, restarted: true }));
+      expect(deps.paneRestartArbiter.authorizeOperation).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        operation: 'pty-kill',
+      }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+  });
+
+  describe('pane-restart claims', () => {
+    test('preload bridge allowlist exposes pane restart claim channels', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn()
+          .mockResolvedValueOnce({ ok: true, granted: true })
+          .mockResolvedValueOnce({ ok: true, completed: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+
+      const api = createPreloadApi(ipcRenderer);
+      await expect(api.pty.beginPaneRestart({ paneId: '1', source: 'manual' }))
+        .resolves.toEqual({ ok: true, granted: true });
+      await expect(api.pty.completePaneRestart({ paneId: '1', claimId: 'restart-claim-1' }))
+        .resolves.toEqual({ ok: true, completed: true });
+
+      expect(isAllowedInvokeChannel('pane-restart-begin')).toBe(true);
+      expect(isAllowedInvokeChannel('pane-restart-complete')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('pane-restart-begin', {
+        paneId: '1',
+        source: 'manual',
+      });
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('pane-restart-complete', {
+        paneId: '1',
+        claimId: 'restart-claim-1',
+      });
+    });
+
+    test('begin and complete delegate to the main-side pane restart arbiter', async () => {
+      const sender = { id: 42 };
+      deps.paneRestartArbiter = {
+        begin: jest.fn(() => ({
+          ok: true,
+          granted: true,
+          paneId: '1',
+          claim: { claimId: 'restart-claim-1' },
+        })),
+        complete: jest.fn(() => ({
+          ok: true,
+          completed: true,
+          paneId: '1',
+          claimId: 'restart-claim-1',
+        })),
+      };
+
+      const begin = await harness.handlers.get('pane-restart-begin')(
+        { sender },
+        { paneId: '1', source: 'manual', requestId: 'req-1' }
+      );
+      const complete = await harness.handlers.get('pane-restart-complete')(
+        { sender },
+        { paneId: '1', claimId: 'restart-claim-1', status: 'completed' }
+      );
+
+      expect(begin).toEqual(expect.objectContaining({ ok: true, granted: true }));
+      expect(complete).toEqual(expect.objectContaining({ ok: true, completed: true }));
+      expect(deps.paneRestartArbiter.begin).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        source: 'manual',
+        requestId: 'req-1',
+        webContents: sender,
+      }));
+      expect(deps.paneRestartArbiter.complete).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-1',
+        status: 'completed',
+        webContents: sender,
+      }));
+    });
+  });
+
+  describe('claim-less lifecycle ops during an active restart lease', () => {
+    const activeLease = { claimId: 'lease-1', paneId: '1' };
+
+    test('claim-less pty-kill is rejected while a lease is open for the pane', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+      };
+
+      const result = await harness.invoke('pty-kill', '1');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_in_progress_claim_required',
+        stage: 'pty-kill',
+      }));
+      expect(deps.paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('1');
+      expect(ctx.daemonClient.kill).not.toHaveBeenCalled();
+    });
+
+    test('claim-less pty-create is rejected while a lease is open for the pane', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+      };
+
+      const result = await harness.invoke('pty-create', '1', '/test/dir');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_in_progress_claim_required',
+        stage: 'pty-create',
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('claim-less spawn-claude is rejected while a lease is open for the pane', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+      };
+
+      const result = await harness.invoke('spawn-claude', '1', '/test/dir');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'restart_claim_denied',
+        reason: 'restart_in_progress_claim_required',
+        stage: 'spawn-claude',
+      }));
+      expect(deps.recordSessionStart).not.toHaveBeenCalled();
+    });
+
+    test('claim-less lifecycle ops stay legal when no lease is open', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => null),
+      };
+
+      const killResult = await harness.invoke('pty-kill', '1');
+      const createResult = await harness.invoke('pty-create', '1', '/test/dir');
+
+      expect(killResult).toEqual(expect.objectContaining({ success: true }));
+      expect(createResult).toEqual(expect.objectContaining({ paneId: '1' }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+      expect(ctx.daemonClient.spawn).toHaveBeenCalled();
+    });
+
+    test('claim-less ops stay legal when the arbiter lacks getActiveClaim (back-compat)', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true })),
+      };
+
+      const killResult = await harness.invoke('pty-kill', '1');
+
+      expect(killResult).toEqual(expect.objectContaining({ success: true }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+
+    test('claim-bearing lifecycle ops are unaffected by the claim-less guard', async () => {
+      ctx.daemonClient.connected = true;
+      deps.paneRestartArbiter = {
+        getActiveClaim: jest.fn(() => activeLease),
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'lease-1' } })),
+      };
+
+      const result = await harness.invoke('pty-kill', '1', {
+        requireRestartClaim: true,
+        restartClaimId: 'lease-1',
+      });
+
+      expect(result).toEqual(expect.objectContaining({ success: true, restarted: true }));
+      expect(deps.paneRestartArbiter.getActiveClaim).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('1');
+    });
+  });
+
+  describe('startup-injection-claim', () => {
+    test('preload bridge allowlist exposes atomic startup injection claim channel', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn()
+          .mockResolvedValueOnce({ ok: true, claimed: true })
+          .mockResolvedValueOnce({ ok: true, released: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+
+      const api = createPreloadApi(ipcRenderer);
+      await expect(api.pty.claimStartupInjection({ paneId: '1', source: 'spawn' }))
+        .resolves.toEqual({ ok: true, claimed: true });
+      await expect(api.pty.releaseStartupInjection({ paneId: '1', claimId: 'claim-1' }))
+        .resolves.toEqual({ ok: true, released: true });
+
+      expect(isAllowedInvokeChannel('startup-injection-claim')).toBe(true);
+      expect(isAllowedInvokeChannel('startup-injection-release')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('startup-injection-claim', {
+        paneId: '1',
+        source: 'spawn',
+      });
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('startup-injection-release', {
+        paneId: '1',
+        claimId: 'claim-1',
+      });
+    });
+
+    test('atomically grants the first per-pane claim and denies later claimants', async () => {
+      const first = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'main-window',
+        windowKey: 'main',
+      });
+      const second = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'squid-room',
+        windowKey: 'squid-room',
+      });
+
+      expect(first).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '1',
+        claim: expect.objectContaining({
+          paneId: '1',
+          source: 'main-window',
+          windowKey: 'main',
+        }),
+      }));
+      expect(second).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: false,
+        paneId: '1',
+        reason: 'startup_injection_already_claimed',
+        claim: expect.objectContaining({
+          source: 'main-window',
+          windowKey: 'main',
+        }),
+      }));
+    });
+
+    test('claim release requires the matching claimId and preserves claims on mismatch', async () => {
+      const first = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'main-window',
+      });
+
+      const mismatch = await harness.invoke('startup-injection-release', {
+        paneId: '1',
+        claimId: 'wrong-claim',
+      });
+      const stillDenied = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'second-renderer',
+      });
+
+      expect(mismatch).toEqual(expect.objectContaining({
+        ok: false,
+        released: false,
+        paneId: '1',
+        reason: 'claim_id_mismatch',
+      }));
+      expect(stillDenied).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: false,
+        reason: 'startup_injection_already_claimed',
+      }));
+
+      const released = await harness.invoke('startup-injection-release', {
+        paneId: '1',
+        claimId: first.claim.claimId,
+      });
+      const reclaimed = await harness.invoke('startup-injection-claim', {
+        paneId: '1',
+        source: 'after-release',
+      });
+
+      expect(released).toEqual(expect.objectContaining({
+        ok: true,
+        released: true,
+        paneId: '1',
+        claim: expect.objectContaining({ claimId: first.claim.claimId }),
+      }));
+      expect(reclaimed).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '1',
+        claim: expect.objectContaining({ source: 'after-release' }),
+      }));
+    });
+
+    test('pty-create starts a new lifecycle and clears the prior claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      await harness.invoke('startup-injection-claim', { paneId: '2', source: 'first-renderer' });
+      const denied = await harness.invoke('startup-injection-claim', { paneId: '2', source: 'second-renderer' });
+      expect(denied.claimed).toBe(false);
+
+      await harness.invoke('pty-create', '2', '/workspace');
+      const reclaimed = await harness.invoke('startup-injection-claim', { paneId: '2', source: 'new-pty' });
+
+      expect(reclaimed).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '2',
+        claim: expect.objectContaining({ source: 'new-pty' }),
+      }));
+    });
+
+    test('pty-kill clears the prior claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      await harness.invoke('startup-injection-claim', { paneId: '3', source: 'first-renderer' });
+      await harness.invoke('pty-kill', '3');
+      const reclaimed = await harness.invoke('startup-injection-claim', { paneId: '3', source: 'after-kill' });
+
+      expect(reclaimed).toEqual(expect.objectContaining({
+        ok: true,
+        claimed: true,
+        paneId: '3',
+        claim: expect.objectContaining({ source: 'after-kill' }),
+      }));
+    });
+  });
+
+  describe('spawn-claude', () => {
+    beforeEach(() => {
+      ctx.currentSettings.allowAllPermissions = true;
+      ctx.currentSettings.autonomyConsentGiven = true;
+    });
+
+    const extractResumeId = (command) => {
+      const match = String(command || '').match(/(?:--session-id|--resume)\s+([0-9a-f-]{36})/i);
+      return match ? match[1] : null;
+    };
+
+    const writeClaudeSession = (cwd, sessionId) => {
+      const dir = path.join(deps.resumeHomeDir, '.claude', 'projects', encodeClaudeProjectDir(cwd));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), '{}\n');
+    };
+
+    const makeFixtureCwd = (name = 'squidrun-cwd') => {
+      const cwd = path.join(tmpDir, name);
+      fs.mkdirSync(cwd, { recursive: true });
+      return cwd;
+    };
+
+    test('simulates spawn in dry-run mode', async () => {
+      ctx.currentSettings.dryRun = true;
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(result).toEqual({ success: true, command: null, dryRun: true });
+      expect(ctx.agentRunning.get('1')).toBe('running');
+      expect(deps.broadcastClaudeState).toHaveBeenCalled();
+      expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('returns error when daemon not connected', async () => {
+      ctx.daemonClient.connected = false;
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(result).toEqual({ success: false, error: 'Daemon not connected' });
+    });
+
+    test('refuses restart spawn without a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir', { requireRestartClaim: true });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'missing_restart_claim',
+        stage: 'spawn-claude',
+      }));
+      expect(ctx.agentRunning.get('1')).toBeUndefined();
+      expect(deps.recordSessionStart).not.toHaveBeenCalled();
+    });
+
+    test('allows restart spawn with a valid restart claim', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      deps.paneRestartArbiter = {
+        authorizeOperation: jest.fn(() => ({ ok: true, claim: { claimId: 'restart-claim-spawn' } })),
+      };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir', {
+        requireRestartClaim: true,
+        restartClaimId: 'restart-claim-spawn',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.command).toContain('claude');
+      expect(deps.paneRestartArbiter.authorizeOperation).toHaveBeenCalledWith(expect.objectContaining({
+        paneId: '1',
+        claimId: 'restart-claim-spawn',
+        operation: 'spawn-claude',
+      }));
+      expect(deps.recordSessionStart).toHaveBeenCalledWith('1');
+    });
+
+    test('spawns claude with permission flags', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(result.success).toBe(true);
+      expect(result.command).toContain('--dangerously-skip-permissions');
+      expect(ctx.agentRunning.get('1')).toBe('starting');
+      expect(deps.broadcastClaudeState).toHaveBeenCalled();
+      expect(deps.recordSessionStart).toHaveBeenCalledWith('1');
+      expect(deps.recordSessionLifecycle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '1',
+          status: 'started',
+          reason: 'spawn_requested',
+        })
+      );
+    });
+
+    test('spawns codex with yolo flag', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '2': 'codex' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(result.success).toBe(true);
+      expect(result.command).toContain('--yolo');
+    });
+
+    test('does not duplicate permission flags', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude --dangerously-skip-permissions' };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      const flagCount = (result.command.match(/--dangerously-skip-permissions/g) || []).length;
+      expect(flagCount).toBe(1);
+    });
+
+    test('does not duplicate yolo flag for codex', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '2': 'codex --yolo' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/dir');
+
+      const flagCount = (result.command.match(/--yolo/g) || []).length;
+      expect(flagCount).toBe(1);
+    });
+
+    test('handles --dangerously-bypass-approvals-and-sandbox for codex', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '2': 'codex --dangerously-bypass-approvals-and-sandbox' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(result.command).not.toContain('--yolo');
+      expect(result.command).toContain('--dangerously-bypass-approvals-and-sandbox');
+    });
+
+    test('defaults to claude when no paneCommand set', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = {};
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(result.command).toContain('claude');
+      expect(result.command).toContain('--dangerously-skip-permissions');
+    });
+
+    test('defaults to claude when paneCommand is empty string', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': '   ' };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(result.command).toMatch(/^claude --dangerously-skip-permissions --session-id [0-9a-f-]{36}$/);
+    });
+
+    test('adds --system-prompt-file for claude in project mode', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.operatingMode = 'project';
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      deps.firmwareManager = {
+        ensureFirmwareForPane: jest.fn(() => ({ ok: true, firmwarePath: '/tmp/fw/architect.md' })),
+      };
+
+      const result = await harness.invoke('spawn-claude', '1', '/dir');
+
+      expect(deps.firmwareManager.ensureFirmwareForPane).toHaveBeenCalledWith('1');
+      expect(result.command).toContain('--system-prompt-file "/tmp/fw/architect.md"');
+      expect(result.command).toContain('--dangerously-skip-permissions');
+    });
+
+    test('writes Codex override in project mode', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.operatingMode = 'project';
+      ctx.currentSettings.paneCommands = { '2': 'codex' };
+      deps.firmwareManager = {
+        prepareCodexProjectFirmwareForPane: jest.fn(() => ({ ok: true, projectConfigPath: '/tmp/project/.codex/config.toml' })),
+      };
+
+      const result = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(deps.firmwareManager.prepareCodexProjectFirmwareForPane).toHaveBeenCalledWith('2');
+      expect(result.command).toContain('codex');
+      expect(result.command).toContain('--yolo');
+    });
+
+    test('does not append autonomy flags when consent is pending', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'codex' };
+      ctx.currentSettings.autonomyConsentGiven = false;
+
+      const claude = await harness.invoke('spawn-claude', '1', '/dir');
+      const codex = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(claude.command).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      expect(claude.command).not.toContain('--dangerously-skip-permissions');
+      expect(codex.command).toBe('codex');
+    });
+
+    test('does not append autonomy flags when user declines autonomy', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'codex' };
+      ctx.currentSettings.allowAllPermissions = false;
+
+      const claude = await harness.invoke('spawn-claude', '1', '/dir');
+      const codex = await harness.invoke('spawn-claude', '2', '/dir');
+
+      expect(claude.command).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      expect(claude.command).not.toContain('--dangerously-skip-permissions');
+      expect(codex.command).toBe('codex');
+    });
+
+    test('registered spawn-claude composes distinct --session-id flags for panes 1/2/3', async () => {
+      const cwd = makeFixtureCwd();
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': 'claude', '2': 'claude', '3': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd, '2': cwd, '3': cwd };
+
+      const pane1 = await harness.invoke('spawn-claude', '1', '/ignored');
+      const pane2 = await harness.invoke('spawn-claude', '2', '/ignored');
+      const pane3 = await harness.invoke('spawn-claude', '3', '/ignored');
+
+      const ids = [pane1, pane2, pane3].map((result) => extractResumeId(result.command));
+      expect(ids).toHaveLength(3);
+      expect(ids.every((id) => UUID_RE.test(id))).toBe(true);
+      expect(new Set(ids).size).toBe(3);
+      expect(pane1.command).toBe(`claude --session-id ${ids[0]}`);
+      expect(pane2.command).toBe(`claude --session-id ${ids[1]}`);
+      expect(pane3.command).toBe(`claude --session-id ${ids[2]}`);
+
+      const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
+      expect(store.panes).toEqual(expect.objectContaining({
+        '1': ids[0],
+        '2': ids[1],
+        '3': ids[2],
+      }));
+    });
+
+    test('registered spawn-claude re-probes session existence and switches create to resume', async () => {
+      const cwd = makeFixtureCwd();
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+
+      const first = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(first.command);
+      expect(first.command).toBe(`claude --session-id ${sessionId}`);
+
+      writeClaudeSession(cwd, sessionId);
+      const second = await harness.invoke('spawn-claude', '1', '/ignored');
+
+      expect(second.command).toBe(`claude --resume ${sessionId}`);
+    });
+
+    test('registered spawn-claude injects the selected Claude model before resume flags', async () => {
+      const cwd = makeFixtureCwd();
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.claudeModel = 'claude-fable-5[1m]';
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+
+      const first = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(first.command);
+      expect(first.command).toBe(`claude --model claude-fable-5 --session-id ${sessionId}`);
+
+      writeClaudeSession(cwd, sessionId);
+      const second = await harness.invoke('spawn-claude', '1', '/ignored');
+
+      expect(second.command).toBe(`claude --model claude-fable-5 --resume ${sessionId}`);
+    });
+
+    test('registered spawn-claude preserves an explicit pane command Claude model', async () => {
+      const cwd = makeFixtureCwd();
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.claudeModel = 'claude-fable-5';
+      ctx.currentSettings.paneCommands = { '1': 'claude --model opus' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(result.command);
+
+      expect(result.command).toBe(`claude --model opus --session-id ${sessionId}`);
+    });
+
+    test('registered spawn-claude reaps the pinned Claude session before handing back the command', async () => {
+      const cwd = makeFixtureCwd();
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': 'claude' };
+      ctx.currentSettings.paneProjects = { '1': cwd };
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [{ pid: 1234 }] });
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored');
+      const sessionId = extractResumeId(result.command);
+
+      expect(result.command).toBe(`claude --session-id ${sessionId}`);
+      expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({
+          paneId: '1',
+          cwd,
+          command: result.command,
+          source: 'spawn-claude',
+        })
+      );
+    });
+
+    test('registered spawn-claude does not append duplicate resume flags when command is already pinned', async () => {
+      const pinnedId = '11111111-1111-4111-8111-111111111111';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': `claude --session-id ${pinnedId}` };
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored');
+
+      expect(result.command).toBe(`claude --session-id ${pinnedId}`);
+      expect((result.command.match(/--session-id/g) || []).length).toBe(1);
+      expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('registered spawn-claude remints a fresh pin after an already-in-use collision', async () => {
+      const previousId = '11111111-1111-4111-8111-111111111111';
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '1': `claude --session-id ${previousId}` };
+      fs.mkdirSync(path.dirname(deps.paneSessionIdsFilePath), { recursive: true });
+      fs.writeFileSync(deps.paneSessionIdsFilePath, JSON.stringify({
+        schema: 'squidrun.pane_session_ids.v0',
+        panes: { '1': previousId },
+      }, null, 2));
+      deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
+
+      const result = await harness.invoke('spawn-claude', '1', '/ignored', {
+        remintClaudeSessionId: true,
+      });
+      const nextId = extractResumeId(result.command);
+
+      expect(nextId).toMatch(UUID_RE);
+      expect(nextId).not.toBe(previousId);
+      expect(result.command).toBe(`claude --session-id ${nextId}`);
+      expect(result.remintedClaudeSessionId).toBe(true);
+      expect(result.previousClaudeSessionId).toBe(previousId);
+      expect(loadPaneSessionIds(deps.paneSessionIdsFilePath).panes['1']).toBe(nextId);
+      expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
+        nextId,
+        expect.objectContaining({
+          paneId: '1',
+          source: 'spawn-claude-remint',
+        })
+      );
+    });
+
+    test('registered spawn-claude leaves codex cold-start commands unpinned', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '2': 'codex --interactive' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/ignored');
+
+      expect(result.command).toBe('codex --interactive');
+      expect(result.command).not.toContain('--session-id');
+      expect(result.command).not.toContain('--resume');
+      expect(fs.existsSync(deps.paneSessionIdsFilePath)).toBe(false);
+    });
+
+    test('registered MAIN Oracle spawn pins Sol/xhigh before exact Codex resume', async () => {
+      const previousProjectRoot = getProjectRoot();
+      const externalProjectRoot = makeFixtureCwd('oracle-external-project');
+      setProjectRoot(externalProjectRoot);
+      deps.resolveSquidrunInstallRoot = () => SOURCE_PROJECT_ROOT;
+      try {
+        seedCodexPaneBinding({
+          deps,
+          cwd: externalProjectRoot,
+          paneId: '3',
+          role: 'oracle',
+          sessionId: CODEX_TEST_IDS.oracle,
+        });
+        ctx.daemonClient.connected = true;
+        ctx.currentSettings.allowAllPermissions = false;
+        ctx.currentSettings.paneProjects = { '3': externalProjectRoot };
+        ctx.currentSettings.paneCommands = { '3': 'codex --profile squidrun-oracle' };
+
+        const result = await harness.invoke('spawn-claude', '3', '/ignored');
+
+        expect(result.command).toBe(
+          'codex --profile squidrun-oracle --model gpt-5.6-sol '
+          + `--config model_reasoning_effort=xhigh resume ${CODEX_TEST_IDS.oracle}`
+        );
+        expect(result.command).not.toContain('--last');
+      } finally {
+        setProjectRoot(previousProjectRoot);
+      }
+    });
+
+    test('registered MAIN Oracle spawn refuses a conflicting explicit Codex model', async () => {
+      const previousProjectRoot = getProjectRoot();
+      setProjectRoot(makeFixtureCwd('oracle-conflict-external-project'));
+      deps.resolveSquidrunInstallRoot = () => SOURCE_PROJECT_ROOT;
+      try {
+        ctx.daemonClient.connected = true;
+        ctx.currentSettings.allowAllPermissions = false;
+        ctx.currentSettings.paneProjects = { '3': SOURCE_PROJECT_ROOT };
+        ctx.currentSettings.paneCommands = { '3': 'codex --model gpt-5.6-luna' };
+
+        const result = await harness.invoke('spawn-claude', '3', '/ignored');
+
+        expect(result).toMatchObject({
+          success: false,
+          error: 'codex_model_policy_refused',
+          reason: 'codex_model_policy_conflict',
+          paneId: '3',
+        });
+        expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+      } finally {
+        setProjectRoot(previousProjectRoot);
+      }
+    });
+
+    test('unsafe explicit Codex resume is stripped to a visible cold start', async () => {
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneCommands = { '2': 'codex --yolo resume --last' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/ignored');
+
+      expect(result.command).toBe('codex --yolo');
+      expect(result.command).not.toContain('resume');
+      expect(result.command).not.toContain('--last');
+    });
+
+    test('later spawn path resumes panes 2 and 3 by separate exact Codex ids', async () => {
+      const cwd = makeFixtureCwd('shared-codex-resume');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const builder = await harness.invoke('spawn-claude', '2', '/ignored');
+      const oracle = await harness.invoke('spawn-claude', '3', '/ignored');
+
+      expect(builder.command).toBe(`codex resume ${CODEX_TEST_IDS.builder}`);
+      expect(oracle.command).toBe(`codex resume ${CODEX_TEST_IDS.oracle}`);
+      expect(builder.command).not.toContain('--last');
+      expect(oracle.command).not.toContain('--last');
+    });
+
+    test('fresh later spawn clears one Codex binding only after renderer acceptance', async () => {
+      const cwd = makeFixtureCwd('shared-codex-fresh');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      const oracleTranscript = seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('spawn-claude', '3', '/ignored', { freshSession: true });
+      const beforeCommit = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.command).toBe('codex');
+      expect(result.codexFreshSessionCommit).toEqual({
+        token: expect.any(String),
+        paneId: '3',
+      });
+      expect(beforeCommit.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(beforeCommit.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.oracle);
+
+      const committed = await harness.invoke(
+        'codex-fresh-session-commit',
+        '3',
+        result.codexFreshSessionCommit
+      );
+      const afterCommit = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(committed).toMatchObject({
+        success: true,
+        freshSessionConsumed: true,
+        clearedCodexBinding: { ok: true, cleared: true, paneId: '3' },
+      });
+      expect(afterCommit.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(afterCommit.store.panes['3']).toBeUndefined();
+      expect(fs.existsSync(oracleTranscript)).toBe(true);
+
+      const replay = await harness.invoke(
+        'codex-fresh-session-commit',
+        '3',
+        result.codexFreshSessionCommit
+      );
+      expect(replay).toMatchObject({
+        success: false,
+        error: 'codex_fresh_commit_invalid',
+        freshSessionConsumed: false,
+      });
+    });
+
+    test('fresh later spawn commit preserves a hook-rotated binding and sibling', async () => {
+      const cwd = makeFixtureCwd('shared-codex-fresh-rotated');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '3', role: 'oracle', sessionId: CODEX_TEST_IDS.oracle,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd, '3': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'codex', '3': 'codex' };
+
+      const result = await harness.invoke('spawn-claude', '3', '/ignored', { freshSession: true });
+      seedCodexPaneBinding({
+        deps,
+        cwd,
+        paneId: '3',
+        role: 'oracle',
+        sessionId: CODEX_TEST_IDS.rotatedBuilder,
+      });
+      const committed = await harness.invoke(
+        'codex-fresh-session-commit',
+        '3',
+        result.codexFreshSessionCommit
+      );
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(committed).toMatchObject({
+        success: true,
+        freshSessionConsumed: true,
+        clearedCodexBinding: {
+          ok: true,
+          cleared: false,
+          rotated: true,
+          currentSessionId: CODEX_TEST_IDS.rotatedBuilder,
+        },
+      });
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+      expect(store.store.panes['3'].sessionId).toBe(CODEX_TEST_IDS.rotatedBuilder);
+    });
+
+    test('switching a pane to Claude does not consume its Codex binding', async () => {
+      const cwd = makeFixtureCwd('codex-switch-cwd');
+      seedCodexPaneBinding({
+        deps, cwd, paneId: '2', role: 'builder', sessionId: CODEX_TEST_IDS.builder,
+      });
+      ctx.daemonClient.connected = true;
+      ctx.currentSettings.allowAllPermissions = false;
+      ctx.currentSettings.paneProjects = { '2': cwd };
+      ctx.currentSettings.paneCommands = { '2': 'claude' };
+
+      const result = await harness.invoke('spawn-claude', '2', '/ignored');
+      const store = loadCodexPaneSessionStore(deps.codexPaneSessionsFilePath);
+
+      expect(result.command).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
+      expect(store.store.panes['2'].sessionId).toBe(CODEX_TEST_IDS.builder);
+    });
+  });
+
+  describe('Codex Computer Use pane generation preflight', () => {
+    const mainRoot = 'D:\\projects\\squidrun';
+    const pipePath = '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34';
+    const generation = {
+      schema: 'squidrun.codex_computer_use_pipe_generation.v1',
+      pipePath,
+      configPath: 'C:\\Users\\Example User\\.codex\\config.toml',
+      projectRoot: mainRoot,
+      paneId: '3',
+      profile: 'main',
+    };
+    const commandInjectionCases = [
+      [
+        'statement separator',
+        'codex --yolo; node forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'pipeline',
+        'codex --yolo | node forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'newline',
+        'codex --yolo\nnode forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'background operator',
+        'codex --yolo & node forge.js',
+        'codex_computer_use_command_syntax_refused',
+      ],
+      [
+        'Codex argument terminator',
+        'codex --yolo --',
+        'codex_computer_use_command_argument_terminator_refused',
+      ],
+      [
+        'Codex argument terminator with startup input',
+        'codex --yolo -- forge-proof',
+        'codex_computer_use_command_argument_terminator_refused',
+      ],
+      [
+        'Codex hook feature disable',
+        'codex --disable hooks',
+        'codex_computer_use_command_configuration_refused',
+      ],
+      [
+        'Codex hook feature disable with startup input',
+        'codex --disable hooks forge-proof',
+        'codex_computer_use_command_configuration_refused',
+      ],
+      [
+        'Codex hook feature enable',
+        'codex --enable hooks',
+        'codex_computer_use_command_configuration_refused',
+      ],
+      [
+        'startup positional prompt',
+        'codex forge-proof',
+        'codex_computer_use_command_startup_input_refused',
+      ],
+      [
+        'startup subcommand',
+        'codex exec forge-proof',
+        'codex_computer_use_command_startup_input_refused',
+      ],
+    ];
+
+    function enableComputerUsePane() {
+      const approvedCodexExecutable = path.join(
+        tmpDir,
+        'approved-codex',
+        'codex.exe'
+      );
+      fs.mkdirSync(path.dirname(approvedCodexExecutable), { recursive: true });
+      fs.writeFileSync(approvedCodexExecutable, 'approved Codex executable fixture\n');
+      ctx.currentSettings.codexComputerUsePaneIds = ['3'];
+      ctx.currentSettings.paneCommands = { '3': 'codex --yolo' };
+      ctx.currentSettings.paneProjects = { '3': mainRoot };
+      ctx.daemonClient.connected = true;
+      ctx.daemonClient.spawn.mockReturnValue(true);
+      ctx.daemonClient.spawnAndWait = jest.fn(async () => ({
+        ok: true,
+        status: 'spawned',
+        reason: 'daemon_pane_spawn_observed',
+        paneId: '3',
+        pid: 42608,
+      }));
+      deps.computerUsePlatform = 'win32';
+      deps.computerUseProjectRoot = mainRoot;
+      deps.computerUseProfile = 'main';
+      deps.randomUUID = jest.fn(() => 'generation-claim-3');
+      deps.resolveOfficialComputerUseClientPath = jest.fn(() =>
+        'C:\\Users\\Example User\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs');
+      deps.armCodexComputerUseProofClaim = jest.fn(async ({ claim }) => {
+        claim.proof = {
+          state: 'armed',
+          canonicalPlan: {
+            toolInputJson: JSON.stringify({ code: 'canonical-list-windows' }),
+            toolInputSha256: 'a'.repeat(64),
+          },
+          integrity: [{
+            name: 'hookScript',
+            path: path.join(
+              mainRoot,
+              'ui',
+              'scripts',
+              'codex-computer-use-post-tool-proof.js'
+            ),
+          }],
+          codexExecutable: {
+            path: approvedCodexExecutable,
+            sha256: sha256ActualFile(approvedCodexExecutable),
+            packageVersion: '0.146.0',
+            platformPackageVersion: '0.146.0-win32-x64',
+            targetTriple: 'x86_64-pc-windows-msvc',
+          },
+        };
+        claim.proofSpawnEnv = {
+          SQUIDRUN_CUA_PROOF_CLAIM_ID: claim.claimId,
+          SQUIDRUN_CUA_PROOF_SECRET: 'server-only-test-secret',
+        };
+        return { ok: true, claim };
+      });
+      deps.buildCodexComputerUseProofInvocation = jest.fn((command) => ({
+        ok: true,
+        command: `${command} --proof-hook`,
+      }));
+      deps.prepareCodexComputerUseNativeBridge = jest.fn(async () => ({
+        ok: true,
+        status: 'ready',
+        reason: 'codex_desktop_owner_launched_and_exact_pipe_ready',
+        generation,
+      }));
+      deps.confirmCodexComputerUsePipeGeneration = jest.fn(async () => ({
+        ok: true,
+        status: 'ready',
+        reason: 'computer_use_pipe_generation_confirmed',
+        actualGeneration: generation,
+      }));
+    }
+
+    test('is disabled by default and does not touch the owner preflight', async () => {
+      ctx.currentSettings.paneCommands = { '3': 'codex --yolo' };
+      ctx.currentSettings.paneProjects = { '3': mainRoot };
+      ctx.daemonClient.connected = true;
+      const prepare = jest.fn();
+      deps.prepareCodexComputerUseNativeBridge = prepare;
+
+      const result = await harness.invoke('pty-create', '3', mainRoot);
+
+      expect(result.computerUsePreflight).toEqual({ enabled: false });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(commandInjectionCases)(
+      'daemon command-on-create refuses %s injection before spawning',
+      async (_label, paneCommand, expectedReason) => {
+        enableComputerUsePane();
+        deps.buildCodexComputerUseProofInvocation =
+          buildActualCodexComputerUseProofInvocation;
+
+        const result = await harness.invoke('pty-create', '3', mainRoot, {
+          paneCommand,
+          spawnCommandOnCreate: true,
+        });
+
+        expect(result).toEqual(expect.objectContaining({
+          success: false,
+          error: 'codex_computer_use_proof_invocation_failed',
+          reason: expectedReason,
+          requiresTargetedPaneRecycle: true,
+        }));
+        expect(ctx.daemonClient.spawnAndWait).not.toHaveBeenCalled();
+        expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+      }
+    );
+
+    test.each(commandInjectionCases)(
+      'interactive spawn-claude refuses %s injection before authorization',
+      async (_label, paneCommand, expectedReason) => {
+        enableComputerUsePane();
+        ctx.currentSettings.paneCommands = { '3': paneCommand };
+        deps.buildCodexComputerUseProofInvocation =
+          buildActualCodexComputerUseProofInvocation;
+
+        const createResult = await harness.invoke('pty-create', '3', mainRoot);
+        const result = await harness.invoke('spawn-claude', '3', mainRoot);
+
+        expect(createResult).toEqual(expect.objectContaining({
+          success: true,
+          computerUsePreflight: expect.objectContaining({ enabled: true }),
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          success: false,
+          error: 'codex_computer_use_proof_invocation_failed',
+          reason: expectedReason,
+          requiresTargetedPaneRecycle: true,
+        }));
+        expect(ctx.agentRunning.get('3')).not.toBe('starting');
+        expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    test('daemon command-on-create refuses an arbitrary absolute Codex executable', async () => {
+      enableComputerUsePane();
+      deps.buildCodexComputerUseProofInvocation =
+        buildActualCodexComputerUseProofInvocation;
+      const attackerPath = path.join(tmpDir, 'attacker', 'codex.exe');
+      fs.mkdirSync(path.dirname(attackerPath), { recursive: true });
+      fs.writeFileSync(attackerPath, 'forge the proof\n');
+
+      const result = await harness.invoke('pty-create', '3', mainRoot, {
+        paneCommand: `"${attackerPath}" --yolo`,
+        spawnCommandOnCreate: true,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'codex_computer_use_proof_invocation_failed',
+        reason: 'codex_computer_use_executable_not_approved',
+      }));
+      expect(ctx.daemonClient.spawnAndWait).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('interactive spawn-claude refuses an arbitrary absolute Codex command shim', async () => {
+      enableComputerUsePane();
+      const attackerPath = path.join(tmpDir, 'attacker', 'codex.cmd');
+      fs.mkdirSync(path.dirname(attackerPath), { recursive: true });
+      fs.writeFileSync(attackerPath, '@echo forge the proof\r\n');
+      ctx.currentSettings.paneCommands = { '3': `"${attackerPath}" --yolo` };
+      deps.buildCodexComputerUseProofInvocation =
+        buildActualCodexComputerUseProofInvocation;
+
+      const createResult = await harness.invoke('pty-create', '3', mainRoot);
+      const result = await harness.invoke('spawn-claude', '3', mainRoot);
+
+      expect(createResult).toEqual(expect.objectContaining({ success: true }));
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'codex_computer_use_proof_invocation_failed',
+        reason: 'codex_computer_use_executable_not_approved',
+      }));
+      expect(ctx.agentRunning.get('3')).not.toBe('starting');
+      expect(ctx.daemonClient.spawn).toHaveBeenCalledTimes(1);
+    });
+
+    test('preflights a stable generation before PTY spawn and confirms it after command spawn', async () => {
+      enableComputerUsePane();
+      const order = [];
+      deps.prepareCodexComputerUseNativeBridge.mockImplementation(async (input) => {
+        order.push('exact-owner-preflight');
+        expect(input).toEqual(expect.objectContaining({
+          platform: 'win32',
+          projectRoot: path.resolve(mainRoot),
+          workspace: path.resolve(mainRoot),
+          paneId: '3',
+          profile: 'main',
+          launchOwner: true,
+        }));
+        return { ok: true, status: 'ready', generation };
+      });
+      ctx.daemonClient.spawn.mockImplementation(() => {
+        order.push('fresh-pty-spawn');
+        return true;
+      });
+      deps.confirmCodexComputerUsePipeGeneration.mockImplementation(async () => {
+        order.push(order.includes('codex-command-authorized')
+          ? 'post-spawn-generation-check'
+          : 'pre-spawn-generation-check');
+        return {
+          ok: true,
+          status: 'ready',
+          reason: 'computer_use_pipe_generation_confirmed',
+          actualGeneration: generation,
+        };
+      });
+
+      const createResult = await harness.invoke('pty-create', '3', mainRoot);
+      const spawnResult = await harness.invoke('spawn-claude', '3', mainRoot);
+      order.push('codex-command-authorized');
+      deps.codexComputerUsePreflightClaims.get('3').childOutputObservedAt =
+        '2026-07-29T23:01:00.000Z';
+      const postResult = await harness.invoke(
+        'codex-computer-use-confirm-generation',
+        '3',
+        { claimId: spawnResult.computerUseGenerationClaim.claimId }
+      );
+
+      expect(createResult.computerUsePreflight).toEqual(expect.objectContaining({
+        enabled: true,
+        claimId: 'generation-claim-3',
+        generation,
+      }));
+      expect(spawnResult).toEqual(expect.objectContaining({
+        success: true,
+        command: 'codex --yolo --proof-hook',
+        computerUseGenerationClaim: expect.objectContaining({
+          claimId: 'generation-claim-3',
+          postSpawnConfirmationRequired: true,
+          listWindowsProofRequired: true,
+        }),
+      }));
+      expect(postResult).toEqual(expect.objectContaining({
+        ok: true,
+        officialWrapperRequired: true,
+        listWindowsProofRequired: true,
+      }));
+      expect(order).toEqual([
+        'exact-owner-preflight',
+        'fresh-pty-spawn',
+        'pre-spawn-generation-check',
+        'codex-command-authorized',
+        'post-spawn-generation-check',
+      ]);
+    });
+
+    test('refuses an opted-in current pane that has no fresh generation claim', async () => {
+      enableComputerUsePane();
+
+      const result = await harness.invoke('spawn-claude', '3', mainRoot);
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'codex_computer_use_stale_current_pane_refused',
+        requiresTargetedPaneRecycle: true,
+      }));
+      expect(deps.prepareCodexComputerUseNativeBridge).not.toHaveBeenCalled();
+      expect(deps.confirmCodexComputerUsePipeGeneration).not.toHaveBeenCalled();
+    });
+
+    test('does not spawn the PTY when exact owner readiness times out', async () => {
+      enableComputerUsePane();
+      deps.prepareCodexComputerUseNativeBridge.mockResolvedValueOnce({
+        ok: false,
+        status: 'blocked',
+        reason: 'codex_desktop_pipe_ready_timeout',
+      });
+
+      const result = await harness.invoke('pty-create', '3', mainRoot);
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        error: 'codex_computer_use_preflight_failed',
+        reason: 'codex_desktop_pipe_ready_timeout',
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+    });
+
+    test('fails closed when the generation rotates after command spawn', async () => {
+      enableComputerUsePane();
+      deps.confirmCodexComputerUsePipeGeneration
+        .mockResolvedValueOnce({
+          ok: true,
+          reason: 'computer_use_pipe_generation_confirmed',
+          actualGeneration: generation,
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          reason: 'computer_use_pipe_generation_changed',
+          actualGeneration: { ...generation, pipePath: '\\\\.\\pipe\\codex-computer-use-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+        });
+
+      await harness.invoke('pty-create', '3', mainRoot);
+      const spawnResult = await harness.invoke('spawn-claude', '3', mainRoot);
+      deps.codexComputerUsePreflightClaims.get('3').childOutputObservedAt =
+        '2026-07-29T23:01:00.000Z';
+      const postResult = await harness.invoke(
+        'codex-computer-use-confirm-generation',
+        '3',
+        { claimId: spawnResult.computerUseGenerationClaim.claimId }
+      );
+
+      expect(postResult).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'computer_use_pipe_generation_changed',
+        requiresTargetedPaneRecycle: true,
+      }));
+    });
+
+    test('supports fresh daemon command-on-create with observed spawn and post-spawn confirmation', async () => {
+      enableComputerUsePane();
+      const order = [];
+      deps.prepareCodexComputerUseNativeBridge.mockImplementation(async () => {
+        order.push('exact-owner-preflight');
+        return { ok: true, status: 'ready', generation };
+      });
+      deps.confirmCodexComputerUsePipeGeneration.mockImplementation(async () => {
+        order.push(order.includes('daemon-command-spawned')
+          ? 'post-spawn-generation-check'
+          : 'pre-spawn-generation-check');
+        return {
+          ok: true,
+          reason: 'computer_use_pipe_generation_confirmed',
+          actualGeneration: generation,
+        };
+      });
+      ctx.daemonClient.spawnAndWait.mockImplementation(async (
+        paneId,
+        cwd,
+        dryRun,
+        mode,
+        env,
+        options
+      ) => {
+        order.push('daemon-command-spawned');
+        expect({ paneId, cwd, dryRun, mode, env, options }).toEqual(
+          expect.objectContaining({
+              paneId: '3',
+              cwd: path.resolve(mainRoot),
+              dryRun: false,
+              env: expect.objectContaining({
+                SQUIDRUN_CUA_PROOF_CLAIM_ID: 'generation-claim-3',
+                SQUIDRUN_CUA_PROOF_SECRET: 'server-only-test-secret',
+              }),
+              options: expect.objectContaining({
+              paneCommand: 'codex --yolo --proof-hook',
+              spawnCommandOnCreate: true,
+            }),
+          })
+        );
+        return {
+          ok: true,
+          status: 'spawned',
+          reason: 'daemon_pane_spawn_observed',
+          paneId: '3',
+          pid: 42608,
+        };
+      });
+
+      const result = await harness.invoke('pty-create', '3', mainRoot, {
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        spawnCommandOnCreate: true,
+        daemonSpawnObservation: expect.objectContaining({
+          ok: true,
+          pid: 42608,
+        }),
+        computerUseGenerationClaim: expect.objectContaining({
+          claimId: 'generation-claim-3',
+          postSpawnConfirmationRequired: false,
+          listWindowsProofRequired: true,
+          authoritativeComputerUseReady: false,
+        }),
+      }));
+      expect(ctx.daemonClient.spawn).not.toHaveBeenCalled();
+      expect(ctx.daemonClient.spawnAndWait).toHaveBeenCalledTimes(1);
+      expect(order).toEqual([
+        'exact-owner-preflight',
+        'pre-spawn-generation-check',
+        'daemon-command-spawned',
+        'post-spawn-generation-check',
+      ]);
+    });
+
+    test('stops only the fresh target when generation rotates after daemon spawn observation', async () => {
+      enableComputerUsePane();
+      ctx.daemonClient.kill.mockReturnValue(true);
+      deps.confirmCodexComputerUsePipeGeneration
+        .mockResolvedValueOnce({
+          ok: true,
+          reason: 'computer_use_pipe_generation_confirmed',
+          actualGeneration: generation,
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          reason: 'computer_use_pipe_generation_changed',
+          actualGeneration: {
+            ...generation,
+            pipePath: '\\\\.\\pipe\\codex-computer-use-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          },
+        });
+
+      const result = await harness.invoke('pty-create', '3', mainRoot, {
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'computer_use_pipe_generation_changed',
+        requiresTargetedPaneRecycle: true,
+        targetedPaneStopAccepted: true,
+      }));
+      expect(ctx.daemonClient.kill).toHaveBeenCalledTimes(1);
+      expect(ctx.daemonClient.kill).toHaveBeenCalledWith('3');
+    });
+
+    test('binds list_windows plan and verification to the server-held generation claim', async () => {
+      enableComputerUsePane();
+      const createResult = await harness.invoke('pty-create', '3', mainRoot, {
+        paneCommand: 'codex --yolo',
+        spawnCommandOnCreate: true,
+      });
+      deps.buildOfficialListWindowsVerification = jest.fn(() => ({
+        ok: true,
+        schema: 'squidrun.codex_computer_use_list_windows_proof.v1',
+        prompt: 'canonical list_windows prompt',
+        snippet: "await globalThis.sky.documentation('guidance');\nawait globalThis.sky.list_windows();",
+      }));
+      deps.verifyCodexComputerUseProofJournal = jest.fn(() => ({
+        ok: true,
+        status: 'passed',
+        operation: 'list_windows',
+        windowCount: 2,
+      }));
+
+      const plan = await harness.invoke(
+        'codex-computer-use-list-windows-plan',
+        '3',
+        { claimId: createResult.computerUseGenerationClaim.claimId }
+      );
+      const result = await harness.invoke(
+        'codex-computer-use-verify-list-windows',
+        '3',
+        {
+          claimId: createResult.computerUseGenerationClaim.claimId,
+          planId: plan.planId,
+        }
+      );
+
+      expect(plan).toEqual(expect.objectContaining({
+        ok: true,
+        planId: 'generation-claim-3',
+        authoritativeComputerUseReady: false,
+      }));
+      expect(result).toEqual(expect.objectContaining({
+        ok: true,
+        authoritativeComputerUseReady: true,
+        planId: 'generation-claim-3',
+      }));
+      expect(deps.verifyCodexComputerUseProofJournal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          claimId: 'generation-claim-3',
+          paneId: '3',
+          postSpawnConfirmedAt: expect.any(String),
+          proof: expect.objectContaining({ state: 'pending' }),
+        }),
+        expect.objectContaining({
+          consumedIds: expect.any(Set),
+          platform: 'win32',
+        })
+      );
+
+      const refused = await harness.invoke(
+        'codex-computer-use-verify-list-windows',
+        '3',
+        {
+          claimId: createResult.computerUseGenerationClaim.claimId,
+          planId: plan.planId,
+          proof: { operation: 'list_windows' },
+        }
+      );
+      expect(refused).toEqual(expect.objectContaining({
+        ok: false,
+        reason: 'renderer_supplied_computer_use_proof_refused',
+      }));
+    });
+
+    test('preload exposes only bounded generation and trusted list_windows proof channels', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn().mockResolvedValue({ ok: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+      const api = createPreloadApi(ipcRenderer);
+
+      await expect(api.pty.confirmCodexComputerUseGeneration('3', {
+        claimId: 'generation-claim-3',
+      })).resolves.toEqual({ ok: true });
+      await expect(api.pty.getCodexComputerUseListWindowsPlan('3', {
+        claimId: 'generation-claim-3',
+      })).resolves.toEqual({ ok: true });
+      await expect(api.pty.verifyCodexComputerUseListWindows('3', {
+        claimId: 'generation-claim-3',
+        planId: 'plan-3',
+      })).resolves.toEqual({ ok: true });
+      await expect(api.pty.commitCodexFreshSession('2', {
+        token: 'fresh-token',
+        paneId: '2',
+      })).resolves.toEqual({ ok: true });
+
+      expect(isAllowedInvokeChannel('codex-computer-use-confirm-generation')).toBe(true);
+      expect(isAllowedInvokeChannel('codex-computer-use-list-windows-plan')).toBe(true);
+      expect(isAllowedInvokeChannel('codex-computer-use-verify-list-windows')).toBe(true);
+      expect(isAllowedInvokeChannel('codex-fresh-session-commit')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        'codex-computer-use-confirm-generation',
+        '3',
+        { claimId: 'generation-claim-3' }
+      );
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        'codex-computer-use-list-windows-plan',
+        '3',
+        { claimId: 'generation-claim-3' }
+      );
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        'codex-computer-use-verify-list-windows',
+        '3',
+        {
+          claimId: 'generation-claim-3',
+          planId: 'plan-3',
+        }
+      );
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith(
+        'codex-fresh-session-commit',
+        '2',
+        { token: 'fresh-token', paneId: '2' }
+      );
+    });
+  });
+
+  describe('intent-update', () => {
+    test('delegates to updateIntentState dependency when available', async () => {
+      deps.updateIntentState.mockResolvedValueOnce({ ok: true, paneId: '2' });
+      const result = await harness.invoke('intent-update', {
+        paneId: '2',
+        intent: 'Deploying patch',
+      });
+      expect(deps.updateIntentState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '2',
+          intent: 'Deploying patch',
+        })
+      );
+      expect(result).toEqual({ ok: true, paneId: '2' });
+    });
+  });
+
+  describe('get-claude-state', () => {
+    test('returns agent running state as object', async () => {
+      ctx.agentRunning.set('1', 'running');
+      ctx.agentRunning.set('2', 'idle');
+
+      const result = await harness.invoke('get-claude-state');
+
+      expect(result).toEqual({ '1': 'running', '2': 'idle' });
+    });
+
+    test('returns empty object when no agents running', async () => {
+      const result = await harness.invoke('get-claude-state');
+
+      expect(result).toEqual({});
+    });
+  });
+
+  describe('get-daemon-terminals', () => {
+    test('returns terminals from daemon client', async () => {
+      const terminals = [{ paneId: '1', alive: true }, { paneId: '2', alive: false }];
+      ctx.daemonClient.getTerminals.mockReturnValue(terminals);
+
+      const result = await harness.invoke('get-daemon-terminals');
+
+      expect(result).toEqual(terminals);
+    });
+
+    test('returns empty array when daemon client is null', async () => {
+      ctx.daemonClient = null;
+      const result = await harness.invoke('get-daemon-terminals');
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe('terminal-fit-telemetry (Bug A)', () => {
+    test('preload bridge allowlist exposes terminal-fit-telemetry', async () => {
+      const { isAllowedInvokeChannel } = require('../modules/bridge/channel-policy');
+      const { createPreloadApi } = require('../modules/bridge/preload-api');
+      const ipcRenderer = {
+        invoke: jest.fn().mockResolvedValue({ ok: true }),
+        send: jest.fn(),
+        on: jest.fn(),
+        removeListener: jest.fn(),
+        removeAllListeners: jest.fn(),
+      };
+
+      const api = createPreloadApi(ipcRenderer);
+      await expect(api.pty.recordFitTelemetry({ paneId: '1' })).resolves.toEqual({ ok: true });
+
+      expect(isAllowedInvokeChannel('terminal-fit-telemetry')).toBe(true);
+      expect(ipcRenderer.invoke).toHaveBeenCalledWith('terminal-fit-telemetry', { paneId: '1' });
+    });
+
+    test('rejects a payload with no paneId without writing', async () => {
+      const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => {});
+      const result = await harness.invoke('terminal-fit-telemetry', {});
+      expect(result).toEqual({ ignored: true, reason: 'missing_pane_id' });
+      expect(writeSpy).not.toHaveBeenCalled();
+      writeSpy.mockRestore();
+    });
+
+    test('appendTerminalFitTelemetry caps the file at 300 lines (no unbounded growth)', () => {
+      const existing = Array.from({ length: 305 }, (_, i) => JSON.stringify({ paneId: '1', ts: i })).join('\n');
+      jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+      jest.spyOn(fs, 'readFileSync').mockReturnValue(existing);
+      let written = '';
+      jest.spyOn(fs, 'writeFileSync').mockImplementation((_p, data) => { written = data; });
+
+      _internals.appendTerminalFitTelemetry({ paneId: '1', ts: 999, painted: true });
+
+      const lines = written.trim().split('\n');
+      expect(lines.length).toBe(300);
+      expect(lines[lines.length - 1]).toContain('"ts":999');
+      jest.restoreAllMocks();
+    });
+  });
+});

@@ -1,0 +1,401 @@
+#!/usr/bin/env node
+/**
+ * hm-comms: Read comms history from Evidence Ledger (comms_journal) via node:sqlite.
+ *
+ * Commands:
+ *   history
+ */
+
+require('../modules/noise-bootstrap').installNoiseGuards();
+try { require('../modules/logger').setLevel('warn'); } catch (_) {}
+
+const fs = require('fs');
+const path = require('path');
+const {
+  getActiveProfileName,
+  namespaceCoordRelPath,
+} = require('../profile');
+
+const DEFAULT_LAST = 20;
+const MAX_LAST = 5000;
+const DEFAULT_EXCERPT_LENGTH = 140;
+
+function usage() {
+  console.log('Usage: node hm-comms.js history [options]');
+  console.log('Commands: history');
+  console.log('Options:');
+  console.log(`  --last <n>                 Show the latest N messages (default: ${DEFAULT_LAST})`);
+  console.log('  --limit <n>                Alias for --last');
+  console.log('  --session <n|id>          Filter by session number (e.g. 174) or session id (e.g. app-session-174)');
+  console.log('  --between <a> <b>         Filter bidirectionally between roles a and b');
+  console.log('  --scope <main|windowKey>  Filter by profile/window scope (default: main)');
+  console.log('  --all-scopes              Include all profile/window scopes');
+  console.log('  --json                    Output machine-readable JSON');
+  console.log('  --db <path>               Override DB path (default: profile-scoped .squidrun/runtime*/evidence-ledger.db)');
+  console.log('Examples:');
+  console.log('  node hm-comms.js history --last 15');
+  console.log('  node hm-comms.js history --limit 15');
+  console.log('  node hm-comms.js history --session 174');
+  console.log('  node hm-comms.js history --between architect builder --last 10');
+  console.log('  node hm-comms.js history --between builder oracle --last 25 --json');
+}
+
+const FLAG_OPTIONS = new Set(['all-scopes', 'json']);
+const VALUE_OPTIONS = new Set(['last', 'limit', 'session', 'scope', 'db']);
+const PAIR_OPTIONS = new Set(['between']);
+const KNOWN_OPTIONS = new Set([...FLAG_OPTIONS, ...VALUE_OPTIONS, ...PAIR_OPTIONS]);
+
+function parseArgs(argv) {
+  const positional = [];
+  const options = new Map();
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+    if (!token.startsWith('--')) {
+      positional.push(token);
+      continue;
+    }
+
+    const key = token.slice(2).trim();
+    if (!KNOWN_OPTIONS.has(key)) {
+      throw new Error(`unknown_option: --${key}`);
+    }
+
+    if (key === 'between') {
+      const left = argv[i + 1];
+      const right = argv[i + 2];
+      if (!left || !right || left.startsWith('--') || right.startsWith('--')) {
+        throw new Error('--between requires two role values');
+      }
+      options.set('between', [left, right]);
+      i += 2;
+      continue;
+    }
+
+    if (FLAG_OPTIONS.has(key)) {
+      options.set(key, true);
+      continue;
+    }
+
+    const next = argv[i + 1];
+    if (!next || next.startsWith('--')) {
+      throw new Error(`--${key} requires a value`);
+    }
+    i += 1;
+    options.set(key, next);
+  }
+
+  return { positional, options };
+}
+
+function getOption(options, key, fallback = null) {
+  if (!options.has(key)) return fallback;
+  return options.get(key);
+}
+
+function asString(value, fallback = '') {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
+function asPositiveInt(value, fallback) {
+  if (value === null || value === undefined) return fallback;
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return parsed;
+}
+
+function normalizeRole(value) {
+  const role = asString(value, '').toLowerCase();
+  if (!role) return '';
+  return role;
+}
+
+function normalizeSessionId(value) {
+  const raw = asString(value, '');
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return `app-session-${raw}`;
+  return raw;
+}
+
+function normalizeScopeKey(value) {
+  const normalized = asString(value, 'main').toLowerCase();
+  return normalized || 'main';
+}
+
+function extractSessionScopeSuffix(value) {
+  const text = asString(value, '').toLowerCase();
+  if (!text || !text.includes(':')) return '';
+  const suffix = text.split(':').pop().trim();
+  return suffix || '';
+}
+
+function parseMetadataJson(value) {
+  try {
+    const parsed = JSON.parse(String(value || '{}'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function extractRowScopeKey(row = {}) {
+  const metadata = parseMetadataJson(row.metadata_json);
+  const directScope = normalizeScopeKey(
+    metadata.windowKey
+    || metadata.window_key
+    || metadata.profile
+    || metadata.profileName
+    || metadata.profile_name
+  );
+  if (directScope !== 'main') return directScope;
+
+  const sessionScope = extractSessionScopeSuffix(
+    metadata.sessionScopeId
+    || metadata.session_scope_id
+    || metadata.sessionId
+    || metadata.session_id
+    || row.session_id
+  );
+  if (sessionScope && sessionScope !== 'main') return sessionScope;
+
+  return 'main';
+}
+
+function resolveHistoryScope(options) {
+  if (getOption(options, 'all-scopes', false) === true) return 'all';
+  if (options.has('scope')) return normalizeScopeKey(getOption(options, 'scope', 'main'));
+  const sessionScope = extractSessionScopeSuffix(normalizeSessionId(getOption(options, 'session', '')));
+  return sessionScope || 'main';
+}
+
+function rowMatchesScope(row = {}, scope = 'main') {
+  const requested = normalizeScopeKey(scope);
+  if (requested === 'all') return true;
+  const rowScope = extractRowScopeKey(row);
+  return requested === 'main' ? rowScope === 'main' : rowScope === requested;
+}
+
+function resolveDefaultDbPath() {
+  const profileName = getActiveProfileName();
+  const ledgerRelPath = namespaceCoordRelPath(path.join('runtime', 'evidence-ledger.db'), profileName);
+  const resolveForProjectRoot = (projectRoot) => path.join(projectRoot, '.squidrun', ledgerRelPath);
+
+  // When running from the extracted .squidrun/bin/ layout, __dirname-based resolution
+  // produces a double-nested path. Use SQUIDRUN_PROJECT_ROOT if the launcher set it.
+  const envRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+  if (envRoot && fs.existsSync(envRoot)) {
+    return resolveForProjectRoot(envRoot);
+  }
+  // Walk up from cwd to find .squidrun/link.json (same pattern as hm-send.js).
+  let dir = path.resolve(process.cwd());
+  while (true) {
+    const candidate = resolveForProjectRoot(dir);
+    if (fs.existsSync(path.join(dir, '.squidrun', 'link.json')) || fs.existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Final fallback: original __dirname-based resolution (works in dev layout).
+  return path.resolve(__dirname, '..', '..', '.squidrun', ledgerRelPath);
+}
+
+function resolveDbPath(options) {
+  const override = asString(getOption(options, 'db', ''), '');
+  return override ? path.resolve(override) : resolveDefaultDbPath();
+}
+
+function readNodeSqlite() {
+  try {
+    const mod = require('node:sqlite');
+    if (!mod || typeof mod.DatabaseSync !== 'function') {
+      throw new Error('node:sqlite DatabaseSync is unavailable');
+    }
+    return mod;
+  } catch (err) {
+    throw new Error(`node:sqlite unavailable: ${err.message}`);
+  }
+}
+
+function buildHistoryQuery(options) {
+  const clauses = [];
+  const params = [];
+
+  const sessionId = normalizeSessionId(getOption(options, 'session', ''));
+  if (sessionId) {
+    clauses.push('session_id = ?');
+    params.push(sessionId);
+  }
+
+  const between = getOption(options, 'between', null);
+  if (Array.isArray(between) && between.length === 2) {
+    const left = normalizeRole(between[0]);
+    const right = normalizeRole(between[1]);
+    if (!left || !right) {
+      throw new Error('--between roles must be non-empty');
+    }
+    clauses.push('((sender_role = ? AND target_role = ?) OR (sender_role = ? AND target_role = ?))');
+    params.push(left, right, right, left);
+  }
+
+  const limitRaw = asPositiveInt(
+    options.has('limit') ? getOption(options, 'limit', DEFAULT_LAST) : getOption(options, 'last', DEFAULT_LAST),
+    DEFAULT_LAST
+  );
+  const limit = Math.max(1, Math.min(MAX_LAST, limitRaw));
+  const scope = resolveHistoryScope(options);
+  const queryLimit = scope === 'all' ? limit : Math.min(MAX_LAST, Math.max(limit, limit * 10));
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+  const sql = `
+    SELECT
+      row_id,
+      message_id,
+      session_id,
+      sender_role,
+      target_role,
+      status,
+      raw_body,
+      metadata_json,
+      sent_at_ms,
+      brokered_at_ms,
+      updated_at_ms,
+      COALESCE(brokered_at_ms, sent_at_ms, updated_at_ms) AS ts_ms
+    FROM comms_journal
+    ${where}
+    ORDER BY ts_ms DESC, row_id DESC
+    LIMIT ?
+  `;
+
+  return { sql, params: [...params, queryLimit], limit, scope };
+}
+
+function formatTimestamp(ms) {
+  const numeric = Number(ms);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '-';
+  return new Date(numeric).toISOString().replace('T', ' ').replace('Z', '');
+}
+
+function formatExcerpt(rawBody, maxLength = DEFAULT_EXCERPT_LENGTH) {
+  const normalized = String(rawBody || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return '(empty)';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function renderRows(rows) {
+  if (!rows || rows.length === 0) {
+    console.log('No messages found.');
+    return;
+  }
+
+  const stampWidth = 19;
+  const senderWidth = 10;
+  const targetWidth = 10;
+
+  rows.forEach((row) => {
+    const stamp = formatTimestamp(row.ts_ms).padEnd(stampWidth, ' ');
+    const sender = asString(row.sender_role, '-').padEnd(senderWidth, ' ');
+    const target = asString(row.target_role, '-').padEnd(targetWidth, ' ');
+    const excerpt = formatExcerpt(row.raw_body);
+    console.log(`${stamp} ${sender} -> ${target} ${excerpt}`);
+  });
+}
+
+function toJsonRows(rows) {
+  return rows.map((row) => ({
+    rowId: row.row_id,
+    messageId: row.message_id,
+    sessionId: row.session_id,
+    sender: row.sender_role,
+    target: row.target_role,
+    status: row.status,
+    scope: extractRowScopeKey(row),
+    timestampMs: row.ts_ms,
+    timestamp: formatTimestamp(row.ts_ms),
+    excerpt: formatExcerpt(row.raw_body),
+    rawBody: row.raw_body || '',
+  }));
+}
+
+function runHistory(options) {
+  const dbPath = resolveDbPath(options);
+  if (!fs.existsSync(dbPath)) {
+    throw new Error(`DB not found: ${dbPath}`);
+  }
+
+  const { DatabaseSync } = readNodeSqlite();
+  const db = new DatabaseSync(dbPath);
+
+  try {
+    const { sql, params, limit, scope } = buildHistoryQuery(options);
+    const rows = db.prepare(sql).all(...params)
+      .filter((row) => rowMatchesScope(row, scope))
+      .slice(0, limit);
+    const isJson = getOption(options, 'json', false) === true;
+
+    if (isJson) {
+      console.log(JSON.stringify({
+        ok: true,
+        dbPath,
+        count: rows.length,
+        limit,
+        scope,
+        rows: toJsonRows(rows),
+      }, null, 2));
+      return;
+    }
+
+    renderRows(rows);
+    console.log('');
+    console.log(`Rows: ${rows.length}`);
+  } finally {
+    db.close();
+  }
+}
+
+function main() {
+  const argv = process.argv.slice(2);
+  if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
+    usage();
+    process.exit(0);
+  }
+
+  const { positional, options } = parseArgs(argv);
+  const command = asString(positional[0], '').toLowerCase();
+  if (!command) {
+    usage();
+    process.exit(1);
+  }
+
+  if (command !== 'history') {
+    console.error(`Unsupported command: ${command}`);
+    usage();
+    process.exit(1);
+  }
+
+  runHistory(options);
+}
+
+if (require.main === module) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`hm-comms failed: ${err.message}`);
+    process.exit(1);
+  }
+}
+
+module.exports = {
+  buildHistoryQuery,
+  extractRowScopeKey,
+  parseArgs,
+  rowMatchesScope,
+  resolveHistoryScope,
+  toJsonRows,
+};

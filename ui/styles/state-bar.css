@@ -1,0 +1,114 @@
+/* state-bar.css — Project display bar, agent activity badges */
+
+.state-bar {
+  background: rgba(10, 10, 18, 0.95);
+  padding: var(--space-2) var(--space-5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: var(--text-sm);
+}
+
+.state-bar-left {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.state-bar-left .project-indicator {
+  min-width: 0;
+}
+
+.workspace-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: var(--space-3);
+  padding: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  flex-shrink: 0;
+}
+
+.workspace-switch {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1;
+  padding: 5px 8px;
+  min-height: 24px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.workspace-switch:hover,
+.workspace-switch:focus-visible {
+  color: var(--color-text);
+  background: rgba(255, 255, 255, 0.08);
+  outline: none;
+}
+
+.workspace-switch.active {
+  color: #071018;
+  background: var(--color-primary);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.18);
+}
+
+.state-bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.state-label {
+  color: var(--color-text-muted);
+}
+
+/* Session metrics in state bar */
+.cost-indicator {
+  font-family: var(--font-mono);
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+}
+
+.cost-indicator:empty {
+  display: none;
+}
+
+.owned-work-summary {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  max-width: min(34vw, 420px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owned-work-summary.active {
+  color: var(--color-text);
+}
+
+.owned-work-summary.warn {
+  color: var(--color-warning);
+}
+
+.owned-work-summary.idle,
+.owned-work-summary.unavailable {
+  color: var(--color-text-dim);
+}
+
+.session-timer {
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}

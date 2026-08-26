@@ -1,0 +1,58 @@
+# Dependencies and build output
+node_modules/
+ui/node_modules/
+dist/
+out/
+build/
+coverage/
+ui/dist-*/
+*.log
+*.pid
+*.pid.lock
+*.tmp
+
+# Secrets and local tool configuration
+.env
+.env.*
+!.env.example
+/.claude/
+/.codex/
+/.gemini/
+/.mcp.json
+
+# SquidRun runtime state and personal workspace memory
+/.squidrun/
+/workspace/
+/memory/
+/knowledge/
+/mira/
+/ui/.squidrun/
+/ui/config/codex-computer-use-hook-trust.json
+/ui/settings.json
+/ui/session-state.json
+/ui/usage-stats.json
+/session-state.json
+
+# Generated browser, test, and media artifacts
+/.playwright-mcp/
+/test-results/
+/screenshots/
+/.cache/
+/.eslintcache
+
+# Editor and operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+.vscode/
+.idea/
+.vs/
+*.code-workspace
+*.swp
+*.swo
+
+# Language caches
+__pycache__/
+.mypy_cache/
+*.pyc

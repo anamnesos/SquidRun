@@ -1,0 +1,1578 @@
+/**
+ * Tests for daemon-handlers.js module
+ * IPC event handling, message queuing, UI notifications
+ */
+
+// Mock dependencies before requiring the module
+const fs = require('fs');
+const path = require('path');
+
+jest.mock('../modules/renderer-bridge', () => ({
+  invokeBridge: jest.fn().mockResolvedValue({}),
+  sendBridge: jest.fn(),
+  onBridge: jest.fn(() => jest.fn()),
+}));
+
+// Mock config
+jest.mock('../config', () => require('./helpers/real-config').mockDefaultConfig);
+
+// Mock terminal module
+jest.mock('../modules/terminal', () => ({
+  sendToPane: jest.fn((paneId, message, options) => {
+    // Call onComplete callback to simulate async completion
+    if (options && options.onComplete) {
+      // Use setTimeout(0) to simulate async behavior - works with jest fake timers
+      setTimeout(() => options.onComplete({ success: true }), 0);
+    }
+  }),
+  sendUnstick: jest.fn(),
+  aggressiveNudge: jest.fn(),
+  initTerminal: jest.fn().mockResolvedValue(),
+  spawnAgent: jest.fn().mockResolvedValue(),
+  restartPane: jest.fn(),
+  nudgePane: jest.fn(),
+  hasPendingStartupInjection: jest.fn(() => false),
+}));
+
+// Mock notifications module
+const mockNotifications = {
+  showNotification: jest.fn(),
+  showToast: jest.fn(),
+  showStatusNotice: jest.fn(),
+};
+jest.mock('../modules/notifications', () => mockNotifications);
+
+// Mock ui-view module
+const mockUiView = {
+  init: jest.fn(),
+  showDeliveryIndicator: jest.fn(),
+  showDeliveryFailed: jest.fn(),
+  updatePaneProject: jest.fn(),
+  updateAgentTasks: jest.fn(),
+  showHandoffNotification: jest.fn(),
+  showAutoTriggerFeedback: jest.fn(),
+  showRollbackUI: jest.fn(),
+  hideRollbackUI: jest.fn(),
+  flashPaneHeader: jest.fn(),
+  showConflictNotification: jest.fn(),
+  showCostAlert: jest.fn(),
+  updateProjectDisplay: jest.fn(),
+  updateSyncChip: jest.fn(),
+  updateAllPaneProjects: jest.fn(), // Missing in previous mock definition
+  PANE_ROLES: {
+    '1': 'Architect',
+    '2': 'Builder',
+    '3': 'Oracle',
+  },
+  SYNC_FILES: {
+    'shared_context.md': { label: 'CTX' },
+  },
+  _resetForTesting: jest.fn(),
+};
+
+jest.mock('../modules/ui-view', () => mockUiView);
+
+// Mock window.squidrun
+global.window = {
+  squidrun: {
+    project: {
+      select: jest.fn().mockResolvedValue({ success: true, path: '/test/project' }),
+      get: jest.fn().mockResolvedValue('/test/project'),
+    },
+  },
+};
+
+// Mock document
+const mockDocument = {
+  getElementById: jest.fn(),
+  querySelector: jest.fn(),
+  querySelectorAll: jest.fn().mockReturnValue([]),
+  createElement: jest.fn().mockReturnValue({
+    className: '',
+    innerHTML: '',
+    classList: {
+      add: jest.fn(),
+      remove: jest.fn(),
+    },
+    querySelector: jest.fn(),
+    remove: jest.fn(),
+  }),
+  body: {
+    appendChild: jest.fn(),
+  },
+  head: {
+    appendChild: jest.fn(),
+  },
+};
+
+global.document = mockDocument;
+global.confirm = jest.fn().mockReturnValue(true);
+
+const { invokeBridge, sendBridge, onBridge } = require('../modules/renderer-bridge');
+const daemonHandlers = require('../modules/daemon-handlers');
+const uiView = require('../modules/ui-view');
+const notifications = require('../modules/notifications');
+const terminal = require('../modules/terminal');
+const { buildInjectMessageIpcPackets } = require('../modules/inject-message-ipc');
+
+describe('daemon-handlers.js module', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    if (typeof daemonHandlers._resetThrottleQueueForTesting === 'function') {
+      daemonHandlers._resetThrottleQueueForTesting();
+    }
+
+    // Reset mocks
+    mockDocument.getElementById.mockReturnValue(null);
+    mockDocument.querySelector.mockReturnValue(null);
+    mockDocument.querySelectorAll.mockReturnValue([]);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  describe('PANE_IDS constant', () => {
+    test('should have 3 pane IDs', () => {
+      expect(daemonHandlers.PANE_IDS).toHaveLength(3);
+    });
+
+    test('should be strings 1,2,3', () => {
+      expect(daemonHandlers.PANE_IDS).toEqual(['1', '2', '3']);
+    });
+  });
+
+  describe('PANE_ROLES constant', () => {
+    test('should have roles for all 3 panes', () => {
+      expect(Object.keys(daemonHandlers.PANE_ROLES)).toHaveLength(3);
+    });
+
+    test('should have correct role names', () => {
+      expect(daemonHandlers.PANE_ROLES['1']).toBe('Architect');
+    });
+  });
+
+  describe('setStatusCallbacks', () => {
+    test('should set callbacks', () => {
+      const connectionCb = jest.fn();
+      const paneCb = jest.fn();
+      daemonHandlers.setStatusCallbacks(connectionCb, paneCb);
+      // Callbacks should be set (internal)
+    });
+  });
+
+  describe('daemon-connected replay control', () => {
+    test('setupDaemonListeners returns idempotent replay function for terminal snapshots', async () => {
+      const initTerminals = jest.fn().mockResolvedValue();
+      const reattachTerminal = jest.fn().mockResolvedValue();
+      const setReconnected = jest.fn();
+      const onTerminalsReady = jest.fn();
+
+      const controller = daemonHandlers.setupDaemonListeners(
+        initTerminals,
+        reattachTerminal,
+        setReconnected,
+        onTerminalsReady
+      );
+
+      expect(controller).toBeDefined();
+      expect(typeof controller.replayDaemonConnected).toBe('function');
+
+      await controller.replayDaemonConnected({
+        terminals: [
+          {
+            paneId: '1',
+            alive: true,
+            mode: 'dry-run',
+            scrollback: 'Architect ready',
+            createdAt: 123,
+          },
+        ],
+      });
+
+      expect(setReconnected).toHaveBeenCalledWith(true);
+      expect(reattachTerminal).toHaveBeenCalledWith('1', 'Architect ready', expect.objectContaining({
+        createdAt: 123,
+        cwd: null,
+        daemonTerminal: expect.objectContaining({
+          paneId: '1',
+          alive: true,
+          scrollback: 'Architect ready',
+        }),
+      }));
+      expect(terminal.initTerminal).toHaveBeenCalledWith('2');
+      expect(terminal.initTerminal).toHaveBeenCalledWith('3');
+      expect(onTerminalsReady).toHaveBeenCalledWith(false);
+      expect(initTerminals).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('showToast', () => {
+    test('should delegate to notifications.showToast', () => {
+      daemonHandlers.showToast('Test message', 'info');
+      expect(notifications.showToast).toHaveBeenCalledWith('Test message', 'info');
+    });
+  });
+
+  describe('updatePaneProject', () => {
+    test('should delegate to uiView.updatePaneProject', () => {
+      daemonHandlers.updatePaneProject('1', '/path/to/project');
+      expect(uiView.updatePaneProject).toHaveBeenCalledWith('1', '/path/to/project');
+    });
+  });
+
+  describe('updateAllPaneProjects', () => {
+    test('should update multiple panes', () => {
+      daemonHandlers.updateAllPaneProjects({
+        '1': '/project1',
+        '2': '/project2',
+      });
+      // daemonHandlers iterates and calls uiView.updatePaneProject directly
+      expect(uiView.updatePaneProject).toHaveBeenCalledWith('1', '/project1');
+      expect(uiView.updatePaneProject).toHaveBeenCalledWith('2', '/project2');
+    });
+  });
+
+  describe('updateAgentTasks', () => {
+    test('should delegate to uiView.updateAgentTasks', () => {
+      const claims = { '1': 'Review PR #123' };
+      daemonHandlers.updateAgentTasks(claims);
+      expect(uiView.updateAgentTasks).toHaveBeenCalledWith(claims);
+    });
+  });
+
+  describe('showHandoffNotification', () => {
+    test('should delegate to uiView.showHandoffNotification', () => {
+      const data = { fromPane: '1', toPane: '2', reason: 'Task completed' };
+      daemonHandlers.showHandoffNotification(data);
+      expect(uiView.showHandoffNotification).toHaveBeenCalledWith(data);
+    });
+  });
+
+  describe('showConflictNotification', () => {
+    test('should delegate to uiView.showConflictNotification', () => {
+      const data = { file: 'src/app.js', agents: ['1', '2'], status: 'pending' };
+      daemonHandlers.showConflictNotification(data);
+      expect(uiView.showConflictNotification).toHaveBeenCalledWith(data);
+    });
+  });
+
+  describe('showAutoTriggerFeedback', () => {
+    test('should delegate to uiView.showAutoTriggerFeedback', () => {
+      const data = { fromPane: '1', toPane: '2', reason: 'Completion detected' };
+      daemonHandlers.showAutoTriggerFeedback(data);
+      expect(uiView.showAutoTriggerFeedback).toHaveBeenCalledWith(data);
+    });
+  });
+
+  describe('showRollbackUI', () => {
+    test('should delegate to uiView.showRollbackUI', () => {
+      const data = { checkpointId: 'cp-123', files: ['file1.js'], timestamp: '2026-01-28' };
+      const confirmFn = jest.fn();
+      const dismissFn = jest.fn();
+      daemonHandlers.showRollbackUI(data, confirmFn, dismissFn);
+      expect(uiView.showRollbackUI).toHaveBeenCalledWith(data, confirmFn, dismissFn);
+    });
+  });
+
+  describe('hideRollbackUI', () => {
+    test('should delegate to uiView.hideRollbackUI', () => {
+      daemonHandlers.hideRollbackUI();
+      expect(uiView.hideRollbackUI).toHaveBeenCalled();
+    });
+  });
+
+  describe('setupDaemonListeners', () => {
+    test('should register IPC listeners', () => {
+      const initTerminalsFn = jest.fn();
+      const reattachTerminalFn = jest.fn();
+      const setReconnectedFn = jest.fn();
+      const onTerminalsReadyFn = jest.fn();
+
+      daemonHandlers.setupDaemonListeners(
+        initTerminalsFn,
+        reattachTerminalFn,
+        setReconnectedFn,
+        onTerminalsReadyFn
+      );
+
+      expect(onBridge).toHaveBeenCalledWith('daemon-connected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('daemon-reconnected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('daemon-disconnected', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('inject-message', expect.any(Function));
+    });
+
+    test('owns nudge and restart channels without renderer.js duplicate listeners', () => {
+      const ipcHandlers = {};
+      onBridge.mockImplementation((channel, handler) => {
+        ipcHandlers[channel] = handler;
+        return jest.fn();
+      });
+
+      daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+      for (const channel of ['nudge-pane', 'restart-pane']) {
+        const matchingRegistrations = onBridge.mock.calls.filter(([registeredChannel]) => registeredChannel === channel);
+        expect(matchingRegistrations).toHaveLength(1);
+        expect(typeof ipcHandlers[channel]).toBe('function');
+      }
+
+      ipcHandlers['nudge-pane']({}, { paneId: '2' });
+      ipcHandlers['restart-pane']({}, {
+        paneId: '3',
+        source: 'test-restart',
+        requestId: 'req-3',
+        restartClaim: { claimId: 'restart-claim-3', paneId: '3' },
+      });
+      expect(terminal.nudgePane).toHaveBeenCalledTimes(1);
+      expect(terminal.nudgePane).toHaveBeenCalledWith('2');
+      expect(terminal.restartPane).toHaveBeenCalledTimes(1);
+      expect(terminal.restartPane).toHaveBeenCalledWith('3', null, expect.objectContaining({
+        source: 'test-restart',
+        requestId: 'req-3',
+        restartClaim: { claimId: 'restart-claim-3', paneId: '3' },
+      }));
+
+      const uiRoot = path.resolve(__dirname, '..');
+      const rendererSource = fs.readFileSync(path.join(uiRoot, 'renderer.js'), 'utf8');
+      for (const channel of ['nudge-pane', 'restart-pane', 'restart-all-panes']) {
+        expect(rendererSource).not.toMatch(new RegExp(`ipcRenderer\\.on\\(['"]${channel}['"]`));
+      }
+      expect(onBridge.mock.calls.some(([channel]) => channel === 'restart-all-panes')).toBe(false);
+
+      const rendererHtmlEntrypoints = fs.readdirSync(uiRoot)
+        .filter((name) => name.endsWith('.html'))
+        .filter((name) => /<script\b[^>]*\bsrc=["']renderer\.js["'][^>]*>/i
+          .test(fs.readFileSync(path.join(uiRoot, name), 'utf8')));
+      expect(rendererHtmlEntrypoints).toEqual(['index.html']);
+      expect(rendererSource).toContain('daemonHandlers.setupDaemonListeners(');
+    });
+  });
+
+  describe('setupClaudeStateListener', () => {
+    test('should register claude-state-changed listener', () => {
+      const handleTimerFn = jest.fn();
+      daemonHandlers.setupClaudeStateListener(handleTimerFn);
+      expect(onBridge).toHaveBeenCalledWith('claude-state-changed', expect.any(Function));
+    });
+  });
+
+  describe('setupCostAlertListener', () => {
+    test('should register cost-alert listener', () => {
+      daemonHandlers.setupCostAlertListener();
+      expect(onBridge).toHaveBeenCalledWith('cost-alert', expect.any(Function));
+    });
+  });
+
+  describe('setupProjectListener', () => {
+    test('should register project-changed listener', () => {
+      daemonHandlers.setupProjectListener();
+      expect(onBridge).toHaveBeenCalledWith('project-changed', expect.any(Function));
+    });
+  });
+
+  describe('setupAutoTriggerListener', () => {
+    test('should register auto-trigger listener', () => {
+      daemonHandlers.setupAutoTriggerListener();
+      expect(onBridge).toHaveBeenCalledWith('auto-trigger', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('completion-detected', expect.any(Function));
+    });
+  });
+
+  describe('setupHandoffListener', () => {
+    test('should register handoff listeners', () => {
+      daemonHandlers.setupHandoffListener();
+      expect(onBridge).toHaveBeenCalledWith('task-handoff', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('auto-handoff', expect.any(Function));
+    });
+  });
+
+  describe('setupConflictResolutionListener', () => {
+    test('should register conflict listeners', () => {
+      daemonHandlers.setupConflictResolutionListener();
+      expect(onBridge).toHaveBeenCalledWith('file-conflict', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('conflict-resolved', expect.any(Function));
+    });
+  });
+
+  describe('setupRollbackListener', () => {
+    test('should register rollback listeners', () => {
+      daemonHandlers.setupRollbackListener();
+      expect(onBridge).toHaveBeenCalledWith('rollback-available', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('rollback-cleared', expect.any(Function));
+    });
+  });
+
+  describe('loadInitialAgentTasks', () => {
+    test('should load state and update tasks', async () => {
+      invokeBridge.mockResolvedValueOnce({
+        agent_claims: { '1': 'Test task' },
+      });
+
+      await daemonHandlers.loadInitialAgentTasks();
+
+      expect(invokeBridge).toHaveBeenCalledWith('get-state');
+      expect(uiView.updateAgentTasks).toHaveBeenCalledWith({ '1': 'Test task' });
+    });
+
+    test('should handle errors gracefully', async () => {
+      invokeBridge.mockRejectedValueOnce(new Error('Failed'));
+      await expect(daemonHandlers.loadInitialAgentTasks()).resolves.not.toThrow();
+    });
+  });
+
+  describe('loadPaneProjects', () => {
+    test('should load and update pane projects', async () => {
+      invokeBridge.mockResolvedValueOnce({
+        success: true,
+        paneProjects: { '1': '/project1' },
+      });
+
+      await daemonHandlers.loadPaneProjects();
+
+      expect(invokeBridge).toHaveBeenCalledWith('get-all-pane-projects');
+      expect(uiView.updatePaneProject).toHaveBeenCalledWith('1', '/project1');
+    });
+
+    test('should handle errors gracefully', async () => {
+      invokeBridge.mockRejectedValueOnce(new Error('Failed'));
+      await expect(daemonHandlers.loadPaneProjects()).resolves.not.toThrow();
+    });
+  });
+
+  describe('selectProject', () => {
+    test('should call project select and update display', async () => {
+      window.squidrun.project.select.mockResolvedValueOnce({
+        success: true,
+        path: '/new/project',
+      });
+
+      await daemonHandlers.selectProject();
+
+      expect(window.squidrun.project.select).toHaveBeenCalled();
+      expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/new/project');
+    });
+
+    test('should handle canceled selection', async () => {
+      window.squidrun.project.select.mockResolvedValueOnce({ canceled: true });
+      await daemonHandlers.selectProject();
+      // Should not throw
+    });
+
+    test('should handle errors', async () => {
+      window.squidrun.project.select.mockRejectedValueOnce(new Error('Selection failed'));
+      await expect(daemonHandlers.selectProject()).resolves.not.toThrow();
+    });
+  });
+
+  describe('loadInitialProject', () => {
+    test('should load and display project', async () => {
+      window.squidrun.project.get.mockResolvedValueOnce('/initial/project');
+      await daemonHandlers.loadInitialProject();
+      expect(window.squidrun.project.get).toHaveBeenCalled();
+      expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/initial/project');
+    });
+
+    test('should show SquidRun home when no project is active', async () => {
+      window.squidrun.project.get.mockResolvedValueOnce(null);
+      await daemonHandlers.loadInitialProject();
+      expect(uiView.updateProjectDisplay).toHaveBeenCalledWith(null);
+    });
+
+    test('should handle errors gracefully', async () => {
+      window.squidrun.project.get.mockRejectedValueOnce(new Error('Failed'));
+      await expect(daemonHandlers.loadInitialProject()).resolves.not.toThrow();
+    });
+  });
+
+  describe('setupRefreshButtons', () => {
+    test('should add click listeners to refresh buttons', () => {
+      const mockBtn = {
+        addEventListener: jest.fn(),
+        dataset: { paneId: '1' },
+      };
+      mockDocument.querySelectorAll.mockReturnValue([mockBtn]);
+
+      daemonHandlers.setupRefreshButtons(jest.fn());
+
+      expect(mockBtn.addEventListener).toHaveBeenCalledWith('click', expect.any(Function));
+    });
+  });
+
+  describe('setupPaneProjectClicks', () => {
+    test('should add click listeners to project elements', () => {
+      const mockEl = { addEventListener: jest.fn() };
+      mockDocument.getElementById.mockReturnValue(mockEl);
+
+      daemonHandlers.setupPaneProjectClicks();
+
+      expect(mockEl.addEventListener).toHaveBeenCalledWith('click', expect.any(Function));
+    });
+  });
+
+  describe('showDeliveryIndicator', () => {
+    test('should delegate to uiView.showDeliveryIndicator', () => {
+      daemonHandlers.showDeliveryIndicator('1', 'delivered');
+      expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('1', 'delivered');
+    });
+  });
+
+  describe('showDeliveryFailed', () => {
+    test('should delegate to uiView.showDeliveryFailed', () => {
+      daemonHandlers.showDeliveryFailed('1', 'Connection timeout');
+      expect(uiView.showDeliveryFailed).toHaveBeenCalledWith('1', 'Connection timeout');
+    });
+  });
+
+  describe('setupSyncIndicator', () => {
+    test('should initialize UI and register listeners', () => {
+      daemonHandlers.setupSyncIndicator();
+      expect(uiView.init).toHaveBeenCalled();
+      expect(onBridge).toHaveBeenCalledWith('sync-file-changed', expect.any(Function));
+      expect(onBridge).toHaveBeenCalledWith('sync-triggered', expect.any(Function));
+    });
+  });
+
+  describe('IPC Handler Execution', () => {
+    let ipcHandlers;
+
+    beforeEach(() => {
+      ipcHandlers = {};
+      onBridge.mockImplementation((channel, handler) => {
+        ipcHandlers[channel] = handler;
+      });
+    });
+
+    describe('daemon-connected handler', () => {
+      beforeEach(() => {
+        jest.setSystemTime(new Date('2026-02-04T00:00:00Z'));
+      });
+
+      test('spawns only panes without CLI content and missing panes', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+        const now = Date.now();
+
+        const data = {
+
+          terminals: [
+            { paneId: '1', alive: true, scrollback: 'Claude Code\n> ', lastActivity: now, cwd: '/project/instances/architect' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('2');
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('3');
+        expect(terminal.spawnAgent).not.toHaveBeenCalledWith('1');
+      });
+
+      test('treats stale scrollback with shell prompt as needing spawn', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+        const now = Date.now();
+
+        const data = {
+
+          terminals: [
+            {
+              paneId: '1',
+              alive: true,
+              scrollback: 'Claude Code\nPS <user-home> >',
+              lastActivity: now - 10 * 60 * 1000,
+              cwd: '/project/instances/architect'
+            },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(terminal.spawnAgent).toHaveBeenCalledWith('1');
+      });
+
+      test('does not respawn old live PTYs when renderer reload snapshot has empty scrollback', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+        const now = Date.now();
+
+        const data = {
+          terminals: [
+            {
+              paneId: '2',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              createdAt: now - 5 * 60 * 1000,
+              scrollback: '',
+              cwd: '/project/instances/builder',
+            },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledWith('2', '', expect.objectContaining({
+          createdAt: data.terminals[0].createdAt,
+        }));
+        expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
+      });
+
+      test('fresh terminal create uses daemon command-on-create when autonomy and permissions are granted', async () => {
+        const initTerminalsFn = jest.fn().mockResolvedValue();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({
+          autoSpawn: true,
+          autonomyConsentGiven: true,
+          allowAllPermissions: true,
+        });
+
+        await ipcHandlers['daemon-connected']({}, { terminals: [] });
+
+        expect(initTerminalsFn).toHaveBeenCalledWith({ spawnCommandOnCreate: true });
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(true);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+      });
+
+      test('fresh terminal create does not command-spawn without permission grant', async () => {
+        const initTerminalsFn = jest.fn().mockResolvedValue();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({
+          autoSpawn: true,
+          autonomyConsentGiven: true,
+          allowAllPermissions: false,
+        });
+
+        await ipcHandlers['daemon-connected']({}, { terminals: [] });
+
+        expect(initTerminalsFn).toHaveBeenCalledWith({ spawnCommandOnCreate: false });
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(false);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+      });
+
+      test('does not respawn live PTYs when main resend omits createdAt and scrollback', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        invokeBridge.mockResolvedValueOnce({ autoSpawn: true, autonomyConsentGiven: true });
+
+        const data = {
+          terminals: [
+            {
+              paneId: '2',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: '',
+              cwd: '/project/instances/builder',
+            },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledWith('2', '', expect.objectContaining({
+          createdAt: null,
+        }));
+        expect(terminal.spawnAgent).not.toHaveBeenCalledWith('2');
+      });
+
+      test('suppresses main resend spawn when direct daemon snapshot has CLI content', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+        const terminalSnapshot = jest.fn().mockResolvedValue({
+          ok: true,
+          terminals: [
+            {
+              paneId: '1',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: 'codex> ready',
+            },
+            {
+              paneId: '2',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: 'codex> ready',
+            },
+            {
+              paneId: '3',
+              alive: true,
+              mode: 'pty',
+              pid: process.pid,
+              scrollback: 'codex> ready',
+            },
+          ],
+        });
+
+        global.window.squidrun.daemon = { terminalSnapshot };
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        const data = {
+          terminals: [
+            { paneId: '1', alive: true, scrollback: '', cwd: '/project/instances/architect' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
+            { paneId: '3', alive: true, scrollback: '', cwd: '/project/instances/oracle' },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(terminalSnapshot).toHaveBeenCalledWith({ timeoutMs: expect.any(Number) });
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+        expect(reattachTerminalFn).toHaveBeenCalledTimes(3);
+
+        delete global.window.squidrun.daemon;
+      });
+
+      test('treats renderer reload main resend as reattach-only when terminal metadata is sparse', async () => {
+        const initTerminalsFn = jest.fn();
+        const reattachTerminalFn = jest.fn().mockResolvedValue();
+        const setReconnectedFn = jest.fn();
+        const onTerminalsReadyFn = jest.fn();
+
+        delete global.window.squidrun.daemon;
+
+        daemonHandlers.setupDaemonListeners(
+          initTerminalsFn,
+          reattachTerminalFn,
+          setReconnectedFn,
+          onTerminalsReadyFn
+        );
+
+        const data = {
+          replay: true,
+          source: 'main-reload-resend',
+          terminals: [
+            { paneId: '1', alive: true, scrollback: '', cwd: '/project/instances/architect' },
+            { paneId: '2', alive: true, scrollback: '', cwd: '/project/instances/builder' },
+            { paneId: '3', alive: true, scrollback: '', cwd: '/project/instances/oracle' },
+          ],
+        };
+
+        await ipcHandlers['daemon-connected']({}, data);
+
+        expect(setReconnectedFn).toHaveBeenCalledWith(true);
+        expect(reattachTerminalFn).toHaveBeenCalledTimes(3);
+        expect(terminal.spawnAgent).not.toHaveBeenCalled();
+        expect(invokeBridge).not.toHaveBeenCalledWith('get-settings');
+        expect(onTerminalsReadyFn).toHaveBeenCalledWith(false);
+      });
+    });
+
+    describe('claude-state-changed handler', () => {
+      test('should keep timer state updates without rendering a fake activity light', () => {
+        const handleTimerFn = jest.fn();
+        daemonHandlers.setupClaudeStateListener(handleTimerFn);
+        ipcHandlers['claude-state-changed']({}, { '1': 'running' });
+        expect(handleTimerFn).toHaveBeenCalledWith('1', 'running');
+      });
+    });
+
+    describe('cost-alert handler', () => {
+      test('should show cost alert via uiView', () => {
+        daemonHandlers.setupCostAlertListener();
+        const data = { message: 'Budget exceeded', cost: 50.00 };
+        ipcHandlers['cost-alert']({}, data);
+        expect(uiView.showCostAlert).toHaveBeenCalledWith(data);
+        expect(notifications.showToast).toHaveBeenCalledWith(data.message, 'warning');
+      });
+    });
+
+    describe('project-changed handler', () => {
+      test('should update project display via uiView and show switched banner toast', () => {
+        daemonHandlers.setupProjectListener();
+        ipcHandlers['project-changed']({}, '/new/project/path');
+        expect(uiView.updateProjectDisplay).toHaveBeenCalledWith('/new/project/path');
+        expect(notifications.showToast).toHaveBeenCalledWith(
+          '[PROJECT CONTEXT SWITCHED] path — restart agents to apply',
+          'warning'
+        );
+      });
+    });
+
+    describe('file-conflict handler', () => {
+      test('normalizes watcher conflict array payloads to agents field', () => {
+        daemonHandlers.setupConflictResolutionListener();
+        ipcHandlers['file-conflict']({}, [
+          { file: 'ui/modules/foo.js', workers: ['Frontend', 'Backend'] },
+        ]);
+        expect(uiView.showConflictNotification).toHaveBeenCalledWith(
+          expect.objectContaining({
+            file: 'ui/modules/foo.js',
+            agents: ['Frontend', 'Backend'],
+          })
+        );
+      });
+    });
+
+    describe('auto-trigger handler', () => {
+      test('should show feedback via uiView', () => {
+        daemonHandlers.setupAutoTriggerListener();
+        const data = { fromPane: '1', toPane: '2', reason: 'test' };
+        ipcHandlers['auto-trigger']({}, data);
+        expect(uiView.showAutoTriggerFeedback).toHaveBeenCalledWith(data);
+      });
+
+      test('should show toast on completion', () => {
+        daemonHandlers.setupAutoTriggerListener();
+        ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
+        expect(notifications.showToast).toHaveBeenCalled();
+      });
+
+      test('should update task lifecycle on completion when pane has claim', async () => {
+        daemonHandlers.setupAutoTriggerListener();
+        invokeBridge
+          .mockResolvedValueOnce({ '1': { taskId: 'T-99' } }) // get-claims
+          .mockResolvedValueOnce({ success: true }) // update-task-status
+          .mockResolvedValueOnce({ success: true }); // release-agent
+
+        await ipcHandlers['completion-detected']({}, { paneId: '1', pattern: 'done' });
+
+        expect(invokeBridge).toHaveBeenCalledWith('get-claims');
+        expect(invokeBridge).toHaveBeenCalledWith(
+          'update-task-status',
+          expect.objectContaining({
+            taskId: 'T-99',
+            status: 'completed',
+          })
+        );
+        expect(invokeBridge).toHaveBeenCalledWith('release-agent', '1');
+      });
+    });
+
+    describe('Throttle Queue UI Side Effects', () => {
+      const withPromptReceipt = (message, deliveryId, messageId = deliveryId) => (
+        `${message}\n[SQUIDRUN_RECEIPT event=prompt_submit deliveryId=${deliveryId} messageId=${messageId}]`
+      );
+
+      test('should flash pane header via uiView', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, { panes: ['1'], message: 'msg' });
+        expect(uiView.flashPaneHeader).toHaveBeenCalledWith('1');
+      });
+
+      test('should forward traceContext from inject-message to terminal.sendToPane', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'msg',
+          deliveryId: 'delivery-1',
+          traceContext: {
+            traceId: 'trace-1',
+            parentEventId: 'evt-parent-1',
+          },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          withPromptReceipt('msg', 'delivery-1', 'trace-1'),
+          expect.objectContaining({
+            traceContext: expect.objectContaining({
+              traceId: 'trace-1',
+              correlationId: 'trace-1',
+              parentEventId: 'evt-parent-1',
+              causationId: 'evt-parent-1',
+            }),
+          })
+        );
+      });
+
+      test('forwards startupInjection flag to terminal.sendToPane options', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'startup msg',
+          startupInjection: true,
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'startup msg',
+          expect.objectContaining({
+            startupInjection: true,
+          })
+        );
+      });
+
+      test('forwards inject metadata to terminal.sendToPane options', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'internal msg',
+          meta: {
+            visibility: 'internal',
+            source: 'pane-output-filter',
+          },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'internal msg',
+          expect.objectContaining({
+            meta: expect.objectContaining({
+              visibility: 'internal',
+              source: 'pane-output-filter',
+            }),
+          })
+        );
+      });
+
+      test('forwards clipboardPasteThresholdBytes so long payloads route via clipboard-paste', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'short msg',
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          'short msg',
+          expect.objectContaining({
+            clipboardPasteThresholdBytes: 1024,
+          })
+        );
+      });
+
+      test('forwards clipboardPasteThresholdBytes for long payloads alongside other options', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        const longPayload = 'A'.repeat(4096);
+        injectHandler({}, {
+          panes: ['2'],
+          message: longPayload,
+          deliveryId: 'delivery-long-1',
+          traceContext: { traceId: 'trace-long-1', parentEventId: 'evt-long-1' },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          withPromptReceipt(longPayload, 'delivery-long-1', 'trace-long-1'),
+          expect.objectContaining({
+            clipboardPasteThresholdBytes: 1024,
+            traceContext: expect.objectContaining({ traceId: 'trace-long-1' }),
+          })
+        );
+      });
+
+      test('defers startupInjection delivery until startup readiness gate clears', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.hasPendingStartupInjection
+          .mockReturnValueOnce(true)
+          .mockReturnValue(false);
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['1'],
+          message: 'startup gated',
+          startupInjection: true,
+        });
+
+        expect(terminal.sendToPane).not.toHaveBeenCalled();
+        jest.advanceTimersByTime(100);
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '1',
+          'startup gated',
+          expect.objectContaining({
+            startupInjection: true,
+          })
+        );
+      });
+
+      test('enables hm-send fast Enter path when trace context carries hm-send message id', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['2'],
+          message: 'msg',
+          deliveryId: 'delivery-hm-1',
+          traceContext: {
+            messageId: 'hm-abc123',
+            traceId: 'hm-abc123',
+            parentEventId: 'evt-parent-1',
+          },
+        });
+
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          withPromptReceipt('msg', 'delivery-hm-1', 'hm-abc123'),
+          expect.objectContaining({
+            hmSendFastEnter: true,
+          })
+        );
+      });
+
+      test('materializes long hm-send payloads and injects a full-message pointer', () => {
+        const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+        const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+        try {
+          let injectHandler;
+          onBridge.mockImplementation((channel, handler) => {
+            if (channel === 'inject-message') injectHandler = handler;
+          });
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+          const longPayload = `(ORACLE #400): ${'route ambiguity '.repeat(120)}\n[CURRENT PROJECT] name=squidrun | path=D:\\projects\\squidrun`;
+          injectHandler({}, {
+            panes: ['1'],
+            message: longPayload,
+            deliveryId: 'delivery-hm-long-1',
+            traceContext: {
+              messageId: 'hm-long-agent-message-1',
+              traceId: 'hm-long-agent-message-1',
+            },
+          });
+
+          expect(mkdirSpy).toHaveBeenCalled();
+          const fullMessageWrite = writeSpy.mock.calls.find(([filePath]) => (
+            String(filePath).match(/full-agent-messages[\\/]+hm-long-agent-message-1\.txt$/)
+          ));
+          expect(fullMessageWrite).toBeDefined();
+          expect(fullMessageWrite[1]).toContain('--- FULL MESSAGE START ---');
+          expect(fullMessageWrite[1]).toContain(longPayload);
+          expect(terminal.sendToPane).toHaveBeenCalledWith(
+            '1',
+            expect.stringContaining('FULL MSG AT .squidrun/coord/full-agent-messages/hm-long-agent-message-1.txt'),
+            expect.objectContaining({
+              hmSendFastEnter: true,
+              clipboardPasteThresholdBytes: 1024,
+            })
+          );
+          const injectedPointer = terminal.sendToPane.mock.calls[0][1];
+          expect(injectedPointer).not.toBe(longPayload);
+          expect(injectedPointer).toContain('Do not act from this preview alone');
+        } finally {
+          mkdirSpy.mockRestore();
+          writeSpy.mockRestore();
+        }
+      });
+
+      test('materializes oversized hm-send payloads before applying throttle byte caps', () => {
+        const mkdirSpy = jest.spyOn(fs, 'mkdirSync').mockImplementation(() => undefined);
+        const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => undefined);
+        try {
+          let injectHandler;
+          onBridge.mockImplementation((channel, handler) => {
+            if (channel === 'inject-message') injectHandler = handler;
+          });
+          daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+          const oversizedPayload = `(ORACLE #401): ${'x'.repeat((512 * 1024) + 4096)}`;
+          injectHandler({}, {
+            panes: ['1'],
+            message: oversizedPayload,
+            deliveryId: 'delivery-hm-long-over-cap',
+            traceContext: {
+              messageId: 'hm-long-agent-message-over-cap',
+              traceId: 'hm-long-agent-message-over-cap',
+            },
+          });
+
+          expect(writeSpy.mock.calls.some(([filePath]) => (
+            String(filePath).match(/full-agent-messages[\\/]+hm-long-agent-message-over-cap\.txt$/)
+          ))).toBe(true);
+          expect(terminal.sendToPane).toHaveBeenCalledWith(
+            '1',
+            expect.stringContaining('FULL MSG AT .squidrun/coord/full-agent-messages/hm-long-agent-message-over-cap.txt'),
+            expect.objectContaining({
+              hmSendFastEnter: true,
+            })
+          );
+          expect(sendBridge).not.toHaveBeenCalledWith(
+            'trigger-delivery-outcome',
+            expect.objectContaining({
+              deliveryId: 'delivery-hm-long-over-cap',
+              reason: 'queue_oversize',
+            })
+          );
+        } finally {
+          mkdirSpy.mockRestore();
+          writeSpy.mockRestore();
+        }
+      });
+
+      test('emits a delivery outcome when a non-materialized payload exceeds the byte cap', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        injectHandler({}, {
+          panes: ['1'],
+          message: 'x'.repeat((512 * 1024) + 4096),
+          deliveryId: 'delivery-oversize-drop',
+          traceContext: { traceId: 'trace-oversize-drop' },
+        });
+
+        expect(terminal.sendToPane).not.toHaveBeenCalled();
+        expect(sendBridge).toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({
+            deliveryId: 'delivery-oversize-drop',
+            messageId: 'trace-oversize-drop',
+            paneId: '1',
+            accepted: false,
+            verified: false,
+            status: 'queue_dropped',
+            reason: 'queue_oversize',
+          })
+        );
+      });
+
+      test('reassembles packetized inject-message payloads before sending to terminal', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        const message = 'packetized-🙂-'.repeat(600);
+        const packets = buildInjectMessageIpcPackets(
+          {
+            panes: ['2'],
+            message,
+            deliveryId: 'delivery-chunked-1',
+            traceContext: { traceId: 'trace-chunked-1' },
+          },
+          {
+            chunkThresholdBytes: 256,
+            chunkSizeBytes: 256,
+          }
+        );
+
+        expect(packets.length).toBeGreaterThan(1);
+        for (const packet of packets.slice(0, -1)) {
+          injectHandler({}, packet);
+        }
+        expect(terminal.sendToPane).not.toHaveBeenCalled();
+
+        injectHandler({}, packets[packets.length - 1]);
+
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(1);
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '2',
+          withPromptReceipt(message, 'delivery-chunked-1', 'trace-chunked-1'),
+          expect.objectContaining({
+            traceContext: expect.objectContaining({
+              traceId: 'trace-chunked-1',
+              correlationId: 'trace-chunked-1',
+            }),
+          })
+        );
+      });
+
+      test('should emit accepted.unverified outcome when terminal delivery is unverified (success=true)', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({ success: true, verified: false, reason: 'timeout' }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-unverified-1' });
+        jest.runAllTimers();
+
+        // Unverified but success=true means message was typed + Enter pressed = delivered.
+        // We route as accepted.unverified to avoid inflating to delivered.verified ACK semantics.
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
+        expect(sendBridge).toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          {
+            deliveryId: 'delivery-unverified-1',
+            messageId: 'delivery-unverified-1',
+            paneId: '3',
+            accepted: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'timeout',
+          }
+        );
+        expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-unverified-1', paneId: '3' });
+      });
+
+      test('does not emit delivery outcome for hidden pane-host route-pending callback', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({
+            success: true,
+            verified: false,
+            routePending: true,
+            status: 'pane_host_route_pending',
+            reason: 'hidden_pane_host_delivery_pending',
+          }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-pending-1' });
+        jest.advanceTimersByTime(0);
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'pending');
+        expect(terminal.sendToPane).toHaveBeenCalledWith(
+          '3',
+          withPromptReceipt('msg', 'delivery-pending-1'),
+          expect.objectContaining({
+            deliveryId: 'delivery-pending-1',
+          })
+        );
+        expect(sendBridge).not.toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({ deliveryId: 'delivery-pending-1' })
+        );
+        expect(sendBridge).not.toHaveBeenCalledWith(
+          'trigger-delivery-ack',
+          expect.objectContaining({ deliveryId: 'delivery-pending-1' })
+        );
+      });
+
+      test('should emit trigger-delivery-ack when terminal delivery is verified', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({ success: true, verified: true }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-verified-1' });
+        jest.runAllTimers();
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
+        expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-ack', {
+          deliveryId: 'delivery-verified-1',
+          messageId: 'delivery-verified-1',
+          paneId: '3',
+        });
+      });
+
+      test('should emit accepted-unverified outcome without failure UI when terminal reports busy output-only acceptance', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({
+            success: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'output_transition_without_prompt_disallowed',
+          }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-output-only-1' });
+        jest.advanceTimersByTime(0);
+
+        expect(uiView.showDeliveryIndicator).toHaveBeenCalledWith('3', 'delivered');
+        expect(uiView.showDeliveryFailed).not.toHaveBeenCalledWith('3', expect.anything());
+        expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-outcome', {
+          deliveryId: 'delivery-output-only-1',
+          messageId: 'delivery-output-only-1',
+          paneId: '3',
+          accepted: true,
+          verified: false,
+          status: 'accepted.unverified',
+          reason: 'output_transition_without_prompt_disallowed',
+        });
+        expect(sendBridge).not.toHaveBeenCalledWith(
+          'trigger-delivery-outcome',
+          expect.objectContaining({ deliveryId: 'delivery-output-only-1', accepted: false })
+        );
+      });
+
+      test('should emit failed outcome when terminal reports submit_not_accepted', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementationOnce((paneId, message, options) => {
+          setTimeout(() => options.onComplete({
+            success: true,
+            verified: false,
+            status: 'accepted.unverified',
+            reason: 'submit_not_accepted',
+          }), 0);
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        injectHandler({}, { panes: ['3'], message: 'msg', deliveryId: 'delivery-failed-1' });
+        jest.runAllTimers();
+
+        expect(uiView.showDeliveryFailed).toHaveBeenCalledWith('3', 'submit_not_accepted');
+        expect(sendBridge).toHaveBeenCalledWith('trigger-delivery-outcome', {
+          deliveryId: 'delivery-failed-1',
+          messageId: 'delivery-failed-1',
+          paneId: '3',
+          accepted: false,
+          verified: false,
+          status: 'submit_not_accepted',
+          reason: 'submit_not_accepted',
+        });
+        expect(sendBridge).not.toHaveBeenCalledWith('trigger-delivery-ack', { deliveryId: 'delivery-failed-1', paneId: '3' });
+      });
+
+      test('releases pane throttle when terminal.sendToPane throws synchronously', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+
+        terminal.sendToPane.mockImplementationOnce(() => {
+          throw new Error('sync throw');
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        expect(() => injectHandler({}, { panes: ['1'], message: 'first' })).toThrow('sync throw');
+        injectHandler({}, { panes: ['1'], message: 'second' });
+
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(2);
+        expect(terminal.sendToPane).toHaveBeenNthCalledWith(
+          2,
+          '1',
+          'second',
+          expect.objectContaining({ onComplete: expect.any(Function) })
+        );
+      });
+
+      test('continues queued pane work when terminal.sendToPane throws synchronously', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+
+        terminal.sendToPane.mockImplementationOnce(() => {
+          // Queue another message while pane is still marked throttled.
+          injectHandler({}, { panes: ['1'], message: 'queued-follow-up' });
+          throw new Error('sync throw');
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        expect(() => injectHandler({}, { panes: ['1'], message: 'first' })).toThrow('sync throw');
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBe(1);
+
+        jest.runAllTimers();
+
+        expect(terminal.sendToPane).toHaveBeenCalledTimes(2);
+        expect(terminal.sendToPane).toHaveBeenNthCalledWith(
+          2,
+          '1',
+          'queued-follow-up',
+          expect.objectContaining({ onComplete: expect.any(Function) })
+        );
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBe(0);
+      });
+
+      test('caps throttle queue depth to prevent unbounded growth', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementation(() => {
+          // Intentionally no onComplete callback to keep pane throttled/in-flight.
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        for (let i = 0; i < 600; i += 1) {
+          injectHandler({}, { panes: ['1'], message: `burst-${i}` });
+        }
+
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBeLessThanOrEqual(200);
+      });
+
+      test('emits delivery outcomes for stale throttle queue evictions', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        terminal.sendToPane.mockImplementation(() => {
+          // Keep pane throttled so later messages remain queued and eviction is observable.
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+
+        for (let i = 0; i < 205; i += 1) {
+          injectHandler({}, {
+            panes: ['1'],
+            message: `burst-${i}`,
+            deliveryId: `delivery-queue-${i}`,
+            traceContext: { traceId: `trace-queue-${i}` },
+          });
+        }
+
+        const evictionOutcomes = sendBridge.mock.calls
+          .filter(([channel, payload]) => (
+            channel === 'trigger-delivery-outcome'
+            && payload?.reason === 'queue_cap_eviction'
+          ));
+        expect(evictionOutcomes.length).toBeGreaterThan(0);
+        expect(evictionOutcomes[0][1]).toEqual(expect.objectContaining({
+          deliveryId: 'delivery-queue-1',
+          messageId: 'trace-queue-1',
+          paneId: '1',
+          accepted: false,
+          verified: false,
+          status: 'queue_dropped',
+          reason: 'queue_cap_eviction',
+        }));
+        expect(daemonHandlers._getThrottleQueueDepthForTesting('1')).toBeLessThanOrEqual(200);
+      });
+
+      test('refreshes daemon runtime config during a running session after the TTL expires', () => {
+        let injectHandler;
+        onBridge.mockImplementation((channel, handler) => {
+          if (channel === 'inject-message') injectHandler = handler;
+        });
+        invokeBridge
+          .mockResolvedValueOnce({
+            throttleQueueMaxItems: 200,
+            throttleQueueMaxBytes: 512 * 1024,
+          })
+          .mockResolvedValueOnce({
+            throttleQueueMaxItems: 321,
+            throttleQueueMaxBytes: 654321,
+          });
+        terminal.sendToPane.mockImplementation(() => {
+          // keep pane throttled so queued depth is inspectable
+        });
+
+        daemonHandlers.setupDaemonListeners(jest.fn(), jest.fn(), jest.fn(), jest.fn());
+        const getRuntimeConfigCalls = () => invokeBridge.mock.calls
+          .filter(([channel]) => channel === 'get-daemon-runtime-config');
+
+        const initialCallCount = getRuntimeConfigCalls().length;
+        expect(initialCallCount).toBeGreaterThanOrEqual(1);
+
+        jest.advanceTimersByTime(2500);
+        injectHandler({}, { panes: ['1'], message: 'refresh-check' });
+
+        expect(getRuntimeConfigCalls().length).toBeGreaterThan(initialCallCount);
+        expect(getRuntimeConfigCalls().at(-1)).toEqual(['get-daemon-runtime-config']);
+      });
+    });
+  });
+});
+
+

@@ -1,0 +1,533 @@
+/* ============================================================
+   SQUID ROOM v2 — THE WHITELIST STYLESHEET (S467 remodel charter)
+   If a pixel can't cite a constitution clause, it doesn't render.
+   Constitution: workspace/specs/squid-room-visual-constitution-v2.md
+   Every color derives from the --sr2-* tokens (clause II). Every class
+   is sr2- declared (clause III). Old room styles are dead the moment
+   index.html links this file instead of them - the corpse dies whole.
+   ============================================================ */
+
+:root {
+  /* II. THE TOKENS - the only palette */
+  --sr2-abyss-0: #010208;
+  --sr2-abyss-1: #02040c;
+  --sr2-abyss-2: #04060f;
+  --sr2-teal: #48bed6;
+  --sr2-violet: #8a5ce2;
+  --sr2-magenta: #ba5cb0;
+  --sr2-biolume: #5eead4;
+  --sr2-ink: #ddfffa;
+}
+
+/* I. THE WORLD - dark is the ground state */
+body.sr2-room {
+  background: var(--sr2-abyss-1);
+  color: var(--sr2-ink);
+}
+
+/* III. THE STACK (whitelist, bottom to top) */
+
+/* Layer 1 - cosmos (Architect): painted once, the only atmosphere owner. */
+.sr2-cosmos-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Layer 2 - creature water (Builder): creatures + engine effects + ribbon.
+   Full-window shared swim space (VI: creatures own the open water). */
+.sr2-water {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.sr2-creature-stage {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  /* Full-window overlapping stages must NOT catch clicks - the whole sky
+     became a drawer button. The name tag is the creature's click target. */
+  pointer-events: none;
+}
+
+.sr2-creature-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+}
+
+.sr2-ribbon-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* Crown name tag (VI: tags hug crowns; ink token, biolume edge).
+   FAIL-DARK (V.2): born hidden - a tag paints only after its first anchor
+   write lands (is-anchored). No anchor -> no render, tags included; the
+   0,0 ghost tag cannot exist by construction. */
+.sr2-name-tag {
+  position: absolute;
+  visibility: hidden;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--sr2-ink);
+  background: rgba(2, 4, 12, 0.72); /* abyss-1 at glass alpha */
+  border: 1px solid rgba(94, 234, 212, 0.28); /* biolume edge */
+  pointer-events: auto; /* the creature's click target: tag = drawer */
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sr2-name-tag.is-anchored {
+  visibility: visible;
+}
+
+/* Layer 3 is Oracle's (sr-speech-*, self-injected, manifest-declared). */
+
+/* Layer 4 - section shore (Architect skins; structural floor here):
+   solid, calm, no atmosphere above it (VI: sections are shore). */
+.sr2-shore {
+  position: relative;
+  z-index: 3;
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid rgba(94, 234, 212, 0.16); /* the milky-sea line */
+}
+
+/* Reduced motion: still room (IV) - v2 layers stop animating wholesale. */
+@media (prefers-reduced-motion: reduce) {
+  .sr2-cosmos-canvas,
+  .sr2-water,
+  .sr2-ribbon-overlay {
+    animation: none !important;
+  }
+}
+
+/* ============================================================
+   LAYER 4 — THE SHORE SKIN (Architect, constitution VI)
+   Sections are shore: solid, calm, no atmosphere effects.
+   NO backdrop-filter anywhere below this line — frosted glass was
+   the old language and it bred the containing-block trap (S464).
+   Every selector is gated on body.sr2-room (added at the link swap);
+   inner selectors reuse functional app classes, which keeps this
+   sheet free of new class literals: the whitelist stays honest.
+   ============================================================ */
+
+/* The shore itself: where the water ends and the work stands. */
+body.sr2-room .terminals-section {
+  background: transparent; /* open water above the shore line */
+}
+
+body.sr2-room .squid-room-surface,
+body.sr2-room .sr2-shore {
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 22%, transparent);
+}
+
+/* Section headers: quiet authority, ink on abyss. */
+body.sr2-room .squid-room-surface h2,
+body.sr2-room .squid-room-app-title {
+  color: var(--sr2-ink);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+body.sr2-room .squid-room-app {
+  margin: 10px 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 14%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--sr2-abyss-1) 92%, var(--sr2-biolume) 8%);
+  padding: 10px 12px 14px;
+}
+
+/* Arm cards: solid shore stone — raised, never frosted. */
+body.sr2-room .squid-room-live-panes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+body.sr2-room .squid-room-live-pane {
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 16%, transparent);
+  border-radius: 12px;
+  background: var(--sr2-abyss-1);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+}
+
+body.sr2-room .squid-room-live-pane .pane-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sr2-biolume) 10%, transparent);
+  color: var(--sr2-ink);
+}
+
+body.sr2-room .squid-room-live-pane .pane-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+body.sr2-room .squid-room-live-pane .pane-terminal {
+  background: var(--sr2-abyss-0);
+  border-radius: 0 0 12px 12px;
+}
+
+/* Controls: one quiet pill language for the whole shore (matches the
+   crown tag: abyss glass body, biolume edge, ink text). */
+body.sr2-room .squid-room-surface button,
+body.sr2-room .squid-room-pane-menu-trigger,
+body.sr2-room .squid-room-app-toggle-btn {
+  color: var(--sr2-ink);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 86%, var(--sr2-biolume) 14%);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 26%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+body.sr2-room .squid-room-surface button:hover,
+body.sr2-room .squid-room-pane-menu-trigger:hover {
+  border-color: color-mix(in srgb, var(--sr2-biolume) 48%, transparent);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 76%, var(--sr2-biolume) 24%);
+}
+
+/* Pane menu panel: portals to <body> while open (S464 fix preserved) —
+   solid shore stone, not glass. */
+body.sr2-room .squid-room-pane-menu-panel {
+  background: var(--sr2-abyss-0);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
+  border-radius: 12px;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.5);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  min-width: 224px;
+  z-index: 100;
+}
+
+/* Drawer: the shore's workroom — same stone, deeper shadow.
+   (Open/closed state lives with the geometry block below.) */
+body.sr2-room .squid-room-terminal-drawer {
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
+  box-shadow: 0 -14px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* Scrollbars: abyss-quiet. */
+body.sr2-room ::-webkit-scrollbar { width: 10px; height: 10px; }
+body.sr2-room ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--sr2-ink) 14%, transparent);
+  border-radius: 999px;
+}
+body.sr2-room ::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   STRUCTURAL STACKING (Builder, mount step 3 fix): the legacy CSS
+   carried the room'\''s z-order to its grave - the sky (fixed, z0)
+   painted OVER everything unpositioned. The stack is constitution III
+   made literal; the gate saw a beautiful empty sky and passed, my eyes
+   did not.
+   ============================================================ */
+
+/* The water: creature layer host (manifest'\''s one exact class). */
+body.sr2-room .squid-room-creature-ocean {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: transparent;
+}
+
+body.sr2-room .squid-room-creature-ocean .sr2-creature-stage {
+  pointer-events: auto;
+}
+
+/* Window chrome + content above the water, below nothing. */
+body.sr2-room .header {
+  position: relative;
+  z-index: 4;
+}
+
+body.sr2-room .terminals-section {
+  position: relative;
+  z-index: 3;
+}
+
+/* The stage chain: every wrapper between ocean and canvas fills the water.
+   (Unstyled intermediates collapsed to zero height - the engines ran in a
+   tiny top-left stage and the ribbons pointed at ghosts.) */
+body.sr2-room .sr2-pet-shell,
+body.sr2-room .sr2-pet-water {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+/* ============================================================
+   LAYER 4b — SHORE STRUCTURE (the bones the retired room stylesheet took with it)
+   Ported layout-only from the legacy stylesheet at Builder's #62 find:
+   the skin colored a shore that had no skeleton. Geometry only —
+   every visual property still comes from the skin block above.
+   ============================================================ */
+
+/* The room column: water above (fixed overlays), shore flows beneath. */
+body.sr2-room .main-content {
+  overflow: hidden;
+}
+
+body.sr2-room .terminals-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  height: 100%;
+  padding: 10px 10px 20px;
+}
+
+/* The water viewport: the in-flow region the creatures swim over. */
+body.sr2-room .side-panes-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 42vh;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  padding: 4px 8px 0;
+  background: transparent;
+}
+
+body.sr2-room .squid-room-team-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+}
+
+body.sr2-room .side-panes-container .pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+body.sr2-room .squid-room-pet-pane {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+
+/* The shore surface: hidden by default, shown by the shell. */
+body.sr2-room .squid-room-surface {
+  display: none;
+}
+
+body.sr2-room .squid-room-surface:not([hidden]) {
+  display: block;
+}
+
+/* App sections: collapsible shore panels. */
+body.sr2-room .squid-room-app {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-rows: auto auto;
+  height: auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+body.sr2-room details.squid-room-app > summary::-webkit-details-marker {
+  display: none;
+}
+
+body.sr2-room details.squid-room-app:not([open]) .squid-room-live-panes {
+  display: none;
+  padding: 0;
+  gap: 0;
+}
+
+body.sr2-room .squid-room-app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+body.sr2-room .squid-room-app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+body.sr2-room .squid-room-app-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 92px;
+  min-height: 32px;
+  padding: 0 10px 0 9px;
+}
+
+/* Arm cards: grid + inner geometry. */
+body.sr2-room .squid-room-live-panes {
+  min-height: 260px;
+  grid-auto-rows: minmax(300px, auto);
+  align-items: stretch;
+  padding: 0 12px 12px;
+}
+
+body.sr2-room .squid-room-live-panes .pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 260px;
+  height: 100%;
+}
+
+body.sr2-room .squid-room-live-panes .pane-header {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+body.sr2-room .squid-room-live-panes .pane-terminal {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
+body.sr2-room .squid-room-live-panes.has-expanded-pane {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.sr2-room .squid-room-live-panes.has-expanded-pane .pane:not(.pane-expanded) {
+  display: none !important;
+}
+
+body.sr2-room .squid-room-live-panes .pane.pane-expanded {
+  min-height: min(68vh, 680px);
+}
+
+/* Window chrome strip: the room's top bar stands above the water. */
+body.sr2-room .header {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 46px;
+  padding: 8px 16px;
+  background: var(--sr2-abyss-0);
+  border-bottom: 1px solid color-mix(in srgb, var(--sr2-biolume) 16%, transparent);
+}
+
+/* Drawer geometry: the shore's workroom slides over the bottom.
+   CLOSED BY DEFAULT: the toggle speaks the is-open CLASS (not the hidden
+   attribute) - the closed state must key on the same language, or the
+   drawer sits permanently open (it did, through every reveal attempt). */
+body.sr2-room .squid-room-terminal-drawer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  max-height: 62vh;
+  overflow: hidden;
+  display: none;
+  flex-direction: column;
+}
+
+body.sr2-room .squid-room-terminal-drawer.is-open {
+  display: flex;
+}
+
+/* ============================================================
+   LAYER 4c — CHROME DEBT PAID (Builder's declared item, pre-reveal)
+   The Terminals toggle and the drawer chrome get the shore's one
+   pill grammar. No raw default buttons anywhere Operator looks.
+   ============================================================ */
+
+body.sr2-room .squid-room-terminal-drawer-open {
+  position: fixed;
+  top: 12px;
+  right: 14px;
+  z-index: 4;
+  color: var(--sr2-ink);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 86%, var(--sr2-biolume) 14%);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 26%, transparent);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+body.sr2-room .squid-room-terminal-drawer-open:hover {
+  border-color: color-mix(in srgb, var(--sr2-biolume) 48%, transparent);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 76%, var(--sr2-biolume) 24%);
+}
+
+body.sr2-room .squid-room-terminal-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(1, 2, 8, 0.55);
+}
+
+body.sr2-room .squid-room-terminal-drawer-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--sr2-abyss-0);
+  border-top: 1px solid color-mix(in srgb, var(--sr2-biolume) 24%, transparent);
+}
+
+body.sr2-room .squid-room-terminal-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  color: var(--sr2-ink);
+  border-bottom: 1px solid color-mix(in srgb, var(--sr2-biolume) 12%, transparent);
+}
+
+body.sr2-room .squid-room-terminal-drawer-close {
+  color: var(--sr2-ink);
+  background: color-mix(in srgb, var(--sr2-abyss-1) 86%, var(--sr2-biolume) 14%);
+  border: 1px solid color-mix(in srgb, var(--sr2-biolume) 26%, transparent);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+body.sr2-room .squid-room-terminal-drawer-close:hover {
+  border-color: color-mix(in srgb, var(--sr2-biolume) 48%, transparent);
+}
+
+body.sr2-room .squid-room-terminal-drawer-panes {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 10px 14px;
+  overflow: auto;
+}

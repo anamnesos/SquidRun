@@ -1,0 +1,219 @@
+/* status-strip.css — Task status overview strip */
+
+/* ============================================================
+   STATUS STRIP - Glanceable task counts
+   ============================================================ */
+
+.status-strip {
+  background: rgba(10, 13, 22, 0.95);
+  padding: var(--space-1) var(--space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  font-size: var(--text-sm);
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.status-strip-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.status-strip-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Individual status segments */
+.status-segment {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), opacity var(--transition-fast);
+  position: relative;
+}
+
+.status-segment:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.status-segment-icon {
+  font-size: var(--text-base);
+}
+
+.status-segment-count {
+  font-weight: 600;
+  font-family: var(--font-mono);
+  min-width: 16px;
+  text-align: center;
+}
+
+.status-segment-label {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Segment variants */
+.status-segment.done {
+  color: var(--color-success);
+}
+
+.status-segment.done:hover {
+  background: rgba(0, 230, 118, 0.15);
+}
+
+.status-segment.running {
+  color: var(--color-info);
+}
+
+.status-segment.running:hover {
+  background: rgba(0, 240, 255, 0.15);
+}
+
+.status-segment.running .status-segment-icon {
+  animation: spin 1.5s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.status-segment.waiting {
+  color: var(--color-warning);
+}
+
+.status-segment.waiting:hover {
+  background: rgba(240, 160, 0, 0.15);
+}
+
+.status-segment.failed {
+  color: var(--color-error);
+}
+
+.status-segment.failed:hover {
+  background: rgba(255, 32, 64, 0.15);
+}
+
+/* Zero state - dim the segment */
+.status-segment.zero {
+  opacity: 0.5;
+}
+
+.status-segment.zero:hover {
+  opacity: 1;
+}
+
+/* Hide waiting segment when count is zero */
+.status-segment.waiting.zero {
+  display: none;
+}
+
+/* Dropdown for segment details */
+.status-dropdown {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  min-width: 250px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: rgba(18, 26, 42, 0.98);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  z-index: var(--z-dropdown);
+  margin-bottom: var(--space-1);
+}
+
+.status-segment.open .status-dropdown {
+  display: block;
+  animation: dropdownSlideUp 0.15s ease;
+}
+
+@keyframes dropdownSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.status-dropdown-header {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  letter-spacing: 0.01em;
+}
+
+.status-dropdown-list {
+  padding: var(--space-1) 0;
+}
+
+.status-dropdown-item {
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  transition: background var(--transition-fast);
+}
+
+.status-dropdown-item:last-child {
+  border-bottom: none;
+}
+
+.status-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.status-dropdown-item-title {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+}
+
+.status-dropdown-item-meta {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.status-dropdown-empty {
+  padding: var(--space-3);
+  text-align: center;
+  color: var(--color-text-dim);
+  font-style: italic;
+  font-size: var(--text-sm);
+}
+
+/* Cost indicator */
+.cost-indicator {
+  font-family: var(--font-mono);
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+}
+
+.cost-indicator:empty {
+  display: none;
+}
+
+/* Session timer */
+.session-timer {
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .status-segment.running .status-segment-icon {
+    animation: none;
+  }
+}

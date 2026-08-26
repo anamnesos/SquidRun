@@ -1,0 +1,19 @@
+/* ═══════════════════════════════════════════════════════════════
+   THE PAINTED COSMOS (v3) — positioning shell only.
+   The sky itself is no longer CSS: squid-room-cosmos-canvas.js paints
+   fBm nebula clouds + a power-law starfield ONCE to offscreen layers
+   and composites them with parallax and bounded particles (~30fps,
+   paused when hidden, still frame under reduced motion).
+   v2's CSS-gradient cosmos was retired whole (Operator S466: "make the
+   background something different — massive changes"); git remembers it
+   at c932a5bd if archaeology ever needs the old sky.
+   ═══════════════════════════════════════════════════════════════ */
+
+.cosmos-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+}

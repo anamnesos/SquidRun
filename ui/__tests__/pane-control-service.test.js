@@ -1,0 +1,336 @@
+const { executePaneControlAction, detectPaneModel, normalizeAction } = require('../modules/main/pane-control-service');
+
+describe('pane-control-service', () => {
+  let ctx;
+  const targetInstance = { profileName: 'main', windowKey: 'main' };
+
+  beforeEach(() => {
+    ctx = {
+      daemonClient: {
+        connected: true,
+        write: jest.fn(),
+        getTerminal: jest.fn(() => null),
+      },
+      mainWindow: {
+        isDestroyed: jest.fn(() => false),
+        webContents: {
+          send: jest.fn(),
+        },
+      },
+      currentSettings: {
+        paneCommands: {
+          '1': 'claude --dangerously-skip-permissions',
+          '2': 'codex --yolo',
+          '3': 'gemini',
+        },
+      },
+      recoveryManager: {
+        markExpectedExit: jest.fn(),
+      },
+      agentRunning: new Map([
+        ['1', 'running'],
+        ['2', 'running'],
+        ['3', 'running'],
+      ]),
+      instanceScope: {
+        profileName: 'main',
+        windowKey: 'main',
+        sessionScopeId: 'app-session-test',
+      },
+    };
+  });
+
+  test('normalizeAction resolves supported aliases', () => {
+    expect(normalizeAction('enter-pane')).toBe('enter');
+    expect(normalizeAction('interrupt-pane')).toBe('interrupt');
+    expect(normalizeAction('restart-pane')).toBe('restart');
+    expect(normalizeAction('nudge-agent')).toBe('nudge');
+  });
+
+  test('detectPaneModel infers model from paneCommands', () => {
+    expect(detectPaneModel('1', ctx.currentSettings)).toBe('claude');
+    expect(detectPaneModel('2', ctx.currentSettings)).toBe('codex');
+    expect(detectPaneModel('3', ctx.currentSettings)).toBe('gemini');
+    expect(detectPaneModel('9', ctx.currentSettings)).toBe('claude');
+  });
+
+  test('enter uses sendTrustedEnter path for Claude panes', () => {
+    const result = executePaneControlAction(ctx, 'enter', { paneId: '1' });
+
+    expect(result.success).toBe(true);
+    expect(result.method).toBe('sendTrustedEnter');
+    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('pane-enter', {
+      paneId: '1',
+      model: 'claude',
+      method: 'sendTrustedEnter',
+    });
+    expect(ctx.daemonClient.write).not.toHaveBeenCalled();
+  });
+
+  test('enter uses raw PTY for Codex and Gemini', () => {
+    const codex = executePaneControlAction(ctx, 'enter', { paneId: '2' });
+    const gemini = executePaneControlAction(ctx, 'enter', { paneId: '3' });
+
+    expect(codex.success).toBe(true);
+    expect(codex.method).toBe('pty');
+    expect(codex.model).toBe('codex');
+    expect(ctx.daemonClient.write).toHaveBeenCalledWith('2', '\r');
+    expect(gemini.success).toBe(true);
+    expect(gemini.method).toBe('pty');
+    expect(ctx.daemonClient.write).toHaveBeenCalledWith('3', '\r');
+  });
+
+  test('enter returns daemon_write_failed when daemon rejects write', () => {
+    ctx.daemonClient.write.mockReturnValue(false);
+    const result = executePaneControlAction(ctx, 'enter', { paneId: '2' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'daemon_write_failed',
+      paneId: '2',
+      action: 'enter',
+    }));
+  });
+
+  test('interrupt sends SIGINT via daemon write', () => {
+    const result = executePaneControlAction(ctx, 'interrupt', { paneId: '2' });
+    expect(result).toEqual(expect.objectContaining({ success: true, method: 'sigint', paneId: '2' }));
+    expect(ctx.daemonClient.write).toHaveBeenCalledWith('2', '\x03');
+  });
+
+  test('interrupt returns daemon_write_failed when daemon rejects write', () => {
+    ctx.daemonClient.write.mockReturnValue(false);
+    const result = executePaneControlAction(ctx, 'interrupt', { paneId: '2' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'daemon_write_failed',
+      paneId: '2',
+      action: 'interrupt',
+    }));
+  });
+
+  test('restart marks expected exit and sends restart-pane event', () => {
+    const result = executePaneControlAction(ctx, 'restart', { paneId: '1', targetInstance });
+    expect(result).toEqual(expect.objectContaining({ success: true, method: 'restart-pane', paneId: '1' }));
+    expect(ctx.recoveryManager.markExpectedExit).toHaveBeenCalledWith('1', 'manual-restart');
+    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('restart-pane', { paneId: '1' });
+  });
+
+  test('restart requires an instance assertion', () => {
+    const result = executePaneControlAction(ctx, 'restart', { paneId: '1' });
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'missing_instance_assertion',
+      paneId: '1',
+      action: 'restart',
+    }));
+    expect(ctx.recoveryManager.markExpectedExit).not.toHaveBeenCalled();
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  test('nudge without message routes to nudge-pane event', () => {
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '1' });
+    expect(result).toEqual(expect.objectContaining({ success: true, method: 'nudge-pane', paneId: '1' }));
+    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('nudge-pane', { paneId: '1' });
+  });
+
+  test('nudge with message routes to nudge-agent inject-message path', () => {
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '2', message: 'Check status' });
+    expect(result).toEqual(expect.objectContaining({ success: true, method: 'nudge-agent', paneId: '2' }));
+    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('inject-message', {
+      panes: ['2'],
+      message: 'Check status\r',
+    });
+  });
+
+  test('nudge with message fails when agent is not running', () => {
+    ctx.agentRunning.set('2', 'stopped');
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '2', message: 'Check status' });
+    expect(result).toEqual(expect.objectContaining({ success: false, reason: 'agent_not_running', paneId: '2' }));
+  });
+
+  test('nudge trusts an alive command-owned main pane over a stale running map and reconciles it', () => {
+    ctx.agentRunning.set('3', 'idle');
+    ctx.daemonClient.getTerminal.mockReturnValue({
+      paneId: '3',
+      pid: 54156,
+      alive: true,
+      mode: 'pty-command',
+    });
+
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '3', message: 'Review the gate' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      method: 'nudge-agent',
+      paneId: '3',
+      liveness: 'daemon_command_terminal',
+      reconciledRunningState: true,
+    }));
+    expect(ctx.agentRunning.get('3')).toBe('running');
+    expect(ctx.mainWindow.webContents.send).toHaveBeenCalledWith('inject-message', {
+      panes: ['3'],
+      message: 'Review the gate\r',
+    });
+  });
+
+  test('nudge does not treat a generic live shell as proof that an agent is running', () => {
+    ctx.agentRunning.set('3', 'idle');
+    ctx.daemonClient.getTerminal.mockReturnValue({
+      paneId: '3',
+      pid: 54156,
+      alive: true,
+      mode: 'pty',
+    });
+
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '3', message: 'Review the gate' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'agent_not_running',
+      paneId: '3',
+    }));
+    expect(ctx.agentRunning.get('3')).toBe('idle');
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  test('nudge does not trust a cached command terminal after the daemon disconnects', () => {
+    ctx.agentRunning.set('3', 'idle');
+    ctx.daemonClient.connected = false;
+    ctx.daemonClient.getTerminal.mockReturnValue({
+      paneId: '3',
+      pid: 54156,
+      alive: true,
+      mode: 'pty-command',
+    });
+
+    const result = executePaneControlAction(ctx, 'nudge', { paneId: '3', message: 'Review the gate' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'agent_not_running',
+      paneId: '3',
+    }));
+    expect(ctx.agentRunning.get('3')).toBe('idle');
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
+  });
+
+  test('nudge routes addressed workroom panes without consulting the main-pane running map', async () => {
+    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'exampleapp-app');
+    ctx.nudgeAddressedPane = jest.fn().mockResolvedValue({
+      ok: true,
+      accepted: true,
+      queued: false,
+      verified: false,
+      status: 'accepted.daemon_pty_unverified',
+    });
+
+    const result = await executePaneControlAction(ctx, 'nudge', {
+      paneId: 'exampleapp-app',
+      message: 'Status check',
+    });
+
+    expect(ctx.nudgeAddressedPane).toHaveBeenCalledWith('exampleapp-app', 'Status check');
+    expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      method: 'addressed-pane-delivery',
+      status: 'accepted.daemon_pty_unverified',
+      verified: false,
+      liveness: 'unknown',
+    }));
+  });
+
+  test('addressed workroom nudge reports delivery failure without a false agent_not_running verdict', async () => {
+    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'exampleapp-invoice');
+    ctx.nudgeAddressedPane = jest.fn().mockResolvedValue({
+      accepted: false,
+      queued: false,
+      verified: false,
+      status: 'daemon_not_connected',
+    });
+
+    const result = await executePaneControlAction(ctx, 'nudge', {
+      paneId: 'exampleapp-invoice',
+      message: 'Status check',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      method: 'addressed-pane-delivery',
+      reason: 'daemon_not_connected',
+      liveness: 'not_delivered',
+    }));
+    expect(result.reason).not.toBe('agent_not_running');
+  });
+
+  test('normalizeAction resolves switch-model aliases', () => {
+    expect(normalizeAction('switch-model')).toBe('switch-model');
+    expect(normalizeAction('switch-pane-model')).toBe('switch-model');
+    expect(normalizeAction('model-switch')).toBe('switch-model');
+  });
+
+  test('switch-model requires a model', () => {
+    ctx.switchPaneModel = jest.fn();
+    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2', targetInstance });
+    expect(result).toEqual(expect.objectContaining({ success: false, reason: 'missing_model', paneId: '2' }));
+    expect(ctx.switchPaneModel).not.toHaveBeenCalled();
+  });
+
+  test('switch-model fails when the shared flow is not wired', () => {
+    const result = executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude', targetInstance });
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'model_switch_unavailable',
+      paneId: '2',
+    }));
+  });
+
+  test('switch-model delegates to the shared flow and maps success', async () => {
+    ctx.switchPaneModel = jest.fn().mockResolvedValue({ success: true, paneId: '2', model: 'claude' });
+    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'Claude', targetInstance });
+
+    expect(ctx.switchPaneModel).toHaveBeenCalledWith('2', 'claude');
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      paneId: '2',
+      action: 'switch-model',
+      method: 'switch-pane-model',
+      model: 'claude',
+    }));
+  });
+
+  test('switch-model propagates a lease-blocked rejection with its reason', async () => {
+    ctx.switchPaneModel = jest.fn().mockResolvedValue({
+      success: false,
+      reason: 'model_switch_blocked_restart_in_progress',
+      activeClaimId: 'lease-1',
+    });
+    const result = await executePaneControlAction(ctx, 'switch-model', { paneId: '2', model: 'claude', targetInstance });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'model_switch_blocked_restart_in_progress',
+      activeClaimId: 'lease-1',
+      paneId: '2',
+    }));
+  });
+
+  test('switch-model rejects instance assertion mismatches before invoking the shared flow', async () => {
+    ctx.switchPaneModel = jest.fn().mockResolvedValue({ success: true });
+    const result = await executePaneControlAction(ctx, 'switch-model', {
+      paneId: '2',
+      model: 'claude',
+      targetInstance: { profileName: 'client', windowKey: 'client' },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      reason: 'instance_assertion_mismatch',
+      mismatchField: 'profileName',
+      paneId: '2',
+    }));
+    expect(ctx.switchPaneModel).not.toHaveBeenCalled();
+  });
+});

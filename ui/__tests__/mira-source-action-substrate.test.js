@@ -1,0 +1,145 @@
+'use strict';
+
+const {
+  MIRA_SOURCE_ACTION_SUBSTRATE_SCHEMA,
+  SOURCE_ACTION_SUBSTRATE_REGISTRY,
+  SUBSTRATE_STRATEGIES,
+  buildMiraSourceActionSubstratePlan,
+  chooseMiraSourceActionSubstrate,
+} = require('../modules/mira-source-action-substrate');
+
+describe('Mira source/action substrate plan', () => {
+  test('maps broad local-world sources to native, MCP-compatible, code-mode, workflow, memory, and evolution strategies', () => {
+    const plan = buildMiraSourceActionSubstratePlan({ generatedAt: '2026-05-12T18:35:00.000Z' });
+
+    expect(plan.schema).toBe(MIRA_SOURCE_ACTION_SUBSTRATE_SCHEMA);
+    expect(plan.decision).toBe('substrate_plan');
+    expect(plan.source_count).toBe(SOURCE_ACTION_SUBSTRATE_REGISTRY.length);
+    expect(plan.strategy_counts[SUBSTRATE_STRATEGIES.native_adapter]).toBeGreaterThan(0);
+    expect(plan.strategy_counts[SUBSTRATE_STRATEGIES.mcp_connector]).toBeGreaterThan(0);
+    expect(plan.strategy_counts[SUBSTRATE_STRATEGIES.code_mode]).toBeGreaterThan(0);
+    expect(plan.strategy_counts[SUBSTRATE_STRATEGIES.workflow_dag]).toBeGreaterThan(0);
+    expect(plan.strategy_counts[SUBSTRATE_STRATEGIES.active_memory]).toBeGreaterThan(0);
+    expect(plan.strategy_counts[SUBSTRATE_STRATEGIES.evolution_loop]).toBeGreaterThan(0);
+    expect(plan.consequence_controls).toEqual(expect.objectContaining({
+      internal_only: true,
+      read_only_first: true,
+      external_send_performed: false,
+      autonomous_apply_performed: false,
+      destructive_action_performed: false,
+    }));
+  });
+
+  test('puts active code-mode and memory/comms seams before deferred ecosystem connectors', () => {
+    const plan = buildMiraSourceActionSubstratePlan({ generatedAt: '2026-05-12T18:35:00.000Z' });
+
+    expect(plan.recommended_sequence[0]).toEqual(expect.objectContaining({
+      source: 'code_mode_exploration',
+      strategy: SUBSTRATE_STRATEGIES.code_mode,
+    }));
+    expect(plan.recommended_sequence.map((entry) => entry.source)).toEqual(expect.arrayContaining([
+      'memory',
+      'memory_broker',
+      'runtime_comms',
+    ]));
+    expect(plan.sources.find((entry) => entry.source === 'memory')).toEqual(expect.objectContaining({
+      status: 'active',
+      strategy: SUBSTRATE_STRATEGIES.active_memory,
+    }));
+    const broker = plan.sources.find((entry) => entry.source === 'memory_broker');
+    expect(broker).toEqual(expect.objectContaining({
+      status: 'active',
+      strategy: SUBSTRATE_STRATEGIES.active_memory,
+    }));
+    expect(broker.first_probe).toMatch(/hm-memory-broker recall/i);
+    expect(broker.existing_seams).toEqual(expect.arrayContaining([
+      'ui/modules/memory-broker.js recall(query, context)',
+      'ui/scripts/hm-memory-broker.js recall',
+    ]));
+    expect(plan.sources.find((entry) => entry.source === 'environment_apps')).toEqual(expect.objectContaining({
+      status: 'active',
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+    }));
+    const browser = plan.sources.find((entry) => entry.source === 'browser_history');
+    expect(browser).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(browser.first_probe).toMatch(/History DB/i);
+    const email = plan.sources.find((entry) => entry.source === 'email');
+    expect(email).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(email.first_probe).toMatch(/label counts/i);
+    const webResearch = plan.sources.find((entry) => entry.source === 'web_research');
+    expect(webResearch).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(webResearch.first_probe).toMatch(/saved research artifact metadata/i);
+    const visualAssets = plan.sources.find((entry) => entry.source === 'images_screenshots_assets');
+    expect(visualAssets).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(visualAssets.first_probe).toMatch(/screenshots and generated images/i);
+    const scheduler = plan.sources.find((entry) => entry.source === 'automation_scheduler');
+    expect(scheduler).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.workflow_dag,
+      status: 'active',
+    }));
+    expect(scheduler.first_probe).toMatch(/schedules\.json metadata/i);
+    const workContinuation = plan.sources.find((entry) => entry.source === 'work_continuation');
+    expect(workContinuation).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(workContinuation.first_probe).toMatch(/owned-work queue totals/i);
+    const miraRuntime = plan.sources.find((entry) => entry.source === 'mira_runtime');
+    expect(miraRuntime).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.evolution_loop,
+      status: 'active',
+    }));
+    expect(miraRuntime.first_probe).toMatch(/runtime health/i);
+    const calendarMessages = plan.sources.find((entry) => entry.source === 'calendar_messages');
+    expect(calendarMessages).toEqual(expect.objectContaining({
+      strategy: SUBSTRATE_STRATEGIES.native_adapter,
+      status: 'active',
+    }));
+    expect(calendarMessages.first_probe).toMatch(/hm-comms sender\/target\/status\/timestamp counts/i);
+  });
+
+  test('chooses a concrete strategy and first probe for a routed source', () => {
+    const codeMode = chooseMiraSourceActionSubstrate('code_mode_exploration');
+    expect(codeMode).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'source_strategy',
+      strategy: SUBSTRATE_STRATEGIES.code_mode,
+      status: 'active',
+    }));
+    expect(codeMode.first_probe).toMatch(/JSONL/i);
+    expect(codeMode.existing_seams).toContain('hm-mira-self-direction.js code-mode');
+
+    const broker = chooseMiraSourceActionSubstrate('memory_broker');
+    expect(broker).toEqual(expect.objectContaining({
+      ok: true,
+      decision: 'source_strategy',
+      strategy: SUBSTRATE_STRATEGIES.active_memory,
+      status: 'active',
+    }));
+    expect(broker.why_this_strategy).toMatch(/ranked action surface/i);
+  });
+
+  test('can hide deferred connectors for immediate native-first implementation planning', () => {
+    const plan = buildMiraSourceActionSubstratePlan({ includeDeferred: false });
+    expect(plan.sources.some((entry) => entry.status === 'connector_needed')).toBe(false);
+    expect(plan.sources.map((entry) => entry.source)).toEqual(expect.arrayContaining([
+      'code_mode_exploration',
+      'memory',
+      'memory_broker',
+      'automation_scheduler',
+      'mira_runtime',
+    ]));
+  });
+});

@@ -1,0 +1,251 @@
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const { EvidenceLedgerStore } = require('../modules/main/evidence-ledger-store');
+const {
+  getArmRegistryManifest,
+  queryArmCheckinProofs,
+  queryArmMissingWatchdogs,
+  closeArmRegistryStores,
+} = require('../modules/main/arm-registry');
+const {
+  queryArmApplyRequests,
+  closeArmApplyQueueStores,
+} = require('../modules/main/arm-apply-queue');
+const {
+  buildExampleAppArmRegistryManifest,
+  seedExampleAppArmRegistry,
+} = require('../modules/main/exampleapp-arm-registry-seed');
+
+function hasSqliteDriver() {
+  try {
+    // eslint-disable-next-line global-require
+    const mod = require('node:sqlite');
+    if (mod && typeof mod.DatabaseSync === 'function') return true;
+  } catch {
+    // Continue to next fallback.
+  }
+  try {
+    // eslint-disable-next-line global-require
+    require('better-sqlite3');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const maybeDescribe = hasSqliteDriver() ? describe : describe.skip;
+
+maybeDescribe('ExampleApp arm registry seed', () => {
+  let tempDir;
+  let dbPath;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exampleapp-arm-seed-'));
+    dbPath = path.join(tempDir, 'evidence-ledger.db');
+  });
+
+  afterEach(() => {
+    closeArmRegistryStores();
+    closeArmApplyQueueStores();
+    if (tempDir) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      tempDir = null;
+    }
+  });
+
+  test('builds the day-to-day ExampleApp manifest from app-status session context', () => {
+    const projectRoot = path.join(tempDir, 'project');
+    fs.mkdirSync(path.join(projectRoot, '.squidrun'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, '.squidrun', 'app-status.json'), JSON.stringify({ session: 777 }), 'utf8');
+
+    const manifest = buildExampleAppArmRegistryManifest({ projectRoot, nowMs: 10_000 });
+
+    expect(manifest).toEqual(expect.objectContaining({
+      appRoomId: 'exampleapp',
+      sessionId: 'app-room:exampleapp',
+      mainSessionId: 'app-session-777',
+      leadRole: 'exampleapp-lead',
+      leadPaneId: 'exampleapp-lead',
+    }));
+    expect(manifest.arms.map((arm) => arm.armKey)).toEqual([
+      'lead',
+      'schedule-dispatch',
+      'app',
+      'invoice',
+    ]);
+    expect(manifest.arms.map((arm) => arm.role)).toEqual([
+      'exampleapp-lead',
+      'exampleapp-schedule-dispatch',
+      'exampleapp-app',
+      'exampleapp-invoice',
+    ]);
+    expect(manifest.arms
+      .filter((arm) => arm.armKind === 'domain')
+      .map((arm) => arm.metadata?.reportsTo)).toEqual([
+      'exampleapp-lead',
+      'exampleapp-lead',
+      'exampleapp-lead',
+    ]);
+    expect(manifest.metadata).toEqual(expect.objectContaining({
+      manifestScope: 'app_room',
+      readinessSessionId: 'app-session-777:exampleapp',
+      sourceRef: 'docs/exampleapp-arm-set-proposal.md',
+      readinessTruth: 'missing_until_role_checkins_exist',
+      buildModeArms: [
+        expect.objectContaining({
+          armKey: 'dev-qa',
+          desiredByDefault: false,
+        }),
+      ],
+    }));
+  });
+
+  test('seeds desired arms without creating readiness proof apply requests or watchdogs', () => {
+    const result = seedExampleAppArmRegistry({
+      dbPath,
+      mainSessionId: 'app-session-999',
+      nowMs: 20_000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe('seeded_and_evaluated');
+    expect(result.registry).toEqual(expect.objectContaining({
+      appRoomId: 'exampleapp',
+      sessionId: 'app-room:exampleapp',
+      readinessSessionId: 'app-session-999:exampleapp',
+      mainSessionId: 'app-session-999',
+      desiredCount: 4,
+      readyCount: 0,
+      missingCount: 4,
+    }));
+    expect(Object.fromEntries(result.registry.arms.map((arm) => [arm.armKey, arm.status]))).toEqual({
+      lead: 'missing',
+      'schedule-dispatch': 'missing',
+      app: 'missing',
+      'invoice': 'missing',
+    });
+    expect(queryArmCheckinProofs({}, { dbPath })).toHaveLength(0);
+    expect(queryArmApplyRequests({}, { dbPath })).toHaveLength(0);
+    expect(queryArmMissingWatchdogs({}, { dbPath })).toHaveLength(0);
+
+    const store = new EvidenceLedgerStore({ dbPath });
+    expect(store.init().ok).toBe(true);
+    const registryCount = store.db.prepare('SELECT COUNT(*) AS count FROM arm_registries').get().count;
+    const armCount = store.db.prepare('SELECT COUNT(*) AS count FROM arm_registry_arms').get().count;
+    store.close();
+    expect(registryCount).toBe(1);
+    expect(armCount).toBe(4);
+  });
+
+  test('hard-prunes stale prior-taxonomy arms on reseed', () => {
+    const first = seedExampleAppArmRegistry({
+      dbPath,
+      mainSessionId: 'app-session-999',
+      nowMs: 20_000,
+    });
+    expect(first.ok).toBe(true);
+    closeArmRegistryStores();
+
+    const store = new EvidenceLedgerStore({ dbPath });
+    expect(store.init().ok).toBe(true);
+    const legacy = buildExampleAppArmRegistryManifest({
+      mainSessionId: 'app-session-999',
+      nowMs: 21_000,
+    });
+    legacy.arms.push(
+      {
+        armKey: 'money-documents',
+        role: 'exampleapp-money-documents',
+        paneId: 'exampleapp-money-documents',
+        routeTarget: 'exampleapp-money-documents',
+        armKind: 'domain',
+        displayName: 'Money + Documents',
+      },
+      {
+        armKey: 'work-schedule',
+        role: 'exampleapp-work-schedule',
+        paneId: 'exampleapp-work-schedule',
+        routeTarget: 'exampleapp-work-schedule',
+        armKind: 'domain',
+        displayName: 'Work + Schedule',
+      }
+    );
+    expect(store.upsertArmRegistryManifest(legacy, { nowMs: 21_000 }).ok).toBe(true);
+    expect(store.queryArmRegistryArms({ appRoomId: 'exampleapp', limit: 1000 })
+      .map((arm) => arm.armKey)).toEqual(expect.arrayContaining(['money-documents', 'work-schedule']));
+    store.close();
+
+    const reseed = seedExampleAppArmRegistry({
+      dbPath,
+      mainSessionId: 'app-session-999',
+      nowMs: 22_000,
+    });
+    expect(reseed.ok).toBe(true);
+    expect(reseed.registry.arms.map((arm) => arm.armKey).sort()).toEqual([
+      'app',
+      'invoice',
+      'lead',
+      'schedule-dispatch',
+    ]);
+  });
+
+  test('dry-run reports the manifest without writing registry rows', () => {
+    const result = seedExampleAppArmRegistry({
+      dbPath,
+      mainSessionId: 'app-session-1000',
+      dryRun: true,
+      nowMs: 30_000,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'dry_run',
+      readOnly: true,
+      sideEffects: {
+        registryWrites: 0,
+        checkinsCreated: 0,
+        applyRequestsCreated: 0,
+        watchdogsCreated: 0,
+      },
+    }));
+    expect(getArmRegistryManifest({
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-1000:exampleapp',
+    }, { dbPath })).toBeNull();
+  });
+
+  test('CLI seeds parseable JSON for an explicit session', () => {
+    const output = execFileSync(process.execPath, [
+      path.join(__dirname, '..', 'scripts', 'hm-seed-exampleapp-arm-registry.js'),
+      'seed',
+      '--db',
+      dbPath,
+      '--session',
+      'app-session-cli:exampleapp',
+      '--now-ms',
+      '40000',
+      '--json',
+    ], {
+      cwd: path.join(__dirname, '..', '..'),
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+
+    const result = JSON.parse(output);
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'seeded_and_evaluated',
+      schema: 'squidrun.exampleapp_arm_registry_seed.v0',
+    }));
+    expect(result.registry).toEqual(expect.objectContaining({
+      sessionId: 'app-room:exampleapp',
+      readinessSessionId: 'app-session-cli:exampleapp',
+      desiredCount: 4,
+      readyCount: 0,
+      missingCount: 4,
+    }));
+  });
+});

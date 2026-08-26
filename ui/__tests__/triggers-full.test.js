@@ -1,0 +1,766 @@
+/**
+ * Comprehensive Tests for triggers.js module
+ * Covers: File Handling, PTY Routing, Workflow Gate, Sequencing
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+// MOCKS
+// Mock dependencies before requiring the module
+const mockIpcRenderer = {
+  on: jest.fn(),
+  invoke: jest.fn().mockResolvedValue({}),
+  send: jest.fn(),
+};
+
+jest.mock('electron', () => ({
+  ipcRenderer: mockIpcRenderer,
+}));
+
+// Mock config
+jest.mock('../config', () => require('./helpers/mock-config').mockDefaultConfig);
+
+// Mock logger
+const mockLog = {
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+};
+jest.mock('../modules/logger', () => mockLog);
+
+// Mock diagnostic-log
+const mockDiagnosticLog = {
+  write: jest.fn(),
+};
+jest.mock('../modules/diagnostic-log', () => mockDiagnosticLog);
+
+// Mock smart-routing
+const mockSmartRouting = {
+  getBestAgent: jest.fn().mockReturnValue({ paneId: '1', reason: 'mock', confidence: 0.9 }),
+};
+jest.mock('../modules/smart-routing', () => mockSmartRouting);
+
+// Mock formatters
+jest.mock('../modules/formatters', () => ({
+  formatDuration: jest.fn(d => `${d}ms`),
+}));
+
+
+// Mock crypto
+const mockCrypto = {
+  randomUUID: jest.fn().mockReturnValue('uuid-1234'),
+};
+global.crypto = mockCrypto;
+
+// Mock window
+global.window = {
+  isDestroyed: jest.fn().mockReturnValue(false),
+  webContents: {
+    send: jest.fn(),
+  },
+};
+
+// Mock fs
+jest.mock('fs');
+
+// Import the module under test
+const triggers = require('../modules/triggers');
+const organicUI = require('../modules/ipc/organic-ui-handlers');
+
+describe('triggers.js module', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    
+    // Reset module state (as much as possible via exported functions)
+    triggers.setWatcher(null);
+    triggers.setInjectMessageRouter(null);
+    triggers.init(global.window, new Map([['1', 'running'], ['2', 'running'], ['3', 'running']]), null);
+    // Reset window mock
+    global.window.webContents.send.mockClear();
+    global.window.isDestroyed.mockReturnValue(false);
+    
+    // Reset file mocks
+    fs.renameSync.mockImplementation(() => {});
+    fs.unlinkSync.mockImplementation(() => {});
+    fs.readFileSync.mockReturnValue('');
+    fs.writeFileSync.mockImplementation(() => {});
+    if (!fs.appendFileSync) fs.appendFileSync = jest.fn();
+    fs.appendFileSync.mockImplementation(() => {});
+    fs.existsSync.mockReturnValue(false);
+    fs.renameSync.mockClear();
+    fs.unlinkSync.mockClear();
+    fs.readFileSync.mockClear();
+    fs.writeFileSync.mockClear();
+    fs.existsSync.mockClear();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  describe('1. File Handling (handleTriggerFile)', () => {
+    test('should rename file to .processing and read it', () => {
+      fs.readFileSync.mockReturnValue('test message');
+      
+      const result = triggers.handleTriggerFile('/test/workspace/triggers/architect.txt', 'architect.txt');
+      
+      expect(fs.renameSync).toHaveBeenCalledWith(
+        '/test/workspace/triggers/architect.txt',
+        '/test/workspace/triggers/architect.txt.processing'
+      );
+      expect(fs.readFileSync).toHaveBeenCalledWith('/test/workspace/triggers/architect.txt.processing');
+      expect(fs.unlinkSync).toHaveBeenCalledWith('/test/workspace/triggers/architect.txt.processing');
+      expect(result.success).toBe(true);
+    });
+
+    test('should handle unknown trigger file', () => {
+      const result = triggers.handleTriggerFile('/path/unknown.txt', 'unknown.txt');
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('unknown');
+      expect(fs.renameSync).not.toHaveBeenCalled();
+    });
+
+    test('should handle rename error (concurrent access)', () => {
+      const error = new Error('ENOENT');
+      error.code = 'ENOENT';
+      fs.renameSync.mockImplementation(() => { throw error; });
+      
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('already_processing');
+    });
+
+    test('removes stale processing file before rename', () => {
+      fs.existsSync.mockImplementation((filePath) => filePath.endsWith('.processing'));
+      fs.statSync.mockReturnValue({ mtimeMs: Date.now() - 120000 });
+      fs.readFileSync.mockReturnValue('test message');
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(result.success).toBe(true);
+      expect(fs.unlinkSync).toHaveBeenCalledWith('/path/architect.txt.processing');
+      expect(fs.renameSync).toHaveBeenCalledWith('/path/architect.txt', '/path/architect.txt.processing');
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Removed stale processing file /path/architect.txt.processing')
+      );
+    });
+
+    test('returns already_processing when processing file is fresh', () => {
+      fs.existsSync.mockImplementation((filePath) => filePath.endsWith('.processing'));
+      fs.statSync.mockReturnValue({ mtimeMs: Date.now() - 5000 });
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('already_processing');
+      expect(fs.renameSync).not.toHaveBeenCalled();
+    });
+
+    test('should handle read error', () => {
+      fs.renameSync.mockImplementation(() => {});
+      fs.readFileSync.mockImplementation(() => { throw new Error('Read failed'); });
+      
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('read_error');
+      // Should attempt cleanup
+      expect(fs.unlinkSync).toHaveBeenCalled();
+    });
+
+    test('should handle empty file', () => {
+      fs.readFileSync.mockReturnValue('');
+      
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      
+      expect(result.success).toBe(false);
+      expect(result.reason).toBe('empty');
+      expect(fs.unlinkSync).toHaveBeenCalled();
+    });
+
+    test('cleans up processing file when post-read hook throws', () => {
+      fs.readFileSync.mockReturnValue('(ORACLE #7): downstream throw');
+      const messageQueuedSpy = jest.spyOn(organicUI, 'messageQueued').mockImplementation(() => {
+        throw new Error('organic hook failed');
+      });
+
+      try {
+        expect(() => triggers.handleTriggerFile('/path/architect.txt', 'architect.txt')).toThrow('organic hook failed');
+        expect(fs.unlinkSync).toHaveBeenCalledWith('/path/architect.txt.processing');
+      } finally {
+        messageQueuedSpy.mockRestore();
+      }
+    });
+
+    test('logs cleanup failure when processing file removal fails', () => {
+      fs.readFileSync.mockReturnValue('test message');
+      fs.unlinkSync.mockImplementation(() => { throw new Error('cleanup failed'); });
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(result.success).toBe(true);
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Failed to clean up processing file /path/architect.txt.processing')
+      );
+    });
+
+    test('should decode UTF-16LE BOM', () => {
+      const buffer = Buffer.from([0xFF, 0xFE, 0x68, 0x00, 0x69, 0x00]); // "hi" in UTF-16LE
+      fs.readFileSync.mockReturnValue(buffer);
+      
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      
+      expect(result.success).toBe(true);
+    });
+
+    test('strips HM messageId marker before injection payload', () => {
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-test-1]\n(ORACLE): marker strip');
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(result.success).toBe(true);
+      jest.runAllTimers();
+
+      const injectCalls = global.window.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'inject-message');
+      expect(injectCalls.length).toBeGreaterThan(0);
+      const injectPayload = injectCalls[injectCalls.length - 1][1];
+      expect(injectPayload.message).toContain('marker strip');
+      expect(injectPayload.message).not.toContain('[HM-MESSAGE-ID:');
+    });
+
+    test('deduplicates trigger fallback payloads by HM messageId marker', () => {
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-dup-1]\n(ORACLE): duplicate guard');
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+
+      const first = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(first.success).toBe(true);
+      jest.runAllTimers();
+
+      const injectCountAfterFirst = global.window.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'inject-message').length;
+
+      const second = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(second.success).toBe(false);
+      expect(second.reason).toBe('duplicate_message_id');
+      jest.runAllTimers();
+
+      const injectCountAfterSecond = global.window.webContents.send.mock.calls
+        .filter(([channel]) => channel === 'inject-message').length;
+
+      expect(injectCountAfterSecond).toBe(injectCountAfterFirst);
+    });
+
+    test('requeues trigger file and keeps HM messageId retryable when dispatch fails', () => {
+      fs.readFileSync.mockReturnValue('[HM-MESSAGE-ID:hm-retry-1]\n(ORACLE): retry me');
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      global.window.isDestroyed.mockReturnValue(true);
+
+      const first = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+
+      expect(first).toEqual(expect.objectContaining({
+        success: false,
+        reason: 'dispatch_failed',
+        requeued: true,
+      }));
+      expect(fs.renameSync).toHaveBeenCalledWith('/path/architect.txt', '/path/architect.txt.processing');
+      expect(fs.renameSync).toHaveBeenCalledWith('/path/architect.txt.processing', '/path/architect.txt');
+      expect(fs.unlinkSync).not.toHaveBeenCalledWith('/path/architect.txt.processing');
+
+      global.window.isDestroyed.mockReturnValue(false);
+      const second = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt');
+      expect(second.success).toBe(true);
+      jest.runAllTimers();
+      expect(global.window.webContents.send).toHaveBeenCalledWith(
+        'inject-message',
+        expect.objectContaining({
+          message: expect.stringContaining('retry me'),
+        })
+      );
+    });
+  });
+
+  describe('2. PTY Routing (notifyAgents)', () => {
+    test('should route via PTY injection', () => {
+      // init with running state
+      const claudeState = new Map([['1', 'running'], ['2', 'stopped']]);
+      triggers.init(global.window, claudeState, null);
+      
+      triggers.notifyAgents(['1', '2'], 'hello');
+      
+      // Should send to PTY injection channel
+      expect(global.window.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({
+        panes: ['1'], // Only running pane 1
+        message: expect.stringContaining('hello')
+      }));
+      // Pane 2 skipped because stopped
+    });
+
+    test('notifyAgents returns empty when dispatchInjectMessage fails', () => {
+      const claudeState = new Map([['1', 'running']]);
+      triggers.init(global.window, claudeState, null);
+      global.window.isDestroyed.mockReturnValue(true);
+
+      const notified = triggers.notifyAgents(['1'], 'hello');
+
+      expect(notified).toEqual([]);
+      expect(global.window.webContents.send).not.toHaveBeenCalledWith(
+        'inject-message',
+        expect.anything()
+      );
+    });
+
+    test('blocks scoped-window fallback from leaking into the main window when router misses', () => {
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      triggers.setInjectMessageRouter(() => false);
+
+      const result = triggers.sendDirectMessage(['1'], 'side-only message', 'user', {
+        meta: {
+          windowKey: 'scoped',
+          sessionScopeId: 'app-session-308:scoped',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: false,
+        queued: false,
+        status: 'window_unavailable',
+      }));
+      expect(global.window.webContents.send).not.toHaveBeenCalledWith(
+        'inject-message',
+        expect.anything()
+      );
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Scoped inject fallback blocked')
+      );
+    });
+
+    test('blocks non-main session-scope fallback even without an explicit windowKey', () => {
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      triggers.setInjectMessageRouter(() => false);
+
+      const result = triggers.sendDirectMessage(['1'], 'scoped session only', 'user', {
+        meta: {
+          sessionScopeId: 'app-session-308:scoped',
+        },
+      });
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: false,
+        queued: false,
+        status: 'window_unavailable',
+      }));
+      expect(global.window.webContents.send).not.toHaveBeenCalledWith(
+        'inject-message',
+        expect.anything()
+      );
+    });
+
+    test('sendDirectMessage delivers even when target is not running', () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'routed_unverified',
+        notified: ['2'],
+        mode: 'pty',
+      }));
+      expect(typeof result.deliveryId).toBe('string');
+
+      jest.runAllTimers();
+      expect(global.window.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({
+        panes: ['2'],
+        message: expect.stringContaining('[MSG from architect]: Direct msg'),
+      }));
+    });
+
+    test('sendDirectMessage forwards inject metadata to the IPC payload', () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      triggers.sendDirectMessage(['2'], 'Internal note', 'architect', {
+        meta: { visibility: 'internal', source: 'pane-output-filter' },
+      });
+
+      jest.runAllTimers();
+      expect(global.window.webContents.send).toHaveBeenCalledWith('inject-message', expect.objectContaining({
+        panes: ['2'],
+        meta: expect.objectContaining({
+          visibility: 'internal',
+          source: 'pane-output-filter',
+        }),
+      }));
+    });
+
+    test('sendDirectMessage defaults to active profile window scope when routed by profile app', () => {
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      process.env.SQUIDRUN_PROFILE = 'client-profile';
+      let routedPayload = null;
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      triggers.setInjectMessageRouter((payload) => {
+        routedPayload = payload;
+        return true;
+      });
+
+      const result = triggers.sendDirectMessage(['1'], 'Profile lane message', 'builder');
+
+      if (previousProfile === undefined) delete process.env.SQUIDRUN_PROFILE;
+      else process.env.SQUIDRUN_PROFILE = previousProfile;
+
+      expect(result).toEqual(expect.objectContaining({
+        accepted: true,
+        queued: true,
+        notified: ['1'],
+      }));
+      expect(routedPayload).toEqual(expect.objectContaining({
+        panes: ['1'],
+        meta: expect.objectContaining({ windowKey: 'client-profile' }),
+      }));
+    });
+
+    test('sendDirectMessage returns queued false when main window is unavailable', () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+      global.window.isDestroyed.mockReturnValue(true);
+
+      const result = triggers.sendDirectMessage(['2'], 'Direct msg', 'architect');
+
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'window_unavailable',
+        notified: [],
+        mode: 'pty',
+      }));
+      expect(global.window.webContents.send).not.toHaveBeenCalled();
+    });
+
+    test('sendDirectMessage tolerates window send race without throwing', () => {
+      triggers.init(global.window, new Map([['1', 'running']]), null);
+      global.window.webContents.send.mockImplementationOnce(() => {
+        throw new Error('Object has been destroyed');
+      });
+
+      expect(() => {
+        triggers.sendDirectMessage(['1'], 'Race test', 'architect');
+        jest.runOnlyPendingTimers();
+      }).not.toThrow();
+
+      expect(mockLog.warn).toHaveBeenCalledWith(
+        'Trigger',
+        expect.stringContaining('Inject message dispatch failed: Object has been destroyed')
+      );
+    });
+
+    test('reports delayed stagger dispatch failures as delivery outcomes', () => {
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0);
+      const outcomes = [];
+      const off = triggers.onDeliveryAck((deliveryId, paneId, outcome) => {
+        outcomes.push({ deliveryId, paneId, outcome });
+      });
+      try {
+        triggers.init(global.window, new Map([['1', 'running'], ['2', 'running']]), null);
+
+        const result = triggers.sendDirectMessage(['1', '2'], '(ARCHITECT #508): delayed fail proof', 'architect');
+        expect(result).toEqual(expect.objectContaining({ accepted: true, queued: true }));
+
+        global.window.isDestroyed.mockReturnValue(true);
+        jest.runAllTimers();
+
+        expect(outcomes).toEqual([expect.objectContaining({
+          paneId: '2',
+          outcome: expect.objectContaining({
+            accepted: false,
+            verified: false,
+            status: 'dispatch_failed',
+            reason: 'delayed_dispatch_failed',
+          }),
+        })]);
+      } finally {
+        off();
+        randomSpy.mockRestore();
+      }
+    });
+
+    test('sendDirectMessage awaitDelivery returns explicit failure when delivery outcome reports submit_not_accepted', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      // Flush staggered send (single-target 0ms timeout).
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryOutcome(deliveryId, '2', {
+        accepted: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        reason: 'submit_not_accepted',
+      });
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'submit_not_accepted',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        failedPanes: ['2'],
+        failureReason: 'submit_not_accepted',
+      }));
+    });
+
+    test('sendDirectMessage awaitDelivery reports accepted.unverified when delivery is accepted but unverified', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryOutcome(deliveryId, '2', {
+        accepted: true,
+        verified: false,
+        status: 'accepted.unverified',
+        reason: 'post_enter_output_timeout',
+      });
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        unverifiedPanes: ['2'],
+        failedPanes: [],
+        failureReason: 'accepted.unverified',
+      }));
+    });
+
+    test('sendDirectMessage awaitDelivery treats model write-ack timeout after handoff as unverified', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryOutcome(deliveryId, '2', {
+        accepted: false,
+        verified: false,
+        status: 'delivery_failed',
+        reason: 'model write-ack timeout after 2500ms',
+      });
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        unverifiedPanes: ['2'],
+        failedPanes: [],
+        failureReason: 'verification_failed',
+        failureByPane: {
+          '2': expect.objectContaining({
+            status: 'verification_failed',
+            reason: 'model write-ack timeout after 2500ms',
+            originalStatus: 'delivery_failed',
+          }),
+        },
+      }));
+    });
+
+    test('sendDirectMessage awaitDelivery treats legacy delivery ack as unverified without submit proof', async () => {
+      triggers.init(global.window, new Map([['1', 'running'], ['2', 'idle'], ['3', 'idle']]), null);
+
+      const pendingResult = triggers.sendDirectMessage(
+        ['2'],
+        'Direct msg',
+        'architect',
+        { awaitDelivery: true, deliveryTimeoutMs: 5000 }
+      );
+
+      jest.advanceTimersByTime(0);
+
+      const injectCall = global.window.webContents.send.mock.calls.find(
+        ([channel, payload]) => channel === 'inject-message' && payload?.deliveryId
+      );
+      expect(injectCall).toBeDefined();
+      const deliveryId = injectCall[1].deliveryId;
+
+      triggers.handleDeliveryAck(deliveryId, '2');
+
+      const result = await pendingResult;
+      expect(result).toEqual(expect.objectContaining({
+        success: true,
+        accepted: true,
+        queued: true,
+        verified: false,
+        status: 'accepted.unverified',
+        mode: 'pty',
+      }));
+      expect(result.details).toEqual(expect.objectContaining({
+        unverifiedPanes: ['2'],
+        failedPanes: [],
+        failureReason: 'accepted.unverified',
+        failureByPane: {
+          '2': expect.objectContaining({
+            status: 'accepted.unverified',
+            reason: 'legacy_delivery_ack_without_submit_proof',
+          }),
+        },
+      }));
+    });
+  });
+
+  describe('3. Workflow Gate (checkWorkflowGate)', () => {
+    test('should allow triggers to non-workers', () => {
+      // Architect (1) is not a worker
+      const result = triggers.checkWorkflowGate(['1']);
+      expect(result.allowed).toBe(true);
+    });
+
+    test('should allow workers when watcher state is allowed', () => {
+      const mockWatcher = {
+        readState: jest.fn().mockReturnValue({ state: 'executing' }),
+      };
+      triggers.setWatcher(mockWatcher);
+
+      // Builder (2) is a worker
+      const result = triggers.checkWorkflowGate(['2']);
+      expect(result.allowed).toBe(true);
+    });
+
+    test('should BLOCK workers when in checkpoint_fix state (actually not allowed)', () => {
+      const mockWatcher = {
+        readState: jest.fn().mockReturnValue({ state: 'reviewing' }),
+      };
+      triggers.setWatcher(mockWatcher);
+
+      const result = triggers.checkWorkflowGate(['2']); // Worker
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('blocked during');
+    });
+
+    test('should notify UI when blocked', () => {
+      const mockWatcher = {
+        readState: jest.fn().mockReturnValue({ state: 'reviewing' }),
+      };
+      triggers.setWatcher(mockWatcher);
+
+      // Indirectly test via handleTriggerFile which calls checkWorkflowGate
+      fs.readFileSync.mockReturnValue('msg');
+      // workers.txt targets '2' (Worker)
+      triggers.handleTriggerFile('/path/workers.txt', 'workers.txt');
+
+      expect(global.window.webContents.send).toHaveBeenCalledWith('trigger-blocked', expect.anything());
+    });
+  });
+
+  describe('4. Sequencing (isDuplicateMessage)', () => {
+    test('should parse sequence numbers', () => {
+      const parsed = triggers.parseMessageSequence('(ARCHITECT #5): msg');
+      expect(parsed.seq).toBe(5);
+      expect(parsed.sender).toBe('architect');
+    });
+
+    test('should detect duplicates based on state', () => {
+      // triggers.init() resets state to empty (preventing stale blocks)
+      triggers.init(global.window, null, null);
+      
+      // Fixed: recordMessageSeen is exported
+      triggers.recordMessageSeen('oracle', 5, 'architect');
+      
+      // Test duplicate (seq 5 <= lastSeen 5)
+      const isDup = triggers.isDuplicateMessage('oracle', 5, 'architect');
+      expect(isDup).toBe(true);
+      
+      // Test new message (seq 6 > lastSeen 5)
+      const isNew = triggers.isDuplicateMessage('oracle', 6, 'architect');
+      expect(isNew).toBe(false);
+    });
+
+    test('should update state on new message', () => {
+      // Simulate successful delivery updating state
+      // recordMessageSeen is exported
+      triggers.recordMessageSeen('oracle', 10, 'architect');
+      
+      // Verify save (write to temp then rename)
+      expect(fs.writeFileSync).toHaveBeenCalledWith(expect.stringContaining('.tmp'), expect.any(String), 'utf-8');
+      expect(fs.renameSync).toHaveBeenCalled();
+    });
+
+    test('should handle session reset banner', () => {
+      // Reset logic requires banner IN the message content
+      fs.readFileSync.mockReturnValue('(ORACLE #1): # SQUIDRUN SESSION: Reset');
+      
+      // Mock state to have seen #5
+      triggers.recordMessageSeen('oracle', 5, 'architect');
+      
+      // Now send #1 with session banner
+      const result = triggers.handleTriggerFile('/path/architect.txt', 'architect.txt'); // Architect recipient
+
+      expect(result.success).toBe(true);
+      // Verification of sequence reset happens internally:
+      // If reset worked, #1 is NOT a duplicate even though lastSeen was 5
+      expect(triggers.isDuplicateMessage('oracle', 1, 'architect')).toBe(false);
+    });
+  });
+
+  // War Room tests removed — war-room.js module deleted in S129
+});

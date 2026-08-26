@@ -1,0 +1,301 @@
+const crypto = require('crypto');
+const path = require('path');
+const {
+  resolveCoordPath,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
+  ROLE_NAMES,
+} = require('../../config');
+const { EvidenceLedgerStore } = require('../main/evidence-ledger-store');
+
+function resolveDefaultEvidenceLedgerDbPath() {
+  if (typeof resolveCoordPath !== 'function') {
+    throw new Error('resolveCoordPath unavailable; cannot resolve runtime/evidence-ledger.db');
+  }
+  return resolveCoordPath(path.join('runtime', 'evidence-ledger.db'), { forWrite: true });
+}
+
+const DEFAULT_EVIDENCE_LEDGER_DB_PATH = resolveDefaultEvidenceLedgerDbPath();
+const DEFAULT_BACKFILL_LIMIT = 5000;
+const EVENT_ONLY_SOURCES = new Set([
+  'team-memory.pattern-hook',
+]);
+const EVENT_ONLY_TYPES = new Set([
+  'comms.preflight',
+  'delivery.failed',
+  'delivery.outcome',
+  'guard.fired',
+  'intent.updated',
+  'memory.consistency.repair',
+  'session.lifecycle',
+  'task.status_changed',
+]);
+const CANONICAL_ROLE_IDS = new Set(
+  (Array.isArray(ROLE_NAMES) && ROLE_NAMES.length > 0 ? ROLE_NAMES : ['architect', 'builder', 'oracle'])
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter(Boolean)
+);
+const PANE_ID_TO_CANONICAL_ROLE = new Map(
+  Object.entries(ROLE_ID_MAP || {})
+    .map(([role, paneId]) => [String(role).toLowerCase(), String(paneId)])
+    .filter(([role, paneId]) => CANONICAL_ROLE_IDS.has(role) && paneId)
+    .map(([role, paneId]) => [paneId, role])
+);
+
+function normalizeOwner(rawOwner = '') {
+  const normalized = String(rawOwner || '').trim().toLowerCase();
+  if (!normalized) return 'system';
+  if (normalized === 'system' || normalized === 'user') return normalized;
+  if (CANONICAL_ROLE_IDS.has(normalized)) return normalized;
+  if (LEGACY_ROLE_ALIASES?.[normalized]) return LEGACY_ROLE_ALIASES[normalized];
+  const paneRole = PANE_ID_TO_CANONICAL_ROLE.get(normalized);
+  if (paneRole) return paneRole;
+  const mappedPane = ROLE_ID_MAP?.[normalized];
+  if (mappedPane) {
+    const mappedRole = PANE_ID_TO_CANONICAL_ROLE.get(String(mappedPane));
+    if (mappedRole) return mappedRole;
+  }
+  return 'system';
+}
+
+function inferClaimType(eventType, payload = {}) {
+  const type = String(eventType || '').toLowerCase();
+  const text = [
+    type,
+    payload?.status,
+    payload?.outcome,
+    payload?.error,
+    payload?.severity,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (text.includes('decision') || text.includes('promot')) return 'decision';
+  if (text.includes('hypothesis') || text.includes('assumption')) return 'hypothesis';
+  if (text.includes('error') || text.includes('fail') || text.includes('block') || text.includes('incident')) {
+    return 'negative';
+  }
+  return 'fact';
+}
+
+function toClaimStatement(event) {
+  const payload = event?.payload && typeof event.payload === 'object' ? event.payload : {};
+  const candidate = [
+    payload.statement,
+    payload.summary,
+    payload.title,
+    payload.message,
+    payload.error,
+    payload.reason,
+    event?.type,
+  ].find((value) => typeof value === 'string' && value.trim().length > 0);
+
+  const base = String(candidate || event?.type || 'unknown_event').replace(/\s+/g, ' ').trim();
+  return base.length > 280 ? `${base.slice(0, 277)}...` : base;
+}
+
+function toSessionId(sessionId) {
+  const session = String(sessionId || '').trim();
+  return session || null;
+}
+
+function toDeterministicClaimId(idempotencyKey) {
+  const digest = crypto.createHash('sha1').update(idempotencyKey).digest('hex').slice(0, 24);
+  return `clm-${digest}`;
+}
+
+function normalizeEventToken(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isEventOnlyTelemetry(event = {}) {
+  const eventType = normalizeEventToken(event?.type);
+  const source = normalizeEventToken(event?.source);
+  const meta = event?.meta && typeof event.meta === 'object' ? event.meta : {};
+  const ingestSource = normalizeEventToken(meta.ingestSource || meta.ingest_source);
+
+  return (
+    EVENT_ONLY_TYPES.has(eventType)
+    || EVENT_ONLY_SOURCES.has(source)
+    || ingestSource === 'team-memory-pattern-hook'
+  );
+}
+
+function buildBackfillRecord(event, nowMs) {
+  if (isEventOnlyTelemetry(event)) {
+    return {
+      skip: true,
+      reason: 'event_only_telemetry',
+      eventId: String(event?.eventId || '').trim() || null,
+      eventType: String(event?.type || '').trim() || null,
+      source: String(event?.source || '').trim() || null,
+    };
+  }
+
+  const eventId = String(event?.eventId || '').trim();
+  const eventType = String(event?.type || 'unknown').trim() || 'unknown';
+  const idempotencyKey = `backfill:${eventType}:${eventId}`;
+  const claimId = toDeterministicClaimId(idempotencyKey);
+  const owner = normalizeOwner(event?.role || event?.source || 'system');
+  const claimType = inferClaimType(eventType, event?.payload || {});
+  const statement = toClaimStatement(event);
+  const session = toSessionId(event?.sessionId);
+  const scope = typeof event?.source === 'string' && event.source.trim() ? event.source.trim() : null;
+
+  return {
+    claimId,
+    idempotencyKey,
+    statement,
+    claimType,
+    owner,
+    session,
+    scope,
+    evidenceRef: eventId,
+    createdAt: (event?.ts !== null && event?.ts !== undefined && Number.isFinite(Number(event?.ts))) ? Number(event.ts) : nowMs,
+    updatedAt: nowMs,
+  };
+}
+
+function runBackfill(options = {}) {
+  const teamDb = options.teamDb;
+  if (!teamDb || typeof teamDb.prepare !== 'function') {
+    return { ok: false, reason: 'team_memory_unavailable' };
+  }
+
+  const limit = Math.max(1, Math.min(50000, Number(options.limit) || DEFAULT_BACKFILL_LIMIT));
+  const nowMs = (options.nowMs !== null && options.nowMs !== undefined && Number.isFinite(Number(options.nowMs)))
+    ? Number(options.nowMs)
+    : Date.now();
+  const evidenceLedgerDbPath = options.evidenceLedgerDbPath || DEFAULT_EVIDENCE_LEDGER_DB_PATH;
+
+  const ledgerStore = new EvidenceLedgerStore({
+    dbPath: evidenceLedgerDbPath,
+    enabled: true,
+  });
+  const ledgerInit = ledgerStore.init();
+  if (!ledgerInit.ok) {
+    ledgerStore.close();
+    return {
+      ok: false,
+      reason: 'evidence_ledger_unavailable',
+      ledgerReason: ledgerInit.reason,
+    };
+  }
+
+  const events = ledgerStore.queryEvents({
+    limit,
+    order: 'asc',
+  });
+
+  if (!Array.isArray(events) || events.length === 0) {
+    ledgerStore.close();
+    return {
+      ok: true,
+      status: 'no_events',
+      scannedEvents: 0,
+      skippedEventOnlyClaims: 0,
+      insertedClaims: 0,
+      duplicateClaims: 0,
+      linkedEvidenceRows: 0,
+    };
+  }
+
+  const insertClaim = teamDb.prepare(`
+    INSERT OR IGNORE INTO claims (
+      id, idempotency_key, statement, claim_type, owner, confidence, status,
+      supersedes, session, ttl_hours, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertScope = teamDb.prepare(`
+    INSERT OR IGNORE INTO claim_scopes (claim_id, scope)
+    VALUES (?, ?)
+  `);
+  const insertEvidence = teamDb.prepare(`
+    INSERT OR IGNORE INTO claim_evidence (claim_id, evidence_ref, added_by, relation, weight, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  let insertedClaims = 0;
+  let duplicateClaims = 0;
+  let linkedEvidenceRows = 0;
+  let skippedEventOnlyClaims = 0;
+
+  try {
+    teamDb.exec('BEGIN IMMEDIATE;');
+    for (const event of events) {
+      const eventId = String(event?.eventId || '').trim();
+      if (!eventId) continue;
+      const record = buildBackfillRecord(event, nowMs);
+      if (record?.skip === true) {
+        skippedEventOnlyClaims += 1;
+        continue;
+      }
+
+      const claimResult = insertClaim.run(
+        record.claimId,
+        record.idempotencyKey,
+        record.statement,
+        record.claimType,
+        record.owner,
+        1.0,
+        'proposed',
+        null,
+        record.session,
+        null,
+        record.createdAt,
+        record.updatedAt
+      );
+      if (Number(claimResult?.changes || 0) > 0) {
+        insertedClaims += 1;
+      } else {
+        duplicateClaims += 1;
+      }
+
+      if (record.scope) {
+        insertScope.run(record.claimId, record.scope);
+      }
+
+      const evidenceResult = insertEvidence.run(
+        record.claimId,
+        record.evidenceRef,
+        record.owner,
+        'supports',
+        1.0,
+        nowMs
+      );
+      if (Number(evidenceResult?.changes || 0) > 0) {
+        linkedEvidenceRows += 1;
+      }
+    }
+    teamDb.exec('COMMIT;');
+  } catch (err) {
+    try { teamDb.exec('ROLLBACK;'); } catch {}
+    ledgerStore.close();
+    return {
+      ok: false,
+      reason: 'backfill_failed',
+      error: err.message,
+      scannedEvents: events.length,
+      insertedClaims,
+      duplicateClaims,
+      linkedEvidenceRows,
+      skippedEventOnlyClaims,
+    };
+  }
+
+  ledgerStore.close();
+  return {
+    ok: true,
+    status: 'backfilled',
+    scannedEvents: events.length,
+    skippedEventOnlyClaims,
+    insertedClaims,
+    duplicateClaims,
+    linkedEvidenceRows,
+  };
+}
+
+module.exports = {
+  runBackfill,
+  buildBackfillRecord,
+  isEventOnlyTelemetry,
+  resolveDefaultEvidenceLedgerDbPath,
+};

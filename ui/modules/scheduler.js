@@ -1,0 +1,559 @@
+/**
+ * Task Scheduler
+ * Supports once, interval, cron, and event-based schedules.
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { spawnSync } = require('child_process');
+const {
+  WORKSPACE_PATH,
+  GLOBAL_STATE_ROOT,
+  resolveGlobalPath,
+  getProjectRoot,
+} = require('../config');
+const log = require('./logger');
+const taskParser = require('./task-parser');
+
+const DEFAULT_SCHEDULE_STATE = {
+  schedules: [],
+  lastUpdated: null,
+};
+
+const HISTORY_LIMIT = 100;
+const CHECK_INTERVAL_MS = 30000;
+const QUIET_CURIOSITY_SCHEDULE_ID = 'mira-quiet-curiosity-burst-v1';
+const QUIET_CURIOSITY_SCHEDULE_NAME = 'Mira quiet curiosity burst';
+const QUIET_CURIOSITY_DEFAULT_SOURCES = Object.freeze([
+  'runtime_comms',
+  'memory_broker',
+  'environment_apps',
+  'work_continuation',
+  'browser_history',
+  'email',
+]);
+
+function generateId() {
+  return crypto.randomBytes(6).toString('hex');
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getDateParts(date, timeZone) {
+  if (!timeZone) {
+    return {
+      year: date.getFullYear(),
+      month: date.getMonth() + 1,
+      day: date.getDate(),
+      hour: date.getHours(),
+      minute: date.getMinutes(),
+      weekday: date.getDay(),
+    };
+  }
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      weekday: 'short',
+    });
+    const parts = formatter.formatToParts(date);
+    const lookup = Object.fromEntries(parts.map(p => [p.type, p.value]));
+    const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    return {
+      year: parseInt(lookup.year, 10),
+      month: parseInt(lookup.month, 10),
+      day: parseInt(lookup.day, 10),
+      hour: parseInt(lookup.hour, 10),
+      minute: parseInt(lookup.minute, 10),
+      weekday: weekdayMap[lookup.weekday] ?? 0,
+    };
+  } catch {
+    log.warn('Scheduler', `Invalid timezone ${timeZone}, falling back to local`);
+    return getDateParts(date, null);
+  }
+}
+
+function parseCronField(field, min, max) {
+  const values = new Set();
+  const parts = field.split(',');
+  for (const part of parts) {
+    if (part === '*') {
+      for (let i = min; i <= max; i++) values.add(i);
+      continue;
+    }
+    const stepMatch = part.match(/^(\*|\d+)-(\d+)?\/?(\d+)?$/);
+    if (stepMatch) {
+      let start = stepMatch[1] === '*' ? min : parseInt(stepMatch[1], 10);
+      let end = stepMatch[2] ? parseInt(stepMatch[2], 10) : (stepMatch[1] === '*' ? max : start);
+      const step = stepMatch[3] ? parseInt(stepMatch[3], 10) : 1;
+      start = clamp(start, min, max);
+      end = clamp(end, min, max);
+      for (let i = start; i <= end; i += step) values.add(i);
+      continue;
+    }
+    if (part.startsWith('*/')) {
+      const step = parseInt(part.slice(2), 10);
+      if (!Number.isNaN(step) && step > 0) {
+        for (let i = min; i <= max; i += step) values.add(i);
+      }
+      continue;
+    }
+    const num = parseInt(part, 10);
+    if (!Number.isNaN(num)) {
+      values.add(clamp(num, min, max));
+    }
+  }
+  return values;
+}
+
+function matchesCron(date, cron, timeZone) {
+  if (!cron) return false;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length < 5) return false;
+  const [minField, hourField, dayField, monthField, weekdayField] = parts;
+  const dateParts = getDateParts(date, timeZone);
+  const minutes = parseCronField(minField, 0, 59);
+  const hours = parseCronField(hourField, 0, 23);
+  const days = parseCronField(dayField, 1, 31);
+  const months = parseCronField(monthField, 1, 12);
+  const weekdays = parseCronField(weekdayField, 0, 6);
+  return minutes.has(dateParts.minute)
+    && hours.has(dateParts.hour)
+    && days.has(dateParts.day)
+    && months.has(dateParts.month)
+    && weekdays.has(dateParts.weekday);
+}
+
+function computeNextCron(afterDate, cron, timeZone) {
+  const start = new Date(afterDate.getTime() + 60000);
+  for (let i = 0; i < 60 * 24 * 14; i++) {
+    const candidate = new Date(start.getTime() + i * 60000);
+    if (matchesCron(candidate, cron, timeZone)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function computeNextRun(schedule, referenceDate = new Date()) {
+  if (!schedule.active) return null;
+  if (schedule.type === 'event') return null;
+
+  if (schedule.type === 'once') {
+    const runAt = schedule.runAt ? new Date(schedule.runAt) : null;
+    if (!runAt || Number.isNaN(runAt.getTime())) return null;
+    // An active one-shot remains due even when its fire time has passed.
+    // Returning null here used to erase overdue work during init(), which
+    // made a restart silently discard the exact job the scheduler owed.
+    return runAt;
+  }
+
+  if (schedule.type === 'interval') {
+    const intervalMs = schedule.intervalMs || 0;
+    if (!intervalMs) return null;
+    const last = schedule.lastRunAt ? new Date(schedule.lastRunAt) : referenceDate;
+    const next = new Date(last.getTime() + intervalMs);
+    return next;
+  }
+
+  if (schedule.type === 'cron') {
+    const next = computeNextCron(referenceDate, schedule.cron, schedule.timeZone);
+    return next;
+  }
+
+  return null;
+}
+
+function oneLine(value, max = 240) {
+  const text = String(value === undefined || value === null ? '' : value).trim().replace(/\s+/g, ' ');
+  if (text.length <= max) return text;
+  return `${text.slice(0, Math.max(0, max - 1))}...`;
+}
+
+function isQuietCuriositySchedule(schedule = {}) {
+  const metadata = schedule.metadata || {};
+  return (
+    schedule.id === QUIET_CURIOSITY_SCHEDULE_ID
+    || schedule.name === QUIET_CURIOSITY_SCHEDULE_NAME
+    || metadata.schedule_kind === 'quiet_curiosity_burst'
+  );
+}
+
+function quietCuriositySources(schedule = {}) {
+  const metadata = schedule.metadata || {};
+  const values = Array.isArray(metadata.sources) ? metadata.sources : [];
+  const sources = values
+    .map((source) => String(source || '').trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  return sources.length > 0 ? sources : [...QUIET_CURIOSITY_DEFAULT_SOURCES];
+}
+
+function parseFirstJsonObject(text = '') {
+  const raw = String(text || '');
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function defaultQuietCuriosityCommandRunner({ projectRoot, sources }) {
+  const root = projectRoot || (typeof getProjectRoot === 'function' ? getProjectRoot() : process.cwd());
+  const scriptPath = path.join(root, 'ui', 'scripts', 'hm-mira-self-direction.js');
+  const result = spawnSync('node', [
+    scriptPath,
+    'curiosity-burst',
+    '--source',
+    sources.join(','),
+    '--json',
+  ], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: 120000,
+    env: {
+      ...process.env,
+      SQUIDRUN_PROJECT_ROOT: root,
+    },
+  });
+  const parsed = parseFirstJsonObject(result.stdout);
+  return {
+    success: result.status === 0,
+    status: result.status,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    error: result.error ? result.error.message : null,
+    parsed,
+  };
+}
+
+function quietCuriosityCommand(schedule, sources) {
+  const command = schedule.metadata?.command_harness
+    || `node ui/scripts/hm-mira-self-direction.js curiosity-burst --source ${sources.join(',')} --json`;
+  return String(command).replace(/\s+--route-interesting\b/g, '');
+}
+
+function createScheduler({
+  triggers,
+  workspacePath,
+  projectRoot,
+  quietCuriosityCommandRunner,
+  stateFilePath,
+} = {}) {
+  const filePath = stateFilePath
+    ? path.resolve(stateFilePath)
+    : typeof resolveGlobalPath === 'function'
+    ? resolveGlobalPath('schedules.json', { forWrite: true })
+    : path.join(workspacePath || GLOBAL_STATE_ROOT || WORKSPACE_PATH, 'schedules.json');
+  const schedulerProjectRoot = projectRoot || (typeof getProjectRoot === 'function' ? getProjectRoot() : process.cwd());
+  let scheduleState = { ...DEFAULT_SCHEDULE_STATE };
+  let timer = null;
+
+  function load() {
+    try {
+      if (fs.existsSync(filePath)) {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        scheduleState = { ...DEFAULT_SCHEDULE_STATE, ...JSON.parse(content) };
+      }
+    } catch (err) {
+      log.error('Scheduler', 'Failed to load schedules', err.message);
+    }
+    scheduleState.schedules = scheduleState.schedules || [];
+  }
+
+  function save() {
+    try {
+      scheduleState.lastUpdated = new Date().toISOString();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      const tempPath = filePath + '.tmp';
+      fs.writeFileSync(tempPath, JSON.stringify(scheduleState, null, 2), 'utf-8');
+      fs.renameSync(tempPath, filePath);
+    } catch (err) {
+      log.error('Scheduler', 'Failed to save schedules', err.message);
+    }
+  }
+
+  function ensureNextRun(schedule) {
+    const next = computeNextRun(schedule, new Date());
+    schedule.nextRun = next ? next.toISOString() : null;
+  }
+
+  function listSchedules() {
+    return scheduleState.schedules.map(item => ({ ...item }));
+  }
+
+  function addSchedule(payload) {
+    const schedule = {
+      id: generateId(),
+      name: payload.name || payload.input?.slice(0, 60) || 'Scheduled task',
+      type: payload.type || 'once',
+      input: payload.input || '',
+      taskType: payload.taskType || null,
+      active: payload.active !== false,
+      runAt: payload.runAt || null,
+      intervalMs: payload.intervalMs || null,
+      cron: payload.cron || null,
+      timeZone: payload.timeZone || null,
+      eventName: payload.eventName || null,
+      chainAfter: payload.chainAfter || null,
+      chainRequiresSuccess: payload.chainRequiresSuccess !== false,
+      metadata: payload.metadata && typeof payload.metadata === 'object'
+        ? { ...payload.metadata }
+        : {},
+      lastRunAt: null,
+      lastStatus: null,
+      nextRun: null,
+      history: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    ensureNextRun(schedule);
+    scheduleState.schedules.push(schedule);
+    save();
+    return schedule;
+  }
+
+  function updateSchedule(id, patch) {
+    const schedule = scheduleState.schedules.find(s => s.id === id);
+    if (!schedule) return null;
+
+    Object.assign(schedule, patch);
+    schedule.updatedAt = new Date().toISOString();
+    ensureNextRun(schedule);
+    save();
+    return schedule;
+  }
+
+  function deleteSchedule(id) {
+    const idx = scheduleState.schedules.findIndex(s => s.id === id);
+    if (idx === -1) return false;
+    scheduleState.schedules.splice(idx, 1);
+    save();
+    return true;
+  }
+
+  function recordHistory(schedule, entry) {
+    schedule.history = schedule.history || [];
+    schedule.history.push(entry);
+    if (schedule.history.length > HISTORY_LIMIT) {
+      schedule.history = schedule.history.slice(-HISTORY_LIMIT);
+    }
+  }
+
+  function runQuietCuriosityTask(schedule, reason = 'scheduled') {
+    const sources = quietCuriositySources(schedule);
+    const command = quietCuriosityCommand(schedule, sources);
+    const runner = typeof quietCuriosityCommandRunner === 'function'
+      ? quietCuriosityCommandRunner
+      : defaultQuietCuriosityCommandRunner;
+    const run = runner({
+      schedule,
+      reason,
+      sources,
+      command,
+      projectRoot: schedulerProjectRoot,
+    }) || {};
+    const parsed = run.parsed || parseFirstJsonObject(run.stdout);
+    const success = run.success !== false && (run.status === undefined || run.status === 0);
+
+    schedule.lastRunAt = new Date().toISOString();
+    schedule.lastStatus = success ? 'success' : 'failed';
+    recordHistory(schedule, {
+      at: schedule.lastRunAt,
+      status: schedule.lastStatus,
+      reason,
+      tasks: [{
+        taskType: 'mira-curiosity-burst',
+        text: command,
+        paneId: null,
+        success,
+      }],
+      burst: parsed ? {
+        decision: parsed.decision || null,
+        burst_id: parsed.burst_id || null,
+        route_decision: parsed.route_output?.decision || null,
+        route_source: parsed.route_output?.source || null,
+        route_adapter_id: parsed.route_output?.adapter_id || null,
+        dispatch_status: parsed.dispatch?.status || null,
+      } : null,
+      command_stdout_excerpt: oneLine(run.stdout, 500) || null,
+      command_stderr_excerpt: oneLine(run.stderr || run.error, 500) || null,
+    });
+
+    if (schedule.type === 'once') {
+      schedule.active = false;
+      schedule.nextRun = null;
+    } else {
+      ensureNextRun(schedule);
+    }
+
+    save();
+    return {
+      success,
+      quietCuriosityBurst: true,
+      status: run.status ?? null,
+      burst: parsed || null,
+      error: run.error || null,
+    };
+  }
+
+  function runTask(schedule, reason = 'scheduled') {
+    if (isQuietCuriositySchedule(schedule)) {
+      return runQuietCuriosityTask(schedule, reason);
+    }
+
+    if (!triggers || typeof triggers.routeTask !== 'function') {
+      return { success: false, reason: 'missing_triggers' };
+    }
+
+    const parsed = taskParser.parseTaskInput(schedule.input || schedule.name || '');
+    const results = [];
+    let success = true;
+
+    if (!parsed.success) {
+      return { success: false, reason: 'parse_failed' };
+    }
+
+    for (const task of parsed.subtasks) {
+      const result = triggers.routeTask(task.taskType, task.text);
+      results.push({ task, result });
+      if (!result.success) success = false;
+    }
+
+    schedule.lastRunAt = new Date().toISOString();
+    schedule.lastStatus = success ? 'success' : 'failed';
+    recordHistory(schedule, {
+      at: schedule.lastRunAt,
+      status: schedule.lastStatus,
+      reason,
+      tasks: results.map(r => ({
+        taskType: r.task.taskType,
+        text: r.task.text,
+        paneId: r.result.paneId || null,
+        success: r.result.success,
+      })),
+    });
+
+    if (schedule.type === 'once') {
+      schedule.active = false;
+      schedule.nextRun = null;
+    } else {
+      ensureNextRun(schedule);
+    }
+
+    save();
+    return { success, results };
+  }
+
+  function checkDueSchedules(reason = 'time') {
+    load();
+    const now = new Date();
+    let fired = 0;
+    for (const schedule of scheduleState.schedules) {
+      if (!schedule.active) continue;
+      if (schedule.chainAfter) {
+        const parent = scheduleState.schedules.find(s => s.id === schedule.chainAfter);
+        if (!parent || parent.lastStatus !== 'success') {
+          continue;
+        }
+      }
+      if (schedule.type === 'event') continue;
+      if (!schedule.nextRun) ensureNextRun(schedule);
+      if (!schedule.nextRun) continue;
+      const nextRun = new Date(schedule.nextRun);
+      if (nextRun <= now) {
+        const result = runTask(schedule, reason);
+        fired += result.success ? 1 : 0;
+      }
+    }
+    return fired;
+  }
+
+  function emitEvent(eventName) {
+    const now = new Date();
+    const matched = scheduleState.schedules.filter(s => s.active && s.type === 'event' && s.eventName === eventName);
+    const results = [];
+    matched.forEach(schedule => {
+      schedule.lastRunAt = now.toISOString();
+      const result = runTask(schedule, 'event');
+      results.push({ scheduleId: schedule.id, result });
+    });
+    save();
+    return results;
+  }
+
+  function markCompleted(id, status = 'success') {
+    const schedule = scheduleState.schedules.find(s => s.id === id);
+    if (!schedule) return false;
+    schedule.lastStatus = status;
+    schedule.lastRunAt = new Date().toISOString();
+    ensureNextRun(schedule);
+    save();
+    return true;
+  }
+
+  function start() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(() => {
+      try {
+        checkDueSchedules();
+      } catch (err) {
+        log.error('Scheduler', 'Tick error', err.message);
+      }
+    }, CHECK_INTERVAL_MS);
+  }
+
+  function stop() {
+    if (timer) clearInterval(timer);
+    timer = null;
+  }
+
+  function init() {
+    load();
+    scheduleState.schedules.forEach(ensureNextRun);
+    save();
+    // Catch up overdue work synchronously before the normal 30-second loop.
+    // This is the restart boundary: late is valid, vanished is not.
+    checkDueSchedules('startup_catchup');
+    start();
+  }
+
+  function runNow(id) {
+    const schedule = scheduleState.schedules.find(s => s.id === id);
+    if (!schedule) return { success: false, reason: 'not_found' };
+    const result = runTask(schedule, 'manual');
+    save();
+    return result;
+  }
+
+  return {
+    init,
+    listSchedules,
+    addSchedule,
+    updateSchedule,
+    deleteSchedule,
+    emitEvent,
+    markCompleted,
+    runNow,
+    stop,
+    checkDueSchedules,
+  };
+}
+
+module.exports = {
+  createScheduler,
+  matchesCron,
+  computeNextRun,
+};

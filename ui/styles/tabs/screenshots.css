@@ -1,0 +1,149 @@
+/* Screenshots Tab Styles */
+.screenshot-dropzone {
+  border: 2px dashed rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  text-align: center;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color var(--transition-normal), background var(--transition-normal), color var(--transition-normal), transform var(--transition-normal);
+  margin-bottom: var(--space-3);
+}
+
+.screenshot-dropzone:hover,
+.screenshot-dropzone.dragover {
+  border-color: rgba(0, 240, 255, 0.4);
+  background: rgba(0, 240, 255, 0.05);
+  color: var(--color-text);
+  transform: scale(1.01);
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.1);
+}
+
+.screenshot-dropzone-icon {
+  margin-bottom: var(--space-2);
+  transition: transform var(--transition-normal);
+  opacity: 0.6;
+}
+
+.screenshot-dropzone:hover .screenshot-dropzone-icon {
+  transform: scale(1.1);
+}
+
+.screenshot-dropzone-text {
+  font-size: var(--text-base);
+}
+
+.screenshot-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.screenshot-item {
+  background: rgba(9, 11, 18, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.screenshot-item:hover {
+  background: rgba(16, 21, 35, 0.9);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.screenshot-item.has-expanded-thumb {
+  background: rgba(16, 21, 35, 0.95);
+  border-color: rgba(0, 240, 255, 0.15);
+}
+
+.screenshot-thumb {
+  width: 100%;
+  max-height: 200px;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-light);
+  cursor: zoom-in;
+  transition: max-height var(--transition-slow), box-shadow var(--transition-fast);
+}
+
+.screenshot-thumb.expanded {
+  max-height: 1200px;
+  cursor: zoom-out;
+  box-shadow: 0 0 0 1px rgba(0, 240, 255, 0.2), 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.screenshot-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.screenshot-name {
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screenshot-size {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.screenshot-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.screenshot-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--color-text-muted);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.screenshot-btn.delete-btn {
+  border-color: rgba(255, 68, 68, 0.3);
+  color: #ff7a7a;
+  background: rgba(255, 68, 68, 0.06);
+}
+
+.screenshot-btn:hover {
+  border-color: rgba(0, 240, 255, 0.4);
+  color: var(--color-primary);
+  background: rgba(0, 240, 255, 0.08);
+}
+
+.screenshot-btn.delete-btn:hover {
+  border-color: rgba(255, 68, 68, 0.5);
+  color: #ff4444;
+  background: rgba(255, 68, 68, 0.12);
+}
+
+.screenshot-btn:active {
+  transform: scale(0.95);
+}
+
+.screenshot-empty {
+  text-align: center;
+  color: var(--color-text-dim);
+  padding: var(--space-5);
+  font-size: var(--text-base);
+}

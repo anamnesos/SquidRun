@@ -1,0 +1,16377 @@
+/**
+ * SquidRun Application
+ * Main process application controller
+ */
+
+const { app, BrowserWindow, dialog, ipcMain, session, powerMonitor, Menu, shell } = require('electron');
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const WebSocket = require('ws');
+const { createHash } = require('crypto');
+const { spawn } = require('child_process');
+const log = require('../logger');
+const { getDaemonClient, DaemonClient } = require('../../daemon-client');
+const {
+  WORKSPACE_PATH,
+  PANE_IDS,
+  ROLE_ID_MAP,
+  BACKWARD_COMPAT_ROLE_ALIASES,
+  BACKGROUND_BUILDER_OWNER_PANE_ID,
+  resolveBackgroundBuilderAlias,
+  resolveBackgroundBuilderPaneId,
+  getProjectRoot,
+  setProjectRoot,
+  resolveCoordPath,
+  resolveWebSocketPortInfo,
+} = require('../../config');
+const {
+  getActiveProfileName,
+  isMainProfile,
+  normalizeProfileName,
+  buildProfileTelegramEnv,
+  getProfileWebSocketPort,
+  getProfileProjectRootOverride,
+  resolveProfileInstructionPath,
+} = require('../../profile');
+const {
+  DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+  isPinnedInstalledDataRoot,
+  resolveInstalledDataRoot,
+} = require('../installed-data-root');
+const { createPluginManager } = require('../plugins');
+const { createBackupManager } = require('../backup-manager');
+const { createRecoveryManager } = require('../recovery-manager');
+const { stripAnsi } = require('../ansi');
+const { createKernelBridge } = require('./kernel-bridge');
+const telegramIngressSpool = require('./telegram-ingress-spool');
+const telegramIngressDrain = require('./telegram-ingress-drain');
+const telegramDrainWiring = require('./telegram-drain-wiring');
+// LOADED BEFORE THE STARTUP CAPTURE, ON PURPOSE. The release capture requires
+// every one of its seven anchors to be present in `require.cache`, and this file
+// is one of them — so a lazy require of the fence would make the capture fail
+// with `release_anchor_not_loaded` on every boot, permanently, and the fence
+// would be impossible to create for a reason that reads like a missing file.
+const telegramActivationMode = require('./telegram-activation-mode');
+const telegramLegacyCutoverFence = require('./telegram-legacy-cutover-fence');
+const telegramAdmissionDelivery = require('./telegram-admission-delivery');
+const { createBackgroundAgentManager } = require('./background-agent-manager');
+const { createPaneHostWindowManager } = require('./pane-host-window-manager');
+const { emitWindowVisibilityState } = require('./window-visibility-state');
+const liveTaskAuditSidecarWindowModule = require('./live-task-audit-sidecar-window');
+const spineOverlayWindowModule = require('./spine-overlay-window');
+const { verifyAppWindowVisible } = require('./app-window-visibility');
+const { createTeamRoomAppController } = require('./team-room-app-controller');
+const { createWebSocketStartupLifecycle } = require('./websocket-startup-lifecycle');
+const {
+  isRestartLaunchProbe,
+  inspectRestartLaunchProbeWindow,
+} = require('./restart-launch-probe');
+const { resolveRuntimeInt } = require('../runtime-config');
+const {
+  toNonEmptyString,
+  normalizeRootForCompare,
+  resolveRootPath,
+  rootContainsPath,
+  normalizeToPosixPath,
+} = require('./squidrun-root-paths');
+const { publishAppGeneration, currentAppGeneration } = require('./app-generation'); // every scope assignment publishes
+const AGENT_MESSAGE_PREFIX = '[AGENT MSG - reply via hm-send.js] ';
+const TELEGRAM_PENDING_REPLAY_GRACE_MS = 10 * 60 * 1000;
+const ROOT_COHERENCE_MARKER_RELPATH = path.join('runtime', 'root-coherence-assert.jsonl');
+const CURRENT_SESSION_CUA_VERIFIER_OWNER = 'squidrun-current-session-cua-controller';
+const CURRENT_SESSION_CUA_VERIFIER_RECOVERY_EVENT = 'current_session_computer_use_proof';
+const CURRENT_SESSION_CUA_VERIFIER_RESPONSE_CLASS = 'computer_use.list_windows.attestation';
+const CURRENT_SESSION_CUA_VERIFIER_PANE_PATTERN =
+  /^cua-verifier-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+function isCurrentSessionComputerUseVerifierTerminal(paneId, metadata = {}) {
+  const normalizedPaneId = String(paneId || '').trim().toLowerCase();
+  const metadataPaneId = String(metadata?.paneId || '').trim().toLowerCase();
+  const durableAddress = String(metadata?.durableAddress || '').trim().toLowerCase();
+  const spawnLeaseId = String(metadata?.spawnLeaseId || '').trim();
+  if (!CURRENT_SESSION_CUA_VERIFIER_PANE_PATTERN.test(normalizedPaneId)
+    || (metadataPaneId && metadataPaneId !== normalizedPaneId)
+    || String(metadata?.leaseOwner || '').trim() !== CURRENT_SESSION_CUA_VERIFIER_OWNER
+    || String(metadata?.recoveryEvent || '').trim()
+      !== CURRENT_SESSION_CUA_VERIFIER_RECOVERY_EVENT
+    || String(metadata?.expectedResponseClass || '').trim()
+      !== CURRENT_SESSION_CUA_VERIFIER_RESPONSE_CLASS
+    || !spawnLeaseId) {
+    return false;
+  }
+  return durableAddress.startsWith('arm://main/')
+    && durableAddress.endsWith(`/computer-use-proof/${normalizedPaneId}`);
+}
+
+function isBridgeRelayModeOff(env = process.env) {
+  const mode = String(env?.SQUIDRUN_BRIDGE_RELAY_MODE || env?.SQUIDRUN_RELAY_MODE || '')
+    .trim()
+    .toLowerCase();
+  return mode === 'off' || mode === 'disabled' || mode === 'false' || mode === '0';
+}
+
+// Import sub-modules
+const triggers = require('../triggers');
+const watcher = require('../watcher');
+const ipcHandlers = require('../ipc-handlers');
+const websocketServer = require('../websocket-server');
+const organicUI = require('../ipc/organic-ui-handlers');
+const pipeline = require('../pipeline');
+const sharedState = require('../shared-state');
+const contextCompressor = require('../context-compressor');
+const { normalizeChatId } = require('../../scripts/hm-telegram');
+const { sendTelegram } = require('../../scripts/hm-telegram');
+const {
+  resolveTelegramInboundRoute: resolveTelegramInboundRouteConfig,
+  sendRoutedTelegramMessage,
+} = require('../../scripts/hm-telegram-routing');
+const { createInboundPollerService } = require('./inbound-poller-service');
+const {
+  readTelegramSettings,
+  resolveTelegramSettingsPath,
+} = require('../telegram-credentials');
+const {
+  appendReceiptMarkerToPrompt,
+  getModelPromptReceipt,
+  getReceiptRuntimeActivity,
+} = require('../model-prompt-receipt');
+// Its own module so "no identity is synthesized at lookup time" is auditable by
+// reading one small file. Imported as a MODULE OBJECT like the two above:
+// destructuring binds at require time and would leave the composite untestable
+// (Architect #146 caught a mutant that survived exactly that gap).
+const telegramTerminalLookup = require('./telegram-terminal-lookup');
+const {
+  shouldTriggerAutonomousSmoke,
+  buildSmokeRunnerArgs,
+  formatSmokeResultMessage,
+} = require('./autonomous-smoke');
+const {
+  createBridgeClient,
+  DEFAULT_BRIDGE_RELAY_URL,
+  normalizeBridgeMetadata,
+} = require('../bridge-client');
+const {
+  normalizeDeviceId,
+  parseCrossDeviceTarget,
+  getLocalDeviceId,
+  getProfileDeviceId,
+  isCrossDeviceEnabled,
+} = require('../cross-device-target');
+const {
+  buildOutboundMessageEnvelope,
+  buildCanonicalEnvelopeMetadata,
+  buildWebSocketDispatchMessage,
+} = require('../comms/message-envelope');
+const {
+  buildPendingOracleVerdictPayload,
+} = require('../oracle-verdict-visibility');
+const teamMemory = require('../team-memory');
+const experiment = require('../experiment');
+const {
+  materializeSessionHandoff,
+  removeLegacyPaneHandoffFiles,
+} = require('./auto-handoff-materializer');
+const {
+  isAgentTaskResolvedByLaterSignal,
+  findTargetActivityAfterConfirmedDelivery,
+  parseLeadingAgentRef,
+  extractCurrentLaneDirective,
+} = require('./agent-task-resolution');
+const {
+  appendCommsJournalEntry,
+  closeCommsJournalStores,
+  queryCommsJournalEntries,
+} = require('./comms-journal');
+const {
+  openTelegramReplyObligation,
+  queryTelegramReplyObligations,
+  satisfyTelegramReplyObligation,
+} = require('./telegram-reply-obligations');
+const {
+  listWorkItems,
+  TERMINAL_STATES: WORK_ITEM_TERMINAL_STATES,
+} = require('./work-item-ledger');
+const { buildLiveTaskAuditSnapshot } = require('./live-task-audit-sidecar');
+const { createEvidenceLedgerPruneHousekeeping } = require('./evidence-ledger-prune-housekeeping');
+const {
+  buildSpineOverlaySnapshotAsync,
+} = require('./spine-overlay-snapshot');
+const {
+  buildGuardFiringPatternEvent,
+  buildGuardPreflightEvent,
+  buildSessionLifecyclePatternEvent,
+  isDeliveryFailureResult,
+  buildDeliveryOutcomePatternEvent,
+  buildDeliveryFailurePatternEvent,
+  buildIntentUpdatePatternEvent,
+} = require('../team-memory/daily-integration');
+const { executeEvidenceLedgerOperation, closeSharedRuntime } = require('../ipc/evidence-ledger-handlers');
+const {
+  executeCognitiveMemoryOperation,
+  closeSharedCognitiveMemoryRuntime,
+} = require('../ipc/cognitive-memory-handlers');
+const { executeTransitionLedgerOperation } = require('../ipc/transition-ledger-handlers');
+const { executeGitHubOperation } = require('../ipc/github-handlers');
+const { executePaneControlAction } = require('./pane-control-service');
+const { executePaneModelSwitch } = require('../ipc/model-switch-handlers');
+const { executeAppControlAction } = require('./app-control-service');
+const { createPaneRestartArbiter } = require('./pane-restart-arbiter');
+const armSpawnAppService = require('./arm-spawn-app-service');
+const miraConversationHandlersModule = require('../ipc/mira-conversation-handlers');
+const armStateProjectionHandlersModule = require('../ipc/arm-state-projection-handlers');
+const {
+  MIRA_LIVE_PROMPT_REPLY_CHANNEL,
+  sendMiraLivePrompt,
+} = require('../mira-live-entrypoint');
+const {
+  buildMiraDirectChannelStatusAnswerV0,
+  isMiraDirectChannelStatusPrompt,
+} = require('../mira-core/live-direct-channel-status-v0');
+const { captureScreenshot } = require('../ipc/screenshot-handlers');
+const {
+  verifySurfaceCaptureEvent,
+} = require('../surface-capture-events');
+const {
+  filterTerminalsForWorkspace,
+} = require('../work-room-terminal-visibility');
+const { SQUID_ROOM_PANE_IDS } = require('../workspace-pane-shell');
+const { executeContractPromotionAction } = require('../contract-promotion-service');
+const { createBufferedFileWriter } = require('../buffered-file-writer');
+const {
+  createHealthSnapshot,
+  renderStartupHealthMarkdown,
+} = require('../../scripts/hm-health-snapshot');
+// Freshness watch cadence. Default 5 minutes; the caller seam is clamped to
+// 1..10 so no config can turn this into a hot loop or a useless hourly check.
+const TELEGRAM_FRESHNESS_WATCH_DEFAULT_MS = 5 * 60 * 1000;
+const TELEGRAM_FRESHNESS_WATCH_MIN_MS = 60 * 1000;
+const TELEGRAM_FRESHNESS_WATCH_MAX_MS = 10 * 60 * 1000;
+const {
+  checkAndRecoverTelegramPoller,
+  // READ-ONLY inspector. The freshness watch may import this and NOTHING else
+  // from the watchdog: every other export shells out, lists or kills processes,
+  // or drives the standalone recovery lane, none of which an in-app periodic
+  // timer is allowed to do.
+  inspectTelegramPollerFreshness,
+} = require('../../scripts/hm-telegram-poller-watchdog');
+const {
+  startRunner: startBidirectionalWakeWatchdogRunner,
+} = require('../../scripts/hm-bidirectional-wake-watchdog');
+const {
+  generateSessionSummary,
+} = require('../../scripts/hm-session-summary');
+const {
+  generateStartupBriefing,
+} = require('../startup-ai-briefing');
+const {
+  buildSystemCapabilitiesSnapshot,
+  resolveSleepExtractionCommandFromSnapshot,
+  writeSystemCapabilitiesSnapshot,
+} = require('../local-model-capabilities');
+const {
+  parseStructuredJsonOutput,
+  takeStartupSummaryItems,
+} = require('./startup-output-utils');
+const { createProblemOrchestrator } = require('../problem-orchestrator');
+const {
+  recordRecallUsageFromMessage,
+} = require('../memory-recall');
+const {
+  createDefaultMemoryBroker,
+  prependRecallToMessage,
+  messageReferencesPastWork,
+} = require('../memory-broker');
+const {
+  readPairedConfig,
+  writePairedConfig,
+} = require('./device-pairing-store');
+const {
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+  buildInjectMessageIpcPackets,
+  getUtf8ByteLength,
+} = require('../inject-message-ipc');
+const {
+  appendBusTraceEvent,
+  createPayloadFingerprint,
+} = require('../bus-reliability-trace');
+const { createPtyOutputFilter } = require('./pty-output-filter');
+const {
+  createPaneFailureMonitor,
+  isStalePtyGeneration,
+  resolvePaneFailureCliHint,
+} = require('./pane-failure-monitor');
+const IS_DARWIN = process.platform === 'darwin';
+const PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS = IS_DARWIN ? 900 : 1500;
+const PANE_HOST_BOOTSTRAP_LOADING_GRACE_MS = IS_DARWIN ? 20000 : 45000;
+const PANE_HOST_READY_GRACE_AFTER_LOAD_MS = IS_DARWIN ? 1500 : 4000;
+const APP_IDLE_THRESHOLD_MS = 30000;
+const DEFAULT_AGENT_RESPONSE_WATCHDOG_MS = 15 * 60 * 1000;
+const CONSOLE_LOG_FLUSH_INTERVAL_MS = 500;
+const PTY_DATA_IPC_BATCH_INTERVAL_MS = Number.parseInt(
+  process.env.SQUIDRUN_PTY_DATA_IPC_BATCH_INTERVAL_MS || '16',
+  10
+);
+const STARTUP_READY_BUFFER_MAX = 4096;
+const TELEGRAM_REPLY_WINDOW_MS = Number.parseInt(
+  process.env.SQUIDRUN_TELEGRAM_REPLY_WINDOW_MS || String(5 * 60 * 1000),
+  10
+);
+const TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS || '5000', 10) || 5_000
+);
+const TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS = Math.max(
+  0,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS || '5000', 10) || 5_000
+);
+// Pane output is printed BEFORE the architect runs `hm-send telegram`, and a
+// real reply takes minutes of context reads, not seconds. The pane-output nag
+// uses a SLIDING IDLE window: every new output line re-arms the timer, so debt
+// asserts only when the pane goes quiet without telegram egress. On expiry the
+// journal is re-checked - a reply that landed suppresses the nag entirely, and
+// only one nag is ever emitted per inbound.
+const TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS = Math.max(
+  0,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS || '90000', 10) || 90_000
+);
+// Continuous output must not dodge the debt forever: the nag fires no later
+// than this long after the first un-replied output, even if the pane never
+// goes idle. Kept under TELEGRAM_REPLY_WINDOW_MS (5 min) so the capped nag
+// still lands while the guard is fresh.
+const TELEGRAM_REPLY_GUARD_MAX_DEFER_MS = Math.max(
+  TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_MAX_DEFER_MS || '240000', 10) || 240_000
+);
+const TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS || '30000', 10) || 30_000
+);
+const TERMINAL_PENDING_TELEGRAM_REPLY_GUARD_STATUSES = new Set([
+  'telegram_reply_required_expired_unresolved',
+  'telegram_reply_required_phone_escalated',
+  'telegram_reply_required_phone_escalated_unresolved',
+]);
+const TELEGRAM_REPLY_DEDUPE_WINDOW_MS = Math.max(
+  5_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_REPLY_DEDUPE_WINDOW_MS || '45000', 10) || 45_000
+);
+const TELEGRAM_STRAY_NEGATION_WINDOW_MS = Math.max(
+  10_000,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_STRAY_NEGATION_WINDOW_MS || String(2 * 60 * 1000), 10) || (2 * 60 * 1000)
+);
+const TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS = Math.max(
+  TELEGRAM_REPLY_DEDUPE_WINDOW_MS,
+  Number.parseInt(process.env.SQUIDRUN_TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS || String(10 * 60 * 1000), 10) || (10 * 60 * 1000)
+);
+const MIRA_TELEGRAM_FIRST_CONTACT_TEXT = 'Mira speaking here now.';
+const MIRA_TELEGRAM_FRUSTRATION_INPUT_PATTERN =
+  /\b(fuck|wtf|ugh+|worthless|waste[sd]? (?:my )?time|tired of you|go fix yourself|wrong model|chat\s*gpt|back to the same|same chatgpt|same chat gpt|fuck off)\b/i;
+const MIRA_TELEGRAM_META_REPAIR_REPLY_PATTERN =
+  /\b(yeah\.?\s+(?:you(?:'re| are) right|fair)|i(?:'m| am) (?:the )?wrong model|model|persona|output|voice|machinery|assistant|chat\s*gpt|self-critique|i (?:failed|missed|drifted|slipped|overcorrected)|i(?:'ll| will) (?:be|stay|get) (?:more )?(?:direct|better)|should(?:'ve| have) said|wasted your time|bad turn|dress it up|backing off|held that reply|open mira lab|diagnostics)\b/i;
+const MIRA_TELEGRAM_META_REPAIR_CONTAINMENT_TEXT = "No. I'm stopping here.";
+const TEAM_MEMORY_BACKFILL_LIMIT = Number.parseInt(process.env.SQUIDRUN_TEAM_MEMORY_BACKFILL_LIMIT || '5000', 10);
+const TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS = Number.parseInt(
+  process.env.SQUIDRUN_TEAM_MEMORY_INTEGRITY_SWEEP_MS || String(24 * 60 * 60 * 1000),
+  10
+);
+const TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS = Number.parseInt(
+  process.env.SQUIDRUN_TEAM_MEMORY_PATTERN_SWEEP_MS || String(60 * 1000),
+  10
+);
+const TEAM_MEMORY_BLOCK_GUARD_PROFILE = String(process.env.SQUIDRUN_TEAM_MEMORY_BLOCK_GUARD_PROFILE || 'jest-suite').trim() || 'jest-suite';
+const APP_STARTUP_SESSION_RETRY_LIMIT = 3;
+const APP_SESSION_COUNTER_FLOOR = Math.max(
+  1,
+  Number.parseInt(process.env.SQUIDRUN_SESSION_COUNTER_FLOOR || '170', 10) || 170
+);
+const AUTO_HANDOFF_INTERVAL_MS = Number.parseInt(process.env.SQUIDRUN_AUTO_HANDOFF_INTERVAL_MS || '30000', 10);
+const AUTO_HANDOFF_ENABLED = process.env.SQUIDRUN_AUTO_HANDOFF_ENABLED !== '0';
+const BRIDGE_FLAP_WINDOW_MS = Number.parseInt(process.env.SQUIDRUN_BRIDGE_FLAP_WINDOW_MS || '60000', 10);
+const TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS = Number.parseInt(
+  process.env.SQUIDRUN_TEAM_MEMORY_TAGGED_CLAIM_SWEEP_MS || '30000',
+  10
+);
+const BRIDGE_READY_WAIT_TIMEOUT_MS = Number.parseInt(
+  process.env.SQUIDRUN_BRIDGE_READY_WAIT_TIMEOUT_MS || '5000',
+  10
+);
+const DAEMON_CONNECT_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_DAEMON_CONNECT_TIMEOUT_MS || '15000', 10) || 15000
+);
+const BOOT_SESSION_SCOPE_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_BOOT_SESSION_SCOPE_TIMEOUT_MS || '20000', 10) || 20000
+);
+const BOOT_LAUNCH_WINDOWS_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_BOOT_LAUNCH_WINDOWS_TIMEOUT_MS || '20000', 10) || 20000
+);
+const BOOT_STARTUP_HEALTH_TIMEOUT_MS = Math.max(
+  1000,
+  Number.parseInt(process.env.SQUIDRUN_BOOT_STARTUP_HEALTH_TIMEOUT_MS || '20000', 10) || 20000
+);
+const VISIBLE_INJECT_DELIVERY_DEDUPE_TTL_MS = Math.max(
+  10000,
+  Number.parseInt(process.env.SQUIDRUN_VISIBLE_INJECT_DEDUPE_TTL_MS || '300000', 10) || 300000
+);
+const VISIBLE_INJECT_DELIVERY_DEDUPE_MAX = Math.max(
+  100,
+  Number.parseInt(process.env.SQUIDRUN_VISIBLE_INJECT_DEDUPE_MAX || '2000', 10) || 2000
+);
+const DAEMON_PID_FILE = resolveCoordPath('runtime/daemon.pid', { forWrite: true });
+const SUPERVISOR_DAEMON_SCRIPT = path.join(__dirname, '..', '..', 'supervisor-daemon.js');
+const SUPERVISOR_PID_FILE = resolveCoordPath('runtime/supervisor.pid', { forWrite: true });
+const SUPERVISOR_STATUS_FILE = resolveCoordPath('runtime/supervisor-status.json', { forWrite: true });
+const SUPERVISOR_LOG_FILE = resolveCoordPath('runtime/supervisor.log', { forWrite: true });
+const SUPERVISOR_STATUS_STALE_MULTIPLIER = Math.max(
+  3,
+  Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MULTIPLIER || '4', 10) || 4
+);
+const SUPERVISOR_STATUS_STALE_MIN_MS = Math.max(
+  15000,
+  Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_STATUS_STALE_MIN_MS || '15000', 10) || 15000
+);
+const RENDERER_ENTRY_HTML = path.join(__dirname, '..', '..', 'index.html');
+// Short by design: this is a courtesy line, not a delivery guarantee.
+const QUIT_NOTICE_TIMEOUT_MS = 4000;
+const QUIT_TELEGRAM_NOTICE = 'SquidRun is quitting. Telegram is going offline; '
+  + 'messages sent while the app is closed will not be seen or answered until you reopen SquidRun.';
+const SHUTDOWN_CONFIRM_MESSAGE = 'This stops panes, daemon, pollers, and background services.\n\n'
+  + 'Telegram polling goes offline too: messages sent while SquidRun is closed will not be seen or answered until you reopen it. Telegram may hold them for pickup within its retention window.'
+  + '\n\nContinue?';
+const EXTERNAL_WORKSPACE_DIRNAME = DEFAULT_EXTERNAL_WORKSPACE_DIRNAME;
+const ONBOARDING_STATE_FILENAME = 'onboarding-state.json';
+const FRESH_INSTALL_MARKER_FILENAME = 'fresh-install.json';
+const PACKAGED_BIN_RUNTIME_RELATIVE = path.join('.squidrun', 'bin', 'runtime', 'ui');
+const PACKAGED_RUNTIME_DEPENDENCIES = Object.freeze({
+  '@xenova/transformers': '^2.17.2',
+  dotenv: '^17.2.3',
+  'sqlite-vec': '^0.1.9',
+  ws: '^8.18.0',
+});
+const PACKAGED_MEMORY_MODEL_CACHE_RELATIVE = path.join('workspace', 'memory', 'models');
+const WINDOWS_APP_USER_MODEL_ID = 'com.squidrun.app';
+const AUTONOMOUS_SMOKE_RUNNER_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-smoke-runner.js');
+const HM_SEND_SCRIPT_PATH = path.join(__dirname, '..', '..', 'scripts', 'hm-send.js');
+const AUTONOMOUS_SMOKE_TIMEOUT_MS = Math.max(
+  15000,
+  Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_TIMEOUT_MS || '120000', 10) || 120000
+);
+const AUTONOMOUS_SMOKE_COOLDOWN_MS = Math.max(
+  0,
+  Number.parseInt(process.env.SQUIDRUN_AUTONOMOUS_SMOKE_COOLDOWN_MS || '15000', 10) || 15000
+);
+const SCOPED_PROFILE_CHAT_ID = '2222222222';
+
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
+
+function asString(value, fallback = '') {
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
+function isAsarScriptPath(scriptPath) {
+  const normalized = String(scriptPath || '').replace(/\\/g, '/').toLowerCase();
+  return normalized.includes('/app.asar/');
+}
+
+function resolveSupervisorLaunchExecutable(scriptPath = SUPERVISOR_DAEMON_SCRIPT) {
+  const override = toNonEmptyString(process.env.SQUIDRUN_SUPERVISOR_NODE_PATH);
+  if (override) {
+    return {
+      executable: override,
+      env: { ...process.env },
+    };
+  }
+
+  const currentExecPath = String(process.execPath || '').trim();
+  const execBaseName = path.basename(currentExecPath).toLowerCase();
+  const runningInsideElectron = Boolean(process.versions?.electron);
+  const currentExecIsNode = execBaseName === 'node' || execBaseName === 'node.exe';
+
+  if (!runningInsideElectron || currentExecIsNode) {
+    return {
+      executable: currentExecPath,
+      env: { ...process.env },
+    };
+  }
+
+  if (isAsarScriptPath(scriptPath) && currentExecPath) {
+    return {
+      executable: currentExecPath,
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+      },
+    };
+  }
+
+  const fallbackExecutable = process.platform === 'win32' ? 'node.exe' : 'node';
+  const fallbackEnv = { ...process.env };
+  delete fallbackEnv.ELECTRON_RUN_AS_NODE;
+
+  return {
+    executable: fallbackExecutable,
+    env: fallbackEnv,
+  };
+}
+
+function stripAnsiForStartupReady(value) {
+  return stripAnsi(value);
+}
+
+function hasCliStartupReadySignal(buffer = '') {
+  const text = stripAnsiForStartupReady(buffer);
+  if (!text) return false;
+  return (
+    /(^|\n)\s*>\s*(?:\n|$)/m.test(text)
+    || /(^|\n)\s*(?:codex|claude|gemini|cursor)>\s*/im.test(text)
+    || /how can i help/i.test(text)
+    || /gemini cli/i.test(text)
+  );
+}
+
+const RUNTIME_LIFECYCLE_STATE = Object.freeze({
+  STOPPED: 'stopped',
+  STARTING: 'starting',
+  RUNNING: 'running',
+  STOPPING: 'stopping',
+});
+
+const ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS = Object.freeze({
+  [RUNTIME_LIFECYCLE_STATE.STOPPED]: new Set([RUNTIME_LIFECYCLE_STATE.STARTING]),
+  [RUNTIME_LIFECYCLE_STATE.STARTING]: new Set([RUNTIME_LIFECYCLE_STATE.RUNNING, RUNTIME_LIFECYCLE_STATE.STOPPED]),
+  [RUNTIME_LIFECYCLE_STATE.RUNNING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPING]),
+  [RUNTIME_LIFECYCLE_STATE.STOPPING]: new Set([RUNTIME_LIFECYCLE_STATE.STOPPED]),
+});
+
+function fingerprintSecret(value) {
+  const text = toNonEmptyString(value);
+  if (!text) return null;
+  return createHash('sha256').update(text).digest('hex').slice(0, 16);
+}
+
+/**
+ * S464 telegram-loss fix: main-side materializer for oversized direct-pane
+ * payloads. Writes the SAME file contract the renderer's long-hm-send path
+ * uses (coord/full-agent-messages, same header block) and returns a short
+ * pane pointer that always fits under the chunk threshold. The pointer
+ * PRESERVES a leading [Telegram from ...] marker so pane reply-routing
+ * discipline still triggers on materialized user messages.
+ */
+/**
+ * S483 NERVOUS-SYSTEM FIX: receipt-verified submit for EVERY pane delivery.
+ *
+ * 77% of agent messages (443/578 over 7 days) returned
+ * 'accepted.daemon_pty_unverified' - routed, arrival unknown. That was never a
+ * missing mechanism: appendReceiptMarkerToPrompt already stamps EVERY message,
+ * the hook already records prompt_submit receipts, and a receipt-verified
+ * submit loop already existed - it was wired into the materialized-pointer
+ * branch ONLY. The normal path wrote bytes, declared them unverified, and
+ * threw away proof it had already asked for.
+ *
+ * A prompt receipt is the strongest proof when that runtime actually produces
+ * one. It is NOT a safe actuator by itself: Codex has historically produced no
+ * model-prompt receipts even while accepting and answering messages. Missing
+ * proof therefore stays an observation, never permission to press Enter.
+ *
+ * Deliberately asynchronous: it does not change the caller's return contract
+ * or add latency to the send. The truth lands in the bus trace within seconds,
+ * which is what makes "did it arrive" answerable instead of assumed.
+ */
+// Verification schedule. The original 3.5s + 4s window was WRONG for this
+// workload and produced false negatives on its first live day: an agent pane
+// that is mid-turn cannot submit an inbound prompt until its current turn
+// ends, which routinely takes minutes. A message sitting correctly in a busy
+// pane's queue was being recorded as unverified. A receipt that lies in the
+// durable direction is worse than an honest unknown, so the window now spans
+// a realistic turn.
+const SUBMIT_VERIFY_SCHEDULE_MS = [4_000, 15_000, 45_000, 120_000, 300_000];
+const SUBMIT_OUTPUT_SETTLE_MS = 1_000;
+
+function readDaemonPaneActivityAt(daemonClient, paneId) {
+  const activity = daemonClient?.lastActivity;
+  if (!activity || typeof activity.get !== 'function') return 0;
+  const value = activity.get(String(paneId)) ?? activity.get(paneId);
+  const normalized = Number(value);
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+}
+
+/**
+ * Corroborate that a pane is alive after one accepted write without claiming
+ * exact-message consumption. A later agent response is the strongest signal;
+ * later PTY output is enough to rule out "the pane is stuck" after the input
+ * echo settle window. Neither signal is promoted to a prompt receipt.
+ */
+function findPaneSubmitCorroboration({
+  paneId,
+  daemonClient,
+  startedAtMs,
+  baselineOutputAtMs,
+}) {
+  const targetRole = resolveCanonicalRoleForPaneId(paneId);
+  if (targetRole) {
+    try {
+      const rows = queryCommsJournalEntries({
+        senderRole: targetRole,
+        sinceMs: startedAtMs,
+        order: 'asc',
+        limit: 1,
+      }) || [];
+      const response = Array.isArray(rows) ? rows[0] : null;
+      if (response) {
+        return {
+          kind: 'target_activity',
+          reason: 'target_agent_output_after_delivery',
+          rowId: response.rowId || null,
+          messageId: response.messageId || null,
+        };
+      }
+    } catch (error) {
+      log.warn('PaneDelivery', `submit activity journal check failed for pane ${paneId}: ${error.message}`);
+    }
+  }
+
+  const outputAtMs = readDaemonPaneActivityAt(daemonClient, paneId);
+  const outputFloorMs = Math.max(
+    Number(baselineOutputAtMs) || 0,
+    (Number(startedAtMs) || 0) + SUBMIT_OUTPUT_SETTLE_MS
+  );
+  if (outputAtMs > outputFloorMs) {
+    return {
+      kind: 'pane_output',
+      reason: 'pane_output_after_delivery',
+      outputAtMs,
+    };
+  }
+  return null;
+}
+
+/**
+ * Write an exact prompt receipt back to the comms journal so the trace and
+ * ledger cannot disagree about that proven fact.
+ *
+ * The 77% figure is read from comms_journal.ack_status - that column is the
+ * system of record and what any future audit queries. Corroborating activity
+ * deliberately never reaches this function because "pane alive" is not the
+ * same claim as "this exact prompt was submitted."
+ */
+function writeVerifiedSubmitReceiptToJournal({ receiptId, paneId, reason }) {
+  if (!receiptId) return;
+  try {
+    const existing = queryCommsJournalEntries({ messageId: receiptId, limit: 1 }) || [];
+    const row = Array.isArray(existing) ? existing[0] : null;
+    if (!row) return; // never invent a journal row from the verifier
+    appendCommsJournalEntry({
+      ...row,
+      messageId: receiptId,
+      ackStatus: 'prompt_submitted.receipt_verified',
+      metadata: {
+        ...((row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)) ? row.metadata : {}),
+        submitVerification: { verified: true, reason, paneId, resolvedAtMs: Date.now() },
+      },
+    });
+  } catch (error) {
+    log.warn('PaneDelivery', `journal verdict writeback failed for ${receiptId}: ${error.message}`);
+  }
+}
+
+function scheduleReceiptVerifiedSubmit({
+  receiptId,
+  paneId,
+  paneRuntime,
+  daemonClient,
+  schedule = SUBMIT_VERIFY_SCHEDULE_MS,
+}) {
+  if (!receiptId || !daemonClient) return;
+  const startedAtMs = Date.now();
+  const baselineOutputAtMs = readDaemonPaneActivityAt(daemonClient, paneId);
+  let corroboration = null;
+  const verify = (attempt) => {
+    try {
+      const receipt = getModelPromptReceipt(receiptId);
+      if (receipt) {
+        const reason = `receipt_${receipt.semanticEvent || 'prompt_submit'}_attempt_${attempt}`;
+        appendBusTraceEvent({
+          eventType: 'pane_submit_receipt_verified',
+          messageId: receiptId,
+          deliveryId: null,
+          paneId,
+          success: true,
+          verified: true,
+          status: 'submit_receipt_verified',
+          mode: 'daemon-pty',
+          paneRuntime,
+          reason,
+        });
+        writeVerifiedSubmitReceiptToJournal({ receiptId, paneId, reason });
+        return;
+      }
+      corroboration = corroboration || findPaneSubmitCorroboration({
+        paneId,
+        daemonClient,
+        startedAtMs,
+        baselineOutputAtMs,
+      });
+      if (attempt < schedule.length) {
+        const next = setTimeout(() => verify(attempt + 1), schedule[attempt]);
+        if (typeof next.unref === 'function') next.unref();
+        return;
+      }
+      if (corroboration) {
+        log.info(
+          'PaneDelivery',
+          `submit receipt absent for pane ${paneId} (${receiptId}), but ${corroboration.reason} disproves a stuck-pane verdict`
+        );
+        appendBusTraceEvent({
+          eventType: 'pane_submit_not_stuck_corroborated',
+          messageId: receiptId,
+          deliveryId: null,
+          paneId,
+          success: true,
+          verified: false,
+          status: 'submit_not_stuck.corroborated',
+          mode: 'daemon-pty',
+          paneRuntime,
+          reason: corroboration.reason,
+          corroboration,
+        });
+        return;
+      }
+      log.warn(
+        'PaneDelivery',
+        `SUBMIT OBSERVATION PENDING for pane ${paneId} (${receiptId}) - no prompt_submit receipt or later pane activity; no corrective Enter sent`
+      );
+      appendBusTraceEvent({
+        eventType: 'pane_submit_observation_pending',
+        messageId: receiptId,
+        deliveryId: null,
+        paneId,
+        success: true,
+        verified: false,
+        status: 'submit_observation_pending',
+        mode: 'daemon-pty',
+        paneRuntime,
+        reason: 'no_receipt_or_corroborating_activity_within_full_window',
+      });
+    } catch (error) {
+      log.warn('PaneDelivery', `receipt verification failed for ${receiptId}: ${error.message}`);
+    }
+  };
+  const timer = setTimeout(() => verify(1), schedule[0]);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+function materializeOversizedPanePayload(text, context = {}) {
+  try {
+    const body = String(text || '');
+    const messageId = toNonEmptyString(context.messageId) || `oversized-${Date.now()}`;
+    // Filename capped at 48 chars: the pointer must fit a 256-byte budget
+    // (DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) and the path is its
+    // biggest line item.
+    const safeSegment = messageId.replace(/[^A-Za-z0-9._-]+/g, '-').replace(/\.{2,}/g, '-').replace(/^[.-]+/, '').slice(0, 48) || 'message';
+    const fullDir = resolveCoordPath('coord/full-agent-messages', { forWrite: true });
+    fs.mkdirSync(fullDir, { recursive: true });
+    const filePath = path.join(fullDir, `${safeSegment}.txt`);
+    const sha256 = createHash('sha256').update(body, 'utf8').digest('hex');
+    const bytes = getUtf8ByteLength(body);
+    fs.writeFileSync(filePath, [
+      'SQUIDRUN FULL AGENT MESSAGE',
+      `createdAt: ${new Date().toISOString()}`,
+      `messageId: ${messageId}`,
+      `deliveryId: ${toNonEmptyString(context.deliveryId) || ''}`,
+      `paneId: ${toNonEmptyString(context.paneId) || ''}`,
+      `bytesUtf8: ${bytes}`,
+      `sha256: ${sha256}`,
+      '',
+      'The pane-visible message was shortened so pane delivery cannot silently drop oversized payloads.',
+      'Read the full message below before acting or replying.',
+      '',
+      '--- FULL MESSAGE START ---',
+      body,
+      '--- FULL MESSAGE END ---',
+      '',
+    ].join('\n'), 'utf8');
+    const displayPath = `.squidrun/coord/full-agent-messages/${safeSegment}.txt`;
+    // S465 live-test lesson: the first pointer format carried HEAD/TAIL
+    // previews (~900 bytes) against a 256-byte direct-write threshold - the
+    // fallback was structurally dead on arrival and the Architect's reboot
+    // brief proved it in the trace. The pointer is now BUDGETED: marker +
+    // path + one directive, hard-trimmed to fit, previews live in the file.
+    const telegramMarker = body.match(/^\s*(\[Telegram[^\]]*\])/i);
+    // WHO IT IS FROM AND WHAT IT SAYS, INSIDE THE SAME BUDGET (Operator 2026-08-05).
+    // The budgeted pointer fit in ~120 of the 256 bytes and spent none of the
+    // remainder on anything a reader wants. An agent message arrived as a bare
+    // path: no sender, no subject, and the only way to learn either was to open
+    // a file. Operator, on a phone, reasonably refuses to. A pointer nobody can act
+    // on without a second step is a notification that failed.
+    const agentMarker = body.match(/\((BUILDER|ORACLE|ARCHITECT|SYSTEM WATCHDOG)[^)]*\)/i);
+    const prefix = telegramMarker
+      ? `${telegramMarker[1].slice(0, 40)} `
+      : (agentMarker ? `[${agentMarker[1].toUpperCase()}] ` : '');
+    // First real line of the payload, headers and markers stripped, so the
+    // preview is the message rather than its envelope.
+    const firstLine = String(body)
+      .replace(/^\s*\[(Telegram|AGENT MSG)[^\]]*\]\s*:?\s*/i, '')
+      .replace(/^\s*\((BUILDER|ORACLE|ARCHITECT|SYSTEM WATCHDOG)[^)]*\)\s*:?\s*/i, '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) || '';
+    const build = (preview) => (
+      preview
+        ? `${prefix}"${preview}" -- FULL MSG AT ${displayPath}`
+        : `${prefix}FULL MSG AT ${displayPath}`
+    );
+    // Widest preview that still fits, shortened until it does. Never grows the
+    // pointer past the threshold that made the fallback dead on arrival before.
+    let pointerText = build('');
+    for (const width of [110, 80, 55, 35]) {
+      const candidate = build(firstLine.slice(0, width));
+      if (getUtf8ByteLength(candidate) < DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+        pointerText = candidate;
+        break;
+      }
+    }
+    return { pointerText, filePath, displayPath, bytes, sha256 };
+  } catch (err) {
+    log.error('PaneDelivery', `materializeOversizedPanePayload failed: ${err.message}`);
+    return null;
+  }
+}
+
+// Matches CSI sequences (ESC [ ... cmd), OSC strings (ESC ] ... BEL/ST), and
+// single-char ESC controls - the building blocks of TUI repaint frames.
+const PTY_ANSI_CONTROL_PATTERN = new RegExp(
+  '\\u001b\\[[0-9;?]*[ -\\/]*[@-~]'
+  + '|\\u001b\\][^\\u0007\\u001b]*(?:\\u0007|\\u001b\\\\)?'
+  + '|\\u001b[@-_]',
+  'g'
+);
+
+// Reduce a raw PTY chunk to its printable payload: strip ANSI control
+// sequences and control characters, collapse whitespace. Used to tell
+// meaningful agent output apart from status-line/spinner repaint noise.
+function extractPrintablePtyPayload(text) {
+  return String(text || '')
+    .replace(PTY_ANSI_CONTROL_PATTERN, '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toBooleanFlag(value, fallback = false) {
+  if (value === true || value === false) return value;
+  if (value === 1 || value === 0) return Boolean(value);
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function isSquidRoomWindowKey(value) {
+  return String(value || '').trim().toLowerCase() === 'squid-room';
+}
+
+function isTelegramAgentOpsOrCommandText(value) {
+  const text = toNonEmptyString(value);
+  if (!text) return false;
+  if (text.startsWith(AGENT_MESSAGE_PREFIX)) return true;
+  if (/^\/\S+/.test(text)) return true;
+  if (/^\((?:ARCHITECT|ARCH|BUILDER|BUILD|ORACLE)\s+#\d+\)\s*:/i.test(text)) return true;
+  if (/^(?:architect|builder|oracle)\s*:/i.test(text)) return true;
+  return false;
+}
+
+function parseJsonMessage(raw) {
+  try {
+    const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
+    return JSON.parse(text);
+  } catch (_) {
+    return null;
+  }
+}
+
+function waitForSocketMessage(ws, predicate, timeoutMs, timeoutLabel) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(timeoutLabel || 'Timed out waiting for socket response'));
+    }, timeoutMs);
+
+    const onMessage = (raw) => {
+      const message = parseJsonMessage(raw);
+      if (!message || !predicate(message)) return;
+      cleanup();
+      resolve(message);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error('Socket closed before response'));
+    };
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
+
+    function cleanup() {
+      clearTimeout(timeout);
+      ws.off('message', onMessage);
+      ws.off('close', onClose);
+      ws.off('error', onError);
+    }
+
+    ws.on('message', onMessage);
+    ws.on('close', onClose);
+    ws.on('error', onError);
+  });
+}
+
+function closeSocketBestEffort(ws) {
+  return new Promise((resolve) => {
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+      resolve();
+      return;
+    }
+    const timeout = setTimeout(() => {
+      try {
+        ws.terminate();
+      } catch (_) {}
+      resolve();
+    }, 250);
+    ws.once('close', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    try {
+      ws.close();
+    } catch (_) {
+      clearTimeout(timeout);
+      resolve();
+    }
+  });
+}
+
+function formatLocalClockTime(value = Date.now()) {
+  const date = value instanceof Date ? value : new Date(value);
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
+}
+
+function stripLeadingAgentSequencePrefix(text = '') {
+  return String(text || '')
+    .replace(/^\([A-Z][A-Z0-9 _-]*#?\d+\):\s*/i, '')
+    .trim();
+}
+
+function isStructuredConsultationReplyPayload(content) {
+  const text = toNonEmptyString(content);
+  if (!text) return false;
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace < 0 || lastBrace <= firstBrace) return false;
+  try {
+    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1));
+    return Boolean(
+      toNonEmptyString(parsed?.requestId)
+      && toNonEmptyString(parsed?.agentId)
+      && Array.isArray(parsed?.signals)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isAcknowledgementOnlyAgentUpdate(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  if (/\bno substantive task\b/i.test(text)) return true;
+  if (/\bno resend needed\b/i.test(text)) return true;
+  if (/\bnothing substantive missed\b/i.test(text)) return true;
+  if (/\bnothing additional to resend\b/i.test(text)) return true;
+
+  if (!/^(copy|ack(?:nowledged)?|confirmed|received|aligned|alignment confirmed|stand(?:ing)? by)\b/i.test(text)) {
+    return false;
+  }
+
+  return !/\b(task|proof|investigat|analy[sz]e|review|write|implement|urgent|priority|objective|scope|validation|acceptance|deadline|reply|resend|please|need|check if)\b/i.test(text);
+}
+
+function isExplicitAgentTaskRequest(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  if (/^\[TASK\]/i.test(text)) return true;
+  if (/^TASK\s*:/i.test(text)) return true;
+  if (/\bneed from you\b/i.test(text)) return true;
+  if (/\b(can|could|would) you\b/i.test(text)) return true;
+  if (/\bplease\b/i.test(text)) return true;
+  if (/\bcheck if\b/i.test(text)) return true;
+  if (/\breply via\b/i.test(text)) return true;
+  if (/\bdeadline:\b/i.test(text)) return true;
+  if (/[?]\s*$/.test(text)) return true;
+
+  return /^(analy[sz]e|review|investigat(?:e|ion)?|check|verify|confirm|resend|reply|read|write|implement|fix|summari[sz]e|ask|send)\b/i.test(text);
+}
+
+function stripExplicitNoResponseDirective(content) {
+  return stripLeadingAgentSequencePrefix(content)
+    .replace(
+      /\bno\s+(?:further\s+)?(?:reply|response|acknowledg(?:e|e?ment))(?:\s+or\s+[a-z-]+){0,3}\s+(?:is\s+)?(?:needed|required|necessary)\b[.!;:]?/gi,
+      ' '
+    )
+    .replace(
+      /\b(?:do\s+not|don't)\s+(?:reply|respond|acknowledge)\b[^\r\n.;]*[.;]?/gi,
+      ' '
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasExplicitNoResponseDirective(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  return stripExplicitNoResponseDirective(text) !== text.replace(/\s+/g, ' ').trim();
+}
+
+function hasExplicitAgentResponseRequestOutsideNoResponseDirective(content) {
+  const text = stripExplicitNoResponseDirective(content);
+  if (!text) return false;
+  return /\b(?:reply|respond|report(?:\s+back)?|acknowledg(?:e|e?ment)|confirm\s+(?:receipt|delivery)|(?:return|send|provide|post)\s+(?:(?:a|the|your)\s+)?(?:pass\s*\/\s*hold|pass|hold|verdict|results?|findings?)|tell\s+(?:me|us)|let\s+(?:me|us)\s+know)\b/i.test(text);
+}
+
+const WATCHDOG_ACCEPTED_DELIVERY_STATUSES = new Set([
+  'accepted.unverified',
+  'accepted.daemon_pty_unverified',
+  'submit_pending_input',
+]);
+
+const SCOPED_TELEGRAM_TERMINAL_ACCEPTED_STATUSES = new Set([
+  'accepted.unverified',
+  'accepted.daemon_pty_unverified',
+  'submit_pending_input',
+]);
+
+function normalizeWatchdogDeliveryStatus(value) {
+  return toNonEmptyString(value)?.toLowerCase() || '';
+}
+
+function isWatchdogAcceptedDeliveryStatus(value) {
+  return WATCHDOG_ACCEPTED_DELIVERY_STATUSES.has(normalizeWatchdogDeliveryStatus(value));
+}
+
+function isScopedTelegramTerminalAcceptedStatus(value) {
+  return SCOPED_TELEGRAM_TERMINAL_ACCEPTED_STATUSES.has(normalizeWatchdogDeliveryStatus(value));
+}
+
+function isTerminalAcceptedDeliveryResult(result) {
+  return result?.accepted === true
+    && WATCHDOG_ACCEPTED_DELIVERY_STATUSES.has(normalizeWatchdogDeliveryStatus(result?.status));
+}
+
+function isFyiClassAgentMessage(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return false;
+  return (
+    /^\[FYI\](?:\s|$)/i.test(text)
+    || /^FYI\b\s*(?::|[\u2014\u2013-])?/i.test(text)
+    || /\btype\s*[:=]\s*['"]?FYI['"]?\b/i.test(text)
+    || /^\[SQUIDRUN SYNC\][\s\S]*\b\[FYI\]\b/i.test(text)
+  );
+}
+
+function shouldWatchdogAgentTask(content) {
+  const text = toNonEmptyString(content);
+  if (!text) return false;
+  if (isStructuredConsultationReplyPayload(text)) return false;
+  if (isFyiClassAgentMessage(text)) return false;
+  if (isAcknowledgementOnlyAgentUpdate(text)) return false;
+  if (/\bstanding by\b/i.test(text)) return false;
+  if (/\[WATCHDOG\]/i.test(text)) return false;
+  if (hasExplicitNoResponseDirective(text)) {
+    return hasExplicitAgentResponseRequestOutsideNoResponseDirective(text);
+  }
+  return isExplicitAgentTaskRequest(text);
+}
+
+const WATCHDOG_ELIGIBLE_AGENT_ROLES = new Set(['architect', 'builder', 'oracle']);
+const WATCHDOG_INTENTIONAL_AUTONOMY_STATES = new Set([
+  'auto_proceed',
+  'intentional_hold',
+  'no_ack_needed',
+]);
+
+function normalizeWatchdogAgentRole(role) {
+  const normalized = toNonEmptyString(role)?.toLowerCase();
+  if (!normalized || !WATCHDOG_ELIGIBLE_AGENT_ROLES.has(normalized)) return null;
+  return normalized;
+}
+
+function extractWatchdogRedirectedResponseDirective(content) {
+  const text = stripLeadingAgentSequencePrefix(content);
+  if (!text) return null;
+  const match = text.match(/\breply\b([^\r\n.]{0,120}?)\bto\s+(architect|arch|builder|oracle)\b/i);
+  if (!match) return null;
+
+  const recipientRole = normalizeWatchdogAgentRole(
+    String(match[2] || '').toLowerCase() === 'arch' ? 'architect' : match[2]
+  );
+  if (!recipientRole) return null;
+
+  const expectedSignals = Array.from(new Set(
+    (String(match[1] || '').match(/\b(?:pass|hold|accept|accepted|reject|rejected|complete|completed|done|blocked|verified)\b/gi) || [])
+      .map((signal) => signal.toLowerCase())
+  ));
+  if (expectedSignals.length === 0) return null;
+
+  return { recipientRole, expectedSignals };
+}
+
+function isWatchdogRedirectedResponseProof(entry = {}, row = {}) {
+  const directive = extractWatchdogRedirectedResponseDirective(entry.content);
+  if (!directive) return false;
+
+  const expectedSenderRole = normalizeWatchdogAgentRole(entry.targetRole);
+  const candidateSenderRole = normalizeWatchdogAgentRole(row.senderRole || row.sender);
+  const candidateTargetRole = normalizeWatchdogAgentRole(row.targetRole || row.target);
+  if (!expectedSenderRole || candidateSenderRole !== expectedSenderRole) return false;
+  if (candidateTargetRole !== directive.recipientRole) return false;
+
+  const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+  const statusCandidates = [row.status, row.ackStatus, row.ack_status, metadata.status];
+  const hasDeliveryProof = metadata.deliveryVerified === true || statusCandidates.some((status) => (
+    ['routed', 'brokered', 'acked', 'delivered.verified'].includes(normalizeWatchdogDeliveryStatus(status))
+  ));
+  if (!hasDeliveryProof) return false;
+
+  const bodyTerms = new Set(normalizeWatchdogComparableText(row.rawBody || row.content).split(' ').filter(Boolean));
+  return directive.expectedSignals.some((signal) => bodyTerms.has(signal));
+}
+
+function resolveCanonicalRoleForPaneId(paneId) {
+  const normalizedPaneId = toNonEmptyString(paneId);
+  if (!normalizedPaneId) return null;
+  for (const [role, id] of Object.entries(ROLE_ID_MAP || {})) {
+    if (String(id) === normalizedPaneId) return role;
+  }
+  return null;
+}
+
+function createAgentResponseWatchdogKey(senderRole, targetRole) {
+  const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+  const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+  if (!normalizedSenderRole || !normalizedTargetRole) return null;
+  return `${normalizedSenderRole}->${normalizedTargetRole}`;
+}
+
+function normalizeWatchdogComparableText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function watchdogTextOverlaps(left, right) {
+  const normalizedLeft = normalizeWatchdogComparableText(left);
+  const normalizedRight = normalizeWatchdogComparableText(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  return normalizedLeft.includes(normalizedRight) || normalizedRight.includes(normalizedLeft);
+}
+
+function formatWatchdogAgentRef(ref) {
+  return ref?.role && Number.isInteger(Number(ref.seq)) ? `${ref.role}#${Number(ref.seq)}` : null;
+}
+
+function extractWatchdogWorkItemIds(content) {
+  const text = String(content || '');
+  const ids = [];
+  for (const match of text.matchAll(/\bwi-[a-z0-9_.:-]+\b/gi)) {
+    const id = String(match[0] || '').toLowerCase();
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+function buildWatchdogCorrelation(entry = {}) {
+  const content = toNonEmptyString(entry.content) || '';
+  const sourceRef = formatWatchdogAgentRef(parseLeadingAgentRef(content));
+  const directive = extractCurrentLaneDirective(content);
+  return {
+    sourceMessageId: toNonEmptyString(entry.sourceMessageId) || null,
+    sourceRef,
+    objective: toNonEmptyString(directive?.objective) || null,
+    workItemIds: extractWatchdogWorkItemIds(content),
+    rawContent: content,
+  };
+}
+
+function normalizeIntentionalAutonomyState(value) {
+  const normalized = toNonEmptyString(value)
+    ?.toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!normalized || !WATCHDOG_INTENTIONAL_AUTONOMY_STATES.has(normalized)) return null;
+  return normalized;
+}
+
+function findIntentionalAutonomyState(value) {
+  const direct = normalizeIntentionalAutonomyState(value);
+  if (direct) return direct;
+  if (!value || typeof value !== 'object') return null;
+  if (value.autoProceed === true || value.auto_proceed === true) return 'auto_proceed';
+  if (value.intentionalHold === true || value.intentional_hold === true) return 'intentional_hold';
+  if (value.noAckNeeded === true || value.no_ack_needed === true) return 'no_ack_needed';
+
+  const candidateKeys = [
+    'agentResponseWatchdogState',
+    'responseWatchdogState',
+    'watchdogState',
+    'autonomyState',
+    'ackState',
+    'acknowledgementState',
+    'state',
+    'status',
+    'mode',
+    'policy',
+    'reason',
+  ];
+  for (const key of candidateKeys) {
+    const nested = normalizeIntentionalAutonomyState(value[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function findRecordIntentionalAutonomyState(record = {}, depth = 0, seen = new Set()) {
+  if (!record || typeof record !== 'object') return null;
+  if (depth > 4 || seen.has(record)) return null;
+  seen.add(record);
+  const direct = findIntentionalAutonomyState(record);
+  if (direct) return direct;
+  const candidateKeys = [
+    'agentResponseWatchdog',
+    'responseWatchdog',
+    'watchdog',
+    'routeHealthRequirement',
+    'route_health_requirement',
+    'autonomy',
+    'ackPolicy',
+    'ack_policy',
+    'envelope',
+    'metadata',
+    'meta',
+  ];
+  for (const key of candidateKeys) {
+    const nested = findRecordIntentionalAutonomyState(record[key], depth + 1, seen);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function rowMatchesWatchdogResponseDirection(row = {}, senderRole = null, targetRole = null) {
+  const expectedSender = normalizeWatchdogAgentRole(senderRole);
+  const expectedTarget = normalizeWatchdogAgentRole(targetRole);
+  const rowSender = normalizeWatchdogAgentRole(row.senderRole || row.sender || row.fromRole);
+  const rowTarget = normalizeWatchdogAgentRole(row.targetRole || row.target || row.toRole);
+  if (!expectedSender || !expectedTarget || !rowSender) return false;
+  if (rowSender !== expectedTarget) return false;
+  if (rowTarget && rowTarget !== expectedSender) return false;
+  return true;
+}
+
+function findLedgerIntentionalAutonomyResolution(rows = [], senderRole = null, targetRole = null) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  for (const row of rows) {
+    if (!rowMatchesWatchdogResponseDirection(row, senderRole, targetRole)) continue;
+    const state = findRecordIntentionalAutonomyState(row);
+    if (!state) continue;
+    return {
+      row,
+      state,
+    };
+  }
+  return null;
+}
+
+function proofRoleForWatchdogTarget(targetRole) {
+  const role = normalizeWatchdogAgentRole(targetRole);
+  if (role === 'builder') return 'builder_code';
+  if (role === 'oracle') return 'oracle_verify';
+  return null;
+}
+
+function workItemMatchesWatchdogCorrelation(item = {}, correlation = {}) {
+  const itemId = toNonEmptyString(item.id)?.toLowerCase();
+  if (itemId && correlation.workItemIds.includes(itemId)) return true;
+  const sourceMessageIds = Array.isArray(item.sourceMessageIds) ? item.sourceMessageIds.map((id) => String(id || '')) : [];
+  if (correlation.sourceMessageId && sourceMessageIds.includes(correlation.sourceMessageId)) return true;
+  if (correlation.sourceRef && sourceMessageIds.includes(correlation.sourceRef)) return true;
+  if (correlation.objective && watchdogTextOverlaps(item.objective, correlation.objective)) return true;
+  return false;
+}
+
+function workItemHasTargetAcknowledgement(item = {}, targetRole = null) {
+  const proofRole = proofRoleForWatchdogTarget(targetRole);
+  if (!proofRole || !Array.isArray(item.proofs)) return false;
+  return item.proofs.some((proof) => String(proof?.role || '').toLowerCase() === proofRole);
+}
+
+function isWorkItemTerminal(item = {}) {
+  const state = String(item.state || '').toLowerCase();
+  return WORK_ITEM_TERMINAL_STATES.has(state) || item.closure?.closed === true;
+}
+
+function activeLaneMatchesWatchdogCorrelation(activeLane = {}, correlation = {}) {
+  if (!activeLane || typeof activeLane !== 'object') return false;
+  if (correlation.sourceMessageId && activeLane.sourceMessageId === correlation.sourceMessageId) return true;
+  if (correlation.sourceRef && activeLane.sourceRef === correlation.sourceRef) return true;
+  const laneIds = [
+    activeLane.workItemId,
+    activeLane.laneId,
+    activeLane.sourceRef,
+  ].map((id) => String(id || '').toLowerCase()).filter(Boolean);
+  if (correlation.workItemIds.some((id) => laneIds.includes(id))) return true;
+  if (correlation.objective && watchdogTextOverlaps(activeLane.objective, correlation.objective)) return true;
+  return false;
+}
+
+function isCurrentLaneTerminal(activeLane = {}, currentLane = {}) {
+  const laneStatus = String(activeLane?.status || currentLane?.status || '').toLowerCase();
+  return Boolean(laneStatus && laneStatus !== 'active' && laneStatus !== 'open' && laneStatus !== 'waiting_codex_visual');
+}
+
+function formatWatchdogCorrelationBlockers(blockers = []) {
+  const unique = [];
+  for (const blocker of Array.isArray(blockers) ? blockers : []) {
+    const text = toNonEmptyString(blocker);
+    if (text && !unique.includes(text)) unique.push(text);
+  }
+  if (unique.length === 0) return '';
+  return ` Closure correlation blockers: ${unique.slice(0, 5).join('; ')}.`;
+}
+
+class SquidRunApp {
+  constructor(appContext, managers) {
+    if (process.platform === 'win32' && typeof app.setAppUserModelId === 'function') {
+      app.setAppUserModelId(WINDOWS_APP_USER_MODEL_ID);
+    }
+
+    this.ctx = appContext;
+    this.settings = managers.settings;
+    this.activity = managers.activity;
+    this.usage = managers.usage;
+    this.cliIdentity = managers.cliIdentity;
+    this.firmwareManager = managers.firmwareManager;
+    this.kernelBridge = createKernelBridge(() => this.ctx.mainWindow);
+    this.paneRestartArbiter = createPaneRestartArbiter({
+      resolveOwner: (paneId) => this.resolvePaneRestartOwner(paneId),
+    });
+    if (typeof this.ctx.setPaneRestartArbiter === 'function') {
+      this.ctx.setPaneRestartArbiter(this.paneRestartArbiter);
+    } else {
+      this.ctx.paneRestartArbiter = this.paneRestartArbiter;
+    }
+    this.paneHostWindowManager = createPaneHostWindowManager({
+      getCurrentSettings: () => this.ctx.currentSettings || {},
+      onLifecycleEvent: (event) => this.handlePaneHostLifecycleEvent(event),
+    });
+    this.inboundPollerService = createInboundPollerService();
+    this.backgroundAgentManager = createBackgroundAgentManager({
+      getDaemonClient: () => this.ctx.daemonClient,
+      getSettings: () => this.ctx.currentSettings || {},
+      getSessionScopeId: () => this.commsSessionScopeId,
+      resolveBuilderCwd: () => {
+        const configured = this.ctx.currentSettings?.paneProjects?.[BACKGROUND_BUILDER_OWNER_PANE_ID];
+        const normalized = typeof configured === 'string' ? configured.trim() : '';
+        return normalized || path.resolve(path.join(WORKSPACE_PATH, '..'));
+      },
+      logActivity: (type, paneId, message, details) => this.activity.logActivity(type, paneId, message, details),
+      onStateChanged: (agents) => {
+        if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+          this.ctx.mainWindow.webContents.send('background-agents-state', {
+            agents,
+            targetMap: this.backgroundAgentManager.getTargetMap(),
+          });
+        }
+      },
+    });
+    this.problemOrchestrator = createProblemOrchestrator();
+    this.memoryBroker = Object.prototype.hasOwnProperty.call(managers, 'memoryBroker')
+      ? managers.memoryBroker
+      : createDefaultMemoryBroker({
+        providerTimeoutMs: process.env.SQUIDRUN_MEMORY_BROKER_TIMEOUT_MS || 900,
+      });
+    this.pendingAgentResponseWatchdogs = new Map();
+    try {
+      this.problemOrchestrator.ensureState();
+    } catch (error) {
+      log.warn('ProblemOrchestrator', `Failed ensuring active-cases state at startup: ${error.message}`);
+    }
+    this.lastDaemonOutputAtMs = Date.now();
+    this.daemonClientListeners = [];
+    this.consoleLogPath = path.join(WORKSPACE_PATH, 'console.log');
+    this.consoleLogWriter = createBufferedFileWriter({
+      filePath: this.consoleLogPath,
+      flushIntervalMs: CONSOLE_LOG_FLUSH_INTERVAL_MS,
+      ensureDir: () => {
+        fs.mkdirSync(path.dirname(this.consoleLogPath), { recursive: true });
+      },
+      onError: (err) => {
+        log.warn('App', `Failed to append to console.log: ${err.message}`);
+      },
+    });
+
+    this.cliIdentityForwarderRegistered = false;
+    this.triggerAckForwarderRegistered = false;
+    this.startupReadyBuffers = new Map();
+    this.pendingPtyDataByPane = new Map();
+    this.ptyDataFlushTimer = null;
+    this.ptyVisibleReleaseTimer = null;
+    this.visiblePtyOutputFilter = createPtyOutputFilter();
+    this.paneFailureMonitor = managers.paneFailureMonitor || createPaneFailureMonitor({
+      getSettings: () => this.ctx.currentSettings || {},
+      getSessionId: () => this.commsSessionScopeId || null,
+      getCliHint: (paneId) => resolvePaneFailureCliHint(paneId, this.ctx, this.cliIdentity),
+      appendJournal: (entry) => appendCommsJournalEntry(entry),
+      sendTelegram,
+      log,
+    });
+    this.teamMemoryInitialized = false;
+    this.teamMemoryInitPromise = null;
+    this.teamMemoryInitFailed = false;
+    this.teamMemoryDeferredStartupStarted = false;
+    this.experimentInitialized = false;
+    this.experimentInitPromise = null;
+    this.experimentInitFailed = false;
+    this.intentStateByPane = new Map();
+    this.ledgerAppSession = null;
+    this.commsSessionScopeId = publishAppGeneration(`app-${process.pid}-${Date.now()}`);
+    this.telegramInboundContext = {
+      lastInboundAtMs: 0,
+      sender: null,
+      chatId: null,
+    };
+    this.pendingTelegramReplyGuards = new Map();
+    this.pendingTelegramReplyGuardTimers = new Map();
+    this.pendingTelegramReplyGuardEmitTimers = new Map();
+    this.pendingTelegramReplyGuardJournalReconcileTimer = null;
+    this.telegramReplyDedupe = new Map();
+    this.telegramStrayCorrectionReplies = new Map();
+    this.autonomousSmoke = {
+      inFlight: false,
+      queuedRun: null,
+      lastStartedAtMs: 0,
+      sequence: 0,
+    };
+    this.bridgeClient = null;
+    this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
+    this.pendingPaneDeliveryQueuePath = resolveCoordPath('runtime/pending-pane-deliveries.json', { forWrite: true });
+    this.squidRoomWindowStatePath = resolveCoordPath('runtime/squid-room-window-state.json', { forWrite: true });
+    this.squidRoomRestoreAttempted = false;
+    this.pendingPaneDeliveryReplayPromise = Promise.resolve();
+    this.bridgeEnabled = !isBridgeRelayModeOff(process.env)
+      && (Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env));
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
+    this.bridgeRelayStatus = {
+      enabled: this.bridgeEnabled === true,
+      configured: Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId),
+      running: false,
+      relayUrl: this.bridgeRuntimeConfig?.relayUrl || null,
+      deviceId: this.bridgeDeviceId,
+      state: 'disconnected',
+      status: 'relay_not_started',
+      error: null,
+      lastUpdateAt: null,
+      lastStatusChangeAt: null,
+      lastConnectedAt: null,
+      connectedSinceAt: null,
+      lastDisconnectedAt: null,
+      lastDisconnectReason: null,
+      lastDisconnectCode: null,
+      lastErrorAt: null,
+      lastReconnectScheduledAt: null,
+      nextReconnectDelayMs: null,
+      nextReconnectAt: null,
+      reconnectAttempt: 0,
+      disconnectCount: 0,
+      flapCount: 0,
+      replacedConflictCount: 0,
+      lastDispatchAt: null,
+      lastDispatchStatus: null,
+      lastDispatchTarget: null,
+    };
+    this.bridgePairingState = {
+      mode: null,
+      code: null,
+      expiresAt: null,
+      status: 'idle',
+      error: null,
+      reason: null,
+      paired: null,
+      updatedAt: Date.now(),
+    };
+    this.powerMonitorListeners = [];
+    this.lastSystemSuspendAtMs = null;
+    this.lastSystemResumeAtMs = null;
+    this.wakeRecoveryInFlight = false;
+    this.autoHandoffTimer = null;
+    this.autoHandoffWriteInFlight = false;
+    this.autoHandoffWritePromise = null;
+    this.autoHandoffEnabled = AUTO_HANDOFF_ENABLED && process.env.NODE_ENV !== 'test';
+    this.evidenceLedgerPruneHousekeeping = createEvidenceLedgerPruneHousekeeping({ executeEvidenceLedgerOperation, log });
+    this.paneHostReady = new Set();
+    this.paneHostMissingPanes = new Set();
+    this.paneHostLastErrorReason = null;
+    this.paneHostLastErrorAt = null;
+    this.paneHostBootstrapTimer = null;
+    this.paneHostBootstrapVerifyTimer = null;
+    this.paneHostRecoveryTimer = null;
+    this.paneHostReadyIpcRegistered = false;
+    this.paneHostReadyListener = null;
+    this.visibleInjectDeliveryCache = new Map();
+    this.lastInjectRouteBlock = null;
+    this.mainWindowSendRaw = null;
+    this.mainWindowSendInterceptInstalled = false;
+    this.supervisorBootstrapPromise = null;
+    this.startupBriefingPromise = null;
+    this.lastSystemCapabilities = null;
+    this.daemonConnectTimeoutTimer = null;
+    this.daemonConnectedForStartup = false;
+    this.daemonTimeoutTriggered = false;
+    this.daemonTimeoutNotified = false;
+    this.bootSequenceId = `boot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    this.packagedOnboardingState = null;
+    this.shuttingDown = false;
+    // App-alive Telegram freshness watch (Stage B).
+    this.telegramFreshnessWatchTimer = null;
+    this.telegramFreshnessWatchTick = null;
+    this.telegramFreshnessWatchGeneration = 0;
+    this.telegramFreshnessWatchIntervalMs = null;
+    this.fullShutdownPromise = null;
+    this.sessionEndCapturePromise = null;
+    this.runtimeLifecycleState = RUNTIME_LIFECYCLE_STATE.STOPPED;
+    this.runtimeLifecycleQueue = Promise.resolve();
+    this.activeProfileName = getActiveProfileName();
+    this.restartLaunchProbe = isRestartLaunchProbe();
+    this.restartLaunchProbeResult = null;
+    this.websocketStartupLifecycle = createWebSocketStartupLifecycle({
+      websocketServer,
+      log,
+      resolvePortInfo: () => resolveWebSocketPortInfo({
+        profileName: this.activeProfileName || getActiveProfileName(),
+      }),
+      getSettings: () => this.settings,
+      refreshStartupHealth: (options) => this.refreshStartupHealthArtifacts(options),
+      getCurrentSessionNumber: () => this.getCurrentAppStatusSessionNumber(),
+      isShuttingDown: () => this.shuttingDown,
+    });
+    this.installedDeployment = this.resolveInstalledDeployment();
+    this.launchWindowProfile = {
+      profileName: this.activeProfileName,
+      windowKey: 'main',
+      standaloneWindow: false,
+    };
+    this.appWindowInstanceScopes = new Map();
+    this.teamRoomController = createTeamRoomAppController({
+      appHost: this,
+      BrowserWindow,
+      sendDirectMessage: triggers.sendDirectMessage,
+      getCurrentPaneLaunch: (paneId) => (
+        this.ctx.daemonClient?.getTerminal?.(String(paneId)) || null
+      ),
+    });
+  }
+
+  isBundledRuntimePath(targetPath = '') {
+    const normalized = String(targetPath || '')
+      .replace(/\\/g, '/')
+      .toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('.app/contents/') || normalized.includes('app.asar');
+  }
+
+  getDefaultExternalWorkspacePath() {
+    const homePath = (app && typeof app.getPath === 'function')
+      ? app.getPath('home')
+      : os.homedir();
+    return resolveInstalledDataRoot({
+      cwd: process.cwd(),
+      defaultDirName: EXTERNAL_WORKSPACE_DIRNAME,
+      execPath: process.execPath,
+      homePath,
+      resourcesPath: process.resourcesPath,
+    }).path;
+  }
+
+  resolvePackagedWorkspacePath() {
+    const profileRoot = getProfileProjectRootOverride(
+      this.activeProfileName || getActiveProfileName(),
+      process.env
+    );
+    if (profileRoot) {
+      return profileRoot;
+    }
+    return this.getDefaultExternalWorkspacePath();
+  }
+
+  resolveInstalledDeployment() {
+    try {
+      const homePath = (app && typeof app.getPath === 'function')
+        ? app.getPath('home')
+        : os.homedir();
+      const result = resolveInstalledDataRoot({
+        cwd: process.cwd(),
+        defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+        execPath: process.execPath,
+        homePath,
+        resourcesPath: process.resourcesPath,
+      });
+      return {
+        active: isPinnedInstalledDataRoot(result),
+        dataRoot: result?.path || null,
+        source: result?.source || null,
+      };
+    } catch (err) {
+      log.warn('Window', `Installed deployment detection failed: ${err.message}`);
+      return {
+        active: false,
+        dataRoot: null,
+        source: null,
+      };
+    }
+  }
+
+  isInstalledDeploymentMainWindow(rawWindowKey = 'main', rawProfileName = null) {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const profileName = normalizeProfileName(rawProfileName || this.activeProfileName || getActiveProfileName());
+    return windowKey === 'main'
+      && isMainProfile(profileName)
+      && this.installedDeployment?.active === true;
+  }
+
+  resolveWorkspaceTemplateRoot() {
+    const candidates = [
+      path.resolve(path.join(__dirname, '..', '..', 'workspace-template')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar', 'ui', 'workspace-template')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar.unpacked', 'ui', 'workspace-template')),
+    ];
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  copyFileIfMissing(sourcePath, destinationPath) {
+    if (!sourcePath || !destinationPath) return false;
+    if (!fs.existsSync(sourcePath)) return false;
+    if (fs.existsSync(destinationPath)) return false;
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    return true;
+  }
+
+  copyDirectoryIfMissing(sourceDir, destinationDir) {
+    if (!sourceDir || !destinationDir || !fs.existsSync(sourceDir)) return 0;
+    let copied = 0;
+    fs.mkdirSync(destinationDir, { recursive: true });
+    const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const sourcePath = path.join(sourceDir, entry.name);
+      const destinationPath = path.join(destinationDir, entry.name);
+      if (entry.isDirectory()) {
+        copied += this.copyDirectoryIfMissing(sourcePath, destinationPath);
+        continue;
+      }
+      if (entry.isFile() && this.copyFileIfMissing(sourcePath, destinationPath)) {
+        copied += 1;
+      }
+    }
+    return copied;
+  }
+
+  writeFileAtomic(destinationPath, content, mode = undefined) {
+    if (!destinationPath) return false;
+    const resolved = path.resolve(destinationPath);
+    const tempPath = `${resolved}.tmp`;
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+    fs.writeFileSync(tempPath, content, mode !== undefined ? { encoding: 'utf8', mode } : 'utf8');
+    fs.renameSync(tempPath, resolved);
+    return true;
+  }
+
+  getStartupHealthPath(profileName = null) {
+    const normalizedProfile = normalizeProfileName(profileName || getActiveProfileName());
+    const fileName = isMainProfile(normalizedProfile)
+      ? 'startup-health.md'
+      : `startup-health-${normalizedProfile}.md`;
+    return resolveCoordPath(path.join('build', fileName), { forWrite: true });
+  }
+
+  buildStartupHealthInventoryContent(snapshot = {}, sessionNumber = null) {
+    const tests = Number(snapshot.tests?.testFileCount || 0);
+    const suites = Number(snapshot.tests?.jestList?.count || 0);
+    const modules = Number(snapshot.modules?.moduleFileCount || 0);
+    const presentModules = Object.entries(snapshot.modules?.keyModules || {})
+      .filter(([, value]) => value?.exists === true)
+      .map(([key]) => key.replace(/_/g, '-'));
+    const sessionLabel = Number.isInteger(sessionNumber) ? `Session ${sessionNumber}` : 'Current session';
+    return `${sessionLabel} startup inventory: ${tests} test files, ${suites} Jest-discoverable suites, ${modules} JS modules under ui/modules. Key runtime modules present: ${presentModules.join(', ') || 'none'}.`;
+  }
+
+  buildStartupHealthStateContent(snapshot = {}, ledgerContext = {}, sessionNumber = null) {
+    const level = String(snapshot.status?.level || 'unknown').toUpperCase();
+    const score = Number.isFinite(Number(snapshot.status?.score)) ? Number(snapshot.status.score) : null;
+    const evidenceRows = Number(snapshot.databases?.evidenceLedger?.rowCount || 0);
+    const cognitiveRows = Number(snapshot.databases?.cognitiveMemory?.rowCount || 0);
+    const bridgeMode = typeof snapshot.bridge?.mode === 'string' ? snapshot.bridge.mode : 'unknown';
+    const bridgeState = typeof snapshot.bridge?.state === 'string'
+      ? snapshot.bridge.state
+      : (typeof snapshot.bridge?.status === 'string' ? snapshot.bridge.status : 'unknown');
+    const memoryConsistencyStatus = typeof snapshot.memoryConsistency?.status === 'string'
+      ? snapshot.memoryConsistency.status
+      : 'unknown';
+    const memoryConsistencySummary = snapshot.memoryConsistency?.summary || {};
+    const canonicalSessionNumber = Number.isInteger(Number(sessionNumber))
+      ? Number(sessionNumber)
+      : (Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? Number(snapshot.appStatus.sessionNumber) : null);
+    const ledgerSession = canonicalSessionNumber ?? (Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null);
+    const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : 'unknown';
+    const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : 'unknown';
+    return `Startup health ${Number.isInteger(canonicalSessionNumber) ? `for session ${canonicalSessionNumber}` : 'snapshot'}: overall ${level}${score !== null ? ` score=${score}/100` : ''}. Evidence ledger rows=${evidenceRows}, cognitive memory rows=${cognitiveRows}. Memory consistency=${memoryConsistencyStatus} (entries=${Number(memoryConsistencySummary.knowledgeEntryCount || 0)}, nodes=${Number(memoryConsistencySummary.knowledgeNodeCount || 0)}, missing=${Number(memoryConsistencySummary.missingInCognitiveCount || 0)}, orphans=${Number(memoryConsistencySummary.orphanedNodeCount || 0)}, duplicates=${Number(memoryConsistencySummary.duplicateKnowledgeHashCount || 0)}, source_heading_duplicates=${Number(memoryConsistencySummary.duplicateSourceHeadingCount || 0)}). Bridge mode=${bridgeMode}, connection=${bridgeState}. Ledger context: session ${ledgerSession ?? 'unknown'} ${ledgerStatus} (${ledgerMode}).`;
+  }
+
+  buildStartupHealthReport(snapshot = {}, ledgerContext = {}, sessionNumber = null) {
+    const healthBody = String(renderStartupHealthMarkdown(snapshot) || '').trim();
+    const lines = [healthBody];
+    const ledgerLines = [];
+    const canonicalSessionNumber = Number.isInteger(Number(sessionNumber))
+      ? Number(sessionNumber)
+      : (Number.isInteger(Number(snapshot.appStatus?.sessionNumber)) ? Number(snapshot.appStatus.sessionNumber) : null);
+    const ledgerSession = canonicalSessionNumber ?? (Number.isInteger(Number(ledgerContext?.session)) ? Number(ledgerContext.session) : null);
+    const ledgerStatus = typeof ledgerContext?.status === 'string' ? ledgerContext.status : null;
+    const ledgerMode = typeof ledgerContext?.mode === 'string' ? ledgerContext.mode : null;
+    if (ledgerSession !== null || ledgerStatus || ledgerMode) {
+      ledgerLines.push(`- Session context: ${ledgerSession !== null ? `session ${ledgerSession}` : 'unknown'}${ledgerStatus ? ` ${ledgerStatus}` : ''}${ledgerMode ? ` (${ledgerMode})` : ''}`);
+    }
+
+    const recentCompletions = takeStartupSummaryItems(ledgerContext?.completed, 2);
+    if (recentCompletions.length > 0) {
+      ledgerLines.push(`- Recent completions: ${recentCompletions.join(' | ')}`);
+    }
+
+    const openWork = takeStartupSummaryItems(ledgerContext?.roadmap || ledgerContext?.not_yet_done, 2);
+    if (openWork.length > 0) {
+      ledgerLines.push(`- Open work: ${openWork.join(' | ')}`);
+    }
+
+    const notes = takeStartupSummaryItems(ledgerContext?.important_notes, 2);
+    if (notes.length > 0) {
+      ledgerLines.push(`- Important notes: ${notes.join(' | ')}`);
+    }
+
+    if (ledgerLines.length > 0) {
+      lines.push('', 'STARTUP LEDGER', ...ledgerLines);
+    }
+    return `${lines.filter(Boolean).join('\n').trim()}\n`;
+  }
+
+  buildStartupHealthPlaceholderReport(sessionNumber = null, options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
+      ? options.generatedAt.trim()
+      : new Date(nowMs).toISOString();
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    const canonicalSessionNumber = asPositiveInt(
+      sessionNumber ?? (isMainProfile(profileName) ? this.getCurrentAppStatusSessionNumber() : null),
+      null
+    );
+    const sessionLabel = canonicalSessionNumber !== null
+      ? `session ${canonicalSessionNumber}`
+      : 'unknown';
+    return [
+      'STARTUP HEALTH',
+      '- Overall: REFRESHING',
+      `- Generated: ${generatedAt}`,
+      `- App Session: ${sessionLabel}`,
+      '',
+      'STARTUP LEDGER',
+      `- Session context: ${sessionLabel} ACTIVE (APP)`,
+      '- Snapshot status: refreshing current-session startup health...',
+      '',
+    ].join('\n');
+  }
+
+  async ingestStartupHealthSnapshot(snapshot = {}, ledgerContext = {}, options = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('startup-health');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const sessionNumber = asPositiveInt(options.sessionNumber ?? this.getCurrentAppStatusSessionNumber(), null);
+    const sessionId = this.ledgerAppSession?.sessionId || this.commsSessionScopeId || null;
+    const provenance = {
+      source: 'startup-health-snapshot',
+      kind: 'observed',
+      actor: 'system',
+    };
+
+    const sharedPayload = {
+      provenance,
+      session_id: sessionId,
+      session_ordinal: sessionNumber,
+      confidence: 0.58,
+      nowMs,
+      scope: {
+        project: 'squidrun',
+        source: 'startup-health',
+        generated_at: snapshot.generatedAt || new Date(nowMs).toISOString(),
+      },
+    };
+
+    const inventoryResult = await teamMemory.executeTeamMemoryOperation('ingest-memory', {
+      ...sharedPayload,
+      confidence: 0.56,
+      memory_class: 'codebase_inventory',
+      source_trace: `startup-health:inventory:${sessionNumber || 'unknown'}:${nowMs}`,
+      content: this.buildStartupHealthInventoryContent(snapshot, sessionNumber),
+    });
+    const healthResult = await teamMemory.executeTeamMemoryOperation('ingest-memory', {
+      ...sharedPayload,
+      confidence: 0.57,
+      memory_class: 'system_health_state',
+      source_trace: `startup-health:state:${sessionNumber || 'unknown'}:${nowMs}`,
+      content: this.buildStartupHealthStateContent(snapshot, ledgerContext, sessionNumber),
+    });
+
+    if (inventoryResult?.ok === false || healthResult?.ok === false) {
+      return {
+        ok: false,
+        reason: 'startup_health_ingest_failed',
+        inventoryResult,
+        healthResult,
+      };
+    }
+
+    return {
+      ok: true,
+      inventoryResult,
+      healthResult,
+    };
+  }
+
+  async refreshStartupHealthArtifacts(options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    const mainProfile = isMainProfile(profileName);
+    const explicitSessionNumber = asPositiveInt(options.sessionNumber, null);
+    const canonicalSessionNumber = asPositiveInt(
+      explicitSessionNumber ?? (mainProfile ? this.getCurrentAppStatusSessionNumber() : null),
+      null
+    );
+    const generatedAt = typeof options.generatedAt === 'string' && options.generatedAt.trim()
+      ? options.generatedAt.trim()
+      : new Date(nowMs).toISOString();
+    const outputPath = this.getStartupHealthPath(profileName);
+    this.writeFileAtomic(
+      outputPath,
+      this.buildStartupHealthPlaceholderReport(canonicalSessionNumber, {
+        nowMs,
+        generatedAt,
+        profileName,
+      })
+    );
+
+    const projectRoot = options.projectRoot || getProjectRoot();
+    const telegramPollerRecovery = await this.runStartupHealthTelegramPollerAutoRecover({
+      projectRoot,
+      profileName,
+      nowMs,
+      staleThresholdMs: options.telegramPollerStaleThresholdMs,
+      enabled: options.telegramPollerAutoRecover !== false,
+    });
+    const bidirectionalWakeWatchdog = await this.runStartupHealthBidirectionalWakeWatchdogAutoStart({
+      projectRoot,
+      profileName,
+      nowMs,
+      enabled: options.bidirectionalWakeWatchdogAutoStart !== false,
+    });
+
+    const snapshot = createHealthSnapshot({
+      projectRoot,
+      profileName,
+      jestTimeoutMs: options.jestTimeoutMs,
+      bridgeStatus: this.getBridgeStatus(),
+      systemCapabilities: this.lastSystemCapabilities,
+      telegramPollerStaleThresholdMs: options.telegramPollerStaleThresholdMs,
+      nowMs,
+      generatedAt,
+    });
+    const resolvedSessionNumber = asPositiveInt(
+      canonicalSessionNumber
+      ?? snapshot.appStatus?.sessionNumber
+      ?? (mainProfile ? this.getCurrentAppStatusSessionNumber() : null),
+      null
+    );
+    const ledgerContext = await executeEvidenceLedgerOperation(
+      'get-context',
+      resolvedSessionNumber ? { sessionNumber: resolvedSessionNumber } : {},
+      {
+        source: {
+          via: 'startup-health',
+          profileName,
+          role: 'system',
+          paneId: null,
+        },
+      }
+    );
+    const report = this.buildStartupHealthReport(
+      snapshot,
+      ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
+      resolvedSessionNumber
+    );
+    this.writeFileAtomic(outputPath, report);
+
+    let ingestResult = {
+      ok: false,
+      skipped: true,
+      reason: 'team_memory_not_initialized',
+    };
+    if (options.ingestToMemory === true || this.teamMemoryInitialized) {
+      ingestResult = await this.ingestStartupHealthSnapshot(
+        snapshot,
+        ledgerContext && ledgerContext.ok === false ? {} : (ledgerContext || {}),
+        {
+          nowMs,
+          sessionNumber: resolvedSessionNumber,
+          profileName,
+        }
+      );
+    }
+
+    const bidirectionalWakeWatchdogDegraded = bidirectionalWakeWatchdog?.ok === false;
+    const bidirectionalWakeWatchdogConflict = bidirectionalWakeWatchdogDegraded && (
+      bidirectionalWakeWatchdog?.status === 'ownership_conflict'
+      || bidirectionalWakeWatchdog?.reason === 'ownership_conflict'
+    );
+    return {
+      ok: !bidirectionalWakeWatchdogDegraded,
+      degraded: bidirectionalWakeWatchdogDegraded,
+      reason: bidirectionalWakeWatchdogDegraded
+        ? (bidirectionalWakeWatchdogConflict
+          ? 'bidirectional_wake_watchdog_ownership_conflict'
+          : 'bidirectional_wake_watchdog_auto_start_failed')
+        : null,
+      outputPath,
+      snapshot,
+      telegramPollerRecovery,
+      bidirectionalWakeWatchdog,
+      ledgerContext,
+      ingestResult,
+    };
+  }
+
+  async runStartupHealthTelegramPollerAutoRecover(options = {}) {
+    if (options.enabled === false) {
+      return { ok: true, skipped: true, reason: 'disabled' };
+    }
+    if (this.installedDeployment?.active === true) {
+      return { ok: true, skipped: true, reason: 'installed_deployment_app_poller_owner' };
+    }
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    if (!isMainProfile(profileName)) {
+      return { ok: true, skipped: true, reason: 'profile_not_owner' };
+    }
+
+    try {
+      const result = await checkAndRecoverTelegramPoller({
+        projectRoot: options.projectRoot || getProjectRoot(),
+        nowMs: options.nowMs,
+        staleThresholdMs: options.staleThresholdMs,
+      });
+      if (result?.recovery?.recovered === true) {
+        log.warn(
+          'StartupHealth',
+          `Recovered wedged Telegram poller before app startup-health snapshot (${result.recovery.action || 'unknown'})`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('StartupHealth', `Telegram poller recovery preflight failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  async runStartupHealthBidirectionalWakeWatchdogAutoStart(options = {}) {
+    if (options.enabled === false) {
+      return { ok: true, skipped: true, reason: 'disabled' };
+    }
+    const profileName = normalizeProfileName(options.profileName || getActiveProfileName());
+    if (!isMainProfile(profileName)) {
+      return { ok: true, skipped: true, reason: 'profile_not_owner' };
+    }
+
+    try {
+      const result = startBidirectionalWakeWatchdogRunner({
+        projectRoot: options.projectRoot || getProjectRoot(),
+        // App-lifecycle generation token: a daemon carrying a different (prior)
+        // token is reaped + replaced on app start, so a pre-restart orphan can't
+        // persist with stale code behind the pidfile lock.
+        appGenerationId: this.commsSessionScopeId || null,
+      });
+      if (result?.started === true) {
+        log.warn(
+          'StartupHealth',
+          `Started bidirectional wake watchdog runner before startup-health snapshot (pid=${result.pid || 'unknown'})`
+        );
+      } else if (result?.ok === false) {
+        log.warn(
+          'StartupHealth',
+          `Bidirectional wake watchdog auto-start degraded: ${result.status || result.reason || result.error || 'unknown'}`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('StartupHealth', `Bidirectional wake watchdog auto-start failed: ${err.message}`);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  applyLocalModelEnvironment(snapshot = null) {
+    const extractionCommand = resolveSleepExtractionCommandFromSnapshot(snapshot);
+    if (extractionCommand) {
+      process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND = extractionCommand;
+    } else {
+      delete process.env.SQUIDRUN_SLEEP_EXTRACTION_COMMAND;
+    }
+    return extractionCommand;
+  }
+
+  async refreshSystemCapabilities(options = {}) {
+    const projectRoot = options.projectRoot || getProjectRoot();
+    const snapshot = buildSystemCapabilitiesSnapshot({
+      projectRoot,
+      nowMs: options.nowMs,
+      settings: this.ctx.currentSettings,
+    });
+    writeSystemCapabilitiesSnapshot(snapshot, snapshot.path);
+    this.lastSystemCapabilities = snapshot;
+    this.applyLocalModelEnvironment(snapshot);
+    return snapshot;
+  }
+
+  copyPathRecursive(sourcePath, destinationPath) {
+    if (!sourcePath || !destinationPath || !fs.existsSync(sourcePath)) return false;
+    const stat = fs.statSync(sourcePath);
+    if (stat.isDirectory()) {
+      fs.mkdirSync(destinationPath, { recursive: true });
+      const entries = fs.readdirSync(sourcePath, { withFileTypes: true });
+      for (const entry of entries) {
+        this.copyPathRecursive(
+          path.join(sourcePath, entry.name),
+          path.join(destinationPath, entry.name)
+        );
+      }
+      return true;
+    }
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    return true;
+  }
+
+  resolvePackagedUiRoot() {
+    const candidates = [
+      path.resolve(path.join(__dirname, '..', '..')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar', 'ui')),
+      path.resolve(path.join(process.resourcesPath || '', 'app.asar.unpacked', 'ui')),
+    ];
+    for (const candidate of candidates) {
+      if (candidate && fs.existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  ensurePackagedCommsBin(workspacePath) {
+    if (!workspacePath) return null;
+    const uiRoot = this.resolvePackagedUiRoot();
+    if (!uiRoot) {
+      log.warn('ProjectLifecycle', 'Unable to resolve packaged UI root for hm-send/hm-comms bootstrap');
+      return null;
+    }
+
+    const runtimeRoot = path.join(workspacePath, PACKAGED_BIN_RUNTIME_RELATIVE);
+    const binRoot = path.join(workspacePath, '.squidrun', 'bin');
+    fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    fs.mkdirSync(runtimeRoot, { recursive: true });
+
+    const requiredFiles = [
+      'config.js',
+      'profile.js',
+      'scripts',
+      'modules',
+    ];
+    for (const relPath of requiredFiles) {
+      const sourcePath = path.join(uiRoot, relPath);
+      const destinationPath = path.join(runtimeRoot, relPath);
+      this.copyPathRecursive(sourcePath, destinationPath);
+    }
+
+    const copiedDependencies = new Set();
+    for (const depName of Object.keys(PACKAGED_RUNTIME_DEPENDENCIES)) {
+      this.copyPackagedRuntimeDependency(uiRoot, runtimeRoot, depName, copiedDependencies);
+    }
+    this.writePackagedRuntimePackageJson(runtimeRoot);
+    this.ensurePackagedMemoryModelCache(workspacePath);
+
+    const unixLaunchers = {
+      'hm-send': 'hm-send.js',
+      'hm-comms': 'hm-comms.js',
+      'send-long-telegram': 'send-long-telegram.js',
+    };
+    for (const [commandName, scriptName] of Object.entries(unixLaunchers)) {
+      const launcherPath = path.join(binRoot, commandName);
+      const launcherScript = [
+        '#!/usr/bin/env sh',
+        'SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+        '# Resolve workspace root (2 levels up from .squidrun/bin/)',
+        'SQUIDRUN_PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd)"',
+        'export SQUIDRUN_PROJECT_ROOT',
+        '# Suppress node:sqlite ExperimentalWarning noise',
+        'NODE_NO_WARNINGS=1',
+        'export NODE_NO_WARNINGS',
+        `node "$SCRIPT_DIR/runtime/ui/scripts/${scriptName}" "$@"`,
+        '',
+      ].join('\n');
+      this.writeFileAtomic(launcherPath, launcherScript, 0o755);
+      try {
+        fs.chmodSync(launcherPath, 0o755);
+      } catch (_) {
+        // Best-effort chmod for non-POSIX hosts.
+      }
+
+      const windowsLauncherPath = path.join(binRoot, `${commandName}.cmd`);
+      const windowsLauncher = [
+        '@echo off',
+        'set "SCRIPT_DIR=%~dp0"',
+        ':: Resolve workspace root (2 levels up from .squidrun\\bin\\)',
+        'for %%I in ("%SCRIPT_DIR%..\\..") do set "SQUIDRUN_PROJECT_ROOT=%%~fI"',
+        ':: Suppress node:sqlite ExperimentalWarning noise',
+        'set "NODE_NO_WARNINGS=1"',
+        `node "%SCRIPT_DIR%runtime\\ui\\scripts\\${scriptName}" %*`,
+        '',
+      ].join('\r\n');
+      this.writeFileAtomic(windowsLauncherPath, windowsLauncher);
+    }
+
+    return binRoot;
+  }
+
+  resolveNodeModulePackagePath(nodeModulesRoot, packageName) {
+    const normalizedName = toNonEmptyString(packageName);
+    if (!nodeModulesRoot || !normalizedName) return null;
+    return path.join(nodeModulesRoot, ...normalizedName.split('/'));
+  }
+
+  copyPackagedRuntimeDependency(uiRoot, runtimeRoot, packageName, copiedDependencies = new Set(), options = {}) {
+    const normalizedName = toNonEmptyString(packageName);
+    if (!uiRoot || !runtimeRoot || !normalizedName) return false;
+    if (copiedDependencies.has(normalizedName)) return true;
+    copiedDependencies.add(normalizedName);
+
+    const sourceRoot = this.resolveNodeModulePackagePath(path.join(uiRoot, 'node_modules'), normalizedName);
+    const destinationRoot = this.resolveNodeModulePackagePath(path.join(runtimeRoot, 'node_modules'), normalizedName);
+    if (!sourceRoot || !destinationRoot || !fs.existsSync(sourceRoot)) {
+      if (!options.optional) {
+        log.warn('ProjectLifecycle', `Packaged runtime dependency missing from source bundle: ${normalizedName}`);
+      }
+      return false;
+    }
+
+    this.copyPathRecursive(sourceRoot, destinationRoot);
+
+    const manifest = this.readJsonFileSafe(path.join(sourceRoot, 'package.json'), null);
+    const dependencies = manifest && typeof manifest === 'object' && manifest.dependencies && typeof manifest.dependencies === 'object'
+      ? Object.keys(manifest.dependencies)
+      : [];
+    const optionalDependencies = manifest && typeof manifest === 'object' && manifest.optionalDependencies && typeof manifest.optionalDependencies === 'object'
+      ? Object.keys(manifest.optionalDependencies)
+      : [];
+
+    for (const dependencyName of dependencies) {
+      this.copyPackagedRuntimeDependency(uiRoot, runtimeRoot, dependencyName, copiedDependencies);
+    }
+    for (const dependencyName of optionalDependencies) {
+      this.copyPackagedRuntimeDependency(uiRoot, runtimeRoot, dependencyName, copiedDependencies, { optional: true });
+    }
+
+    return true;
+  }
+
+  writePackagedRuntimePackageJson(runtimeRoot) {
+    if (!runtimeRoot) return null;
+    const manifestPath = path.join(runtimeRoot, 'package.json');
+    const payload = {
+      name: 'squidrun-runtime-ui',
+      private: true,
+      description: 'Runtime CLI bundle for the SquidRun standalone overlay install. Declares deps so npm installs do not prune sibling packages.',
+      dependencies: PACKAGED_RUNTIME_DEPENDENCIES,
+    };
+    this.writeFileAtomic(manifestPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return manifestPath;
+  }
+
+  ensurePackagedMemoryModelCache(workspacePath) {
+    if (!workspacePath) return null;
+    const cachePath = path.join(workspacePath, PACKAGED_MEMORY_MODEL_CACHE_RELATIVE);
+    fs.mkdirSync(cachePath, { recursive: true });
+    return cachePath;
+  }
+
+  getOnboardingStatePath(workspacePath = null) {
+    const baseWorkspace = workspacePath || this.getDefaultExternalWorkspacePath();
+    return path.join(baseWorkspace, '.squidrun', ONBOARDING_STATE_FILENAME);
+  }
+
+  getFreshInstallMarkerPath(workspacePath = null) {
+    const baseWorkspace = workspacePath || this.getDefaultExternalWorkspacePath();
+    return path.join(baseWorkspace, '.squidrun', FRESH_INSTALL_MARKER_FILENAME);
+  }
+
+  readOnboardingState(workspacePath = null) {
+    const onboardingPath = this.getOnboardingStatePath(workspacePath);
+    if (!fs.existsSync(onboardingPath)) return null;
+    try {
+      const raw = fs.readFileSync(onboardingPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      return parsed;
+    } catch (err) {
+      log.warn('ProjectLifecycle', `Failed to parse onboarding state: ${err.message}`);
+      return null;
+    }
+  }
+
+  deriveConfiguredFeatures(payload = {}) {
+    const explicit = Array.isArray(payload?.configured_features)
+      ? payload.configured_features
+      : null;
+    if (explicit) {
+      return Array.from(new Set(explicit.map((value) => String(value || '').trim()).filter(Boolean)));
+    }
+
+    const settings = this.ctx?.currentSettings || {};
+    const features = [];
+    if (settings.autoSpawn !== false) features.push('auto-spawn');
+    if (settings.autonomyConsentGiven === true) features.push('autonomy-consent');
+    if (settings.allowAllPermissions === true) features.push('autonomy-enabled');
+    if (settings.operatingMode === 'project') features.push('firmware-injection');
+    return features;
+  }
+
+  writeOnboardingState(payload = {}, workspacePath = null) {
+    const effectiveWorkspacePath = workspacePath || this.getDefaultExternalWorkspacePath();
+    const onboardingPath = this.getOnboardingStatePath(effectiveWorkspacePath);
+    const userName = String(
+      payload.user_name
+      || payload.userName
+      || ''
+    ).trim();
+    const state = {
+      onboarding_complete: true,
+      completed_at: new Date().toISOString(),
+      user_name: userName,
+      workspace_path: path.resolve(effectiveWorkspacePath),
+      configured_features: this.deriveConfiguredFeatures(payload),
+    };
+    this.writeFileAtomic(onboardingPath, `${JSON.stringify(state, null, 2)}\n`);
+    this.packagedOnboardingState = state;
+    this.clearFreshInstallMarker(effectiveWorkspacePath);
+    return {
+      state,
+      path: onboardingPath,
+    };
+  }
+
+  writeFreshInstallMarker(workspacePath = null) {
+    const effectiveWorkspacePath = workspacePath || this.getDefaultExternalWorkspacePath();
+    const markerPath = this.getFreshInstallMarkerPath(effectiveWorkspacePath);
+    const payload = {
+      fresh_install: true,
+      created_at: new Date().toISOString(),
+      workspace_path: path.resolve(effectiveWorkspacePath),
+      source: 'packaged-bootstrap',
+    };
+    this.writeFileAtomic(markerPath, `${JSON.stringify(payload, null, 2)}\n`);
+    return markerPath;
+  }
+
+  clearFreshInstallMarker(workspacePath = null) {
+    const effectiveWorkspacePath = workspacePath || this.getDefaultExternalWorkspacePath();
+    const markerPath = this.getFreshInstallMarkerPath(effectiveWorkspacePath);
+    try {
+      if (fs.existsSync(markerPath)) {
+        fs.rmSync(markerPath, { force: true });
+      }
+    } catch (err) {
+      log.warn('ProjectLifecycle', `Failed clearing fresh-install marker: ${err.message}`);
+    }
+  }
+
+  ensurePackagedWorkspaceBootstrap() {
+    if (!app || app.isPackaged !== true) {
+      return null;
+    }
+
+    const workspacePath = this.resolvePackagedWorkspacePath();
+    fs.mkdirSync(workspacePath, { recursive: true });
+    fs.mkdirSync(path.join(workspacePath, '.squidrun'), { recursive: true });
+
+    const templateRoot = this.resolveWorkspaceTemplateRoot();
+    if (templateRoot) {
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'CLAUDE.md'),
+        path.join(workspacePath, 'CLAUDE.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'CLAUDE.scoped.md'),
+        path.join(workspacePath, 'CLAUDE.scoped.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'ROLES.md'),
+        path.join(workspacePath, 'ROLES.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'ROLES.scoped.md'),
+        path.join(workspacePath, 'ROLES.scoped.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'PRODUCT-GUIDE.md'),
+        path.join(workspacePath, 'PRODUCT-GUIDE.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'user-profile.json'),
+        path.join(workspacePath, 'user-profile.json')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'GEMINI.md'),
+        path.join(workspacePath, 'GEMINI.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'CODEX.md'),
+        path.join(workspacePath, 'CODEX.md')
+      );
+      this.copyFileIfMissing(
+        path.join(templateRoot, 'AGENTS.md'),
+        path.join(workspacePath, 'AGENTS.md')
+      );
+      this.copyDirectoryIfMissing(
+        path.join(templateRoot, '.squidrun'),
+        path.join(workspacePath, '.squidrun')
+      );
+    } else {
+      log.warn('ProjectLifecycle', 'Workspace template bundle missing; skipping seed file copy');
+    }
+
+    if (typeof setProjectRoot === 'function') {
+      setProjectRoot(workspacePath);
+    }
+
+    this.ensurePackagedCommsBin(workspacePath);
+
+    const onboardingSnapshot = this.readPersistedOnboardingState();
+    const onboardingState = onboardingSnapshot?.state || null;
+    const onboardingComplete = this.isOnboardingComplete(onboardingState);
+
+    // Packaged-first-run guard: always reset app-status when onboarding is incomplete.
+    // This prevents stale packaged app-status payloads from leaking prior dev sessions.
+    const appStatusPath = path.join(workspacePath, '.squidrun', 'app-status.json');
+    if (!onboardingComplete || !fs.existsSync(appStatusPath)) {
+      try {
+        let appVersion = 'unknown';
+        try { appVersion = require('../../package.json').version || appVersion; } catch (_) {}
+        const initialStatus = {
+          started: new Date().toISOString(),
+          mode: this.ctx.currentSettings?.dryRun ? 'dry-run' : 'pty',
+          dryRun: this.ctx.currentSettings?.dryRun === true,
+          autoSpawn: this.ctx.currentSettings?.autoSpawn !== false,
+          version: appVersion,
+          platform: process.platform,
+          nodeVersion: process.version,
+          session: 0,
+          lastUpdated: new Date().toISOString(),
+        };
+        this.writeFileAtomic(appStatusPath, `${JSON.stringify(initialStatus, null, 2)}\n`);
+        log.info(
+          'ProjectLifecycle',
+          onboardingComplete
+            ? 'Created missing app-status.json for packaged workspace'
+            : 'Reset app-status.json for packaged fresh-install bootstrap'
+        );
+      } catch (err) {
+        log.warn('ProjectLifecycle', `Failed creating app-status.json: ${err.message}`);
+      }
+    }
+
+    this.packagedOnboardingState = onboardingState;
+    if (onboardingComplete) {
+      this.clearFreshInstallMarker(workspacePath);
+    } else {
+      this.writeFreshInstallMarker(workspacePath);
+    }
+
+    try {
+      const currentState = (typeof watcher.readState === 'function' ? watcher.readState() : {}) || {};
+      const currentProject = typeof currentState.project === 'string' ? currentState.project.trim() : '';
+      if (
+        typeof watcher.writeState === 'function'
+        && (!currentProject || this.isBundledRuntimePath(currentProject))
+      ) {
+        watcher.writeState({
+          ...currentState,
+          project: workspacePath,
+        });
+      }
+    } catch (err) {
+      log.warn('ProjectLifecycle', `Failed writing packaged workspace state: ${err.message}`);
+    }
+
+    return workspacePath;
+  }
+
+  
+
+  startScopedTelegramTriggerDrainPoller() {
+    // Only run the drain poller if we are a profile daemon (not main)
+    const activeProfile = this.activeProfileName || getActiveProfileName();
+    if (!activeProfile || isMainProfile(activeProfile)) {
+      log.info('Telegram', 'Skipping scoped trigger drain poller (main profile or undefined).');
+      return;
+    }
+
+    log.info('Telegram', `Starting scoped trigger drain poller for profile: ${activeProfile} (~60s interval)`);
+
+    const maxConsecutiveFailures = Math.max(
+      1,
+      Number.parseInt(String(process.env.SQUIDRUN_SCOPED_TELEGRAM_DRAIN_MAX_FAILURES || '5'), 10) || 5
+    );
+
+    let isDraining = false;
+    let consecutiveDrainFailures = 0;
+    let nextDrainAttemptAtMs = 0;
+
+    const archiveAndTruncateTriggerFiles = (triggerPaths, marker = '') => {
+      const dateStr = new Date().toISOString().split('T')[0];
+      for (const currentPath of triggerPaths) {
+        if (!fs.existsSync(currentPath)) continue;
+
+        const currentContent = fs.readFileSync(currentPath, 'utf8');
+        if (!currentContent.trim()) continue;
+
+        const archiveDir = path.join(path.dirname(currentPath), 'drained');
+        const archivePath = path.join(archiveDir, `architect-${dateStr}.txt`);
+        try {
+          fs.mkdirSync(archiveDir, { recursive: true });
+          const separator = fs.existsSync(archivePath) ? '\n' : '';
+          const prefix = marker ? `${marker}\n` : '';
+          fs.appendFileSync(archivePath, `${separator}${prefix}${currentContent}`, 'utf8');
+          // Safely empty the trigger file now that we have injected and archived
+          fs.writeFileSync(currentPath, '', 'utf8');
+          log.info('Telegram', `Successfully drained and archived trigger file to ${archivePath}`);
+        } catch (err) {
+          log.warn('Telegram', `Failed to archive or truncate trigger file: ${err.message}`);
+        }
+      }
+    };
+
+    const drainTriggerFile = async () => {
+      if (isDraining) return;
+      if (Date.now() < nextDrainAttemptAtMs) return;
+      isDraining = true;
+      try {
+        const triggerPaths = this.getScopedTelegramTriggerPaths(activeProfile);
+        if (!triggerPaths || triggerPaths.length === 0) return;
+
+        let triggerPath = null;
+        let fileContent = '';
+
+        for (const tp of triggerPaths) {
+          if (fs.existsSync(tp)) {
+            const content = fs.readFileSync(tp, 'utf8');
+            if (content.trim()) {
+              triggerPath = tp;
+              fileContent = content;
+              break;
+            }
+          }
+        }
+
+        if (!triggerPath) {
+          consecutiveDrainFailures = 0;
+          nextDrainAttemptAtMs = 0;
+          return;
+        }
+
+        log.info('Telegram', `Draining scoped trigger file payload (${fileContent.length} bytes): ${triggerPath}`);
+
+        // Inject the whole file as a single payload
+        const result = await this.deliverScopedTelegramInboundWithRetry(activeProfile, fileContent, { targetRole: 'architect', sender: 'system' });
+
+        // Accepted-but-unverified is terminal here for the same reason it is
+        // terminal in the retry wrapper: the runtime has taken ownership of the
+        // payload, so re-injecting it next poll burns a duplicate pane turn. A
+        // continuously busy pane never PTY-verifies, which previously made this
+        // 60s loop re-inject the same payload forever.
+        const acceptedTerminal = result?.accepted === true
+          && isScopedTelegramTerminalAcceptedStatus(result?.status);
+
+        if (result?.verified || acceptedTerminal) {
+          if (acceptedTerminal) {
+            log.info('Telegram', `Drained payload accepted without PTY verification (status=${result.status}); archiving without re-injection`);
+          }
+          archiveAndTruncateTriggerFiles(triggerPaths);
+          consecutiveDrainFailures = 0;
+          nextDrainAttemptAtMs = 0;
+          return;
+        }
+
+        consecutiveDrainFailures += 1;
+        if (consecutiveDrainFailures >= maxConsecutiveFailures) {
+          log.warn(
+            'Telegram',
+            `Drain payload failed ${consecutiveDrainFailures} consecutive times (status=${result?.status}); quarantining to drained archive to stop re-injection`
+          );
+          archiveAndTruncateTriggerFiles(
+            triggerPaths,
+            `[quarantined ${new Date().toISOString()} after ${consecutiveDrainFailures} failed drain attempts, last status=${result?.status}]`
+          );
+          consecutiveDrainFailures = 0;
+          nextDrainAttemptAtMs = 0;
+          return;
+        }
+
+        const backoffMs = Math.min(15 * 60 * 1000, 60 * 1000 * (2 ** (consecutiveDrainFailures - 1)));
+        nextDrainAttemptAtMs = Date.now() + backoffMs;
+        log.warn(
+          'Telegram',
+          `Failed to inject drained payload (attempt ${consecutiveDrainFailures}/${maxConsecutiveFailures}, status=${result?.status}); keeping trigger files, next drain in ${Math.round(backoffMs / 1000)}s`
+        );
+      } catch (err) {
+        log.warn('Telegram', `Error in drain poller: ${err.message}`);
+      } finally {
+        isDraining = false;
+      }
+    };
+
+    // Run once on startup after a small delay to let the pane settle
+    this.drainPollerTimeout = setTimeout(() => {
+      drainTriggerFile();
+      // And then run every 60 seconds
+      this.drainPollerInterval = setInterval(drainTriggerFile, 60 * 1000);
+    }, 10 * 1000);
+  }
+
+  stopScopedTelegramTriggerDrainPoller() {
+    if (this.drainPollerTimeout) {
+      clearTimeout(this.drainPollerTimeout);
+      this.drainPollerTimeout = null;
+    }
+    if (this.drainPollerInterval) {
+      clearInterval(this.drainPollerInterval);
+      this.drainPollerInterval = null;
+    }
+  }
+
+
+  async initializeStartupSessionScope(options = {}) {
+    const opts = options && typeof options === 'object' ? options : {};
+    const finalizeSessionScope = async (result) => {
+      try {
+        await this.backgroundAgentManager.handleSessionScopeChange(this.commsSessionScopeId || null);
+      } catch (err) {
+        log.warn('BackgroundAgent', `Session scope cleanup failed: ${err.message}`);
+      }
+      return result;
+    };
+    const startupSource = {
+      via: 'app-startup',
+      role: 'system',
+      paneId: null,
+    };
+    const fallbackScope = `app-${process.pid}-${Date.now()}`;
+    this.commsSessionScopeId = publishAppGeneration(fallbackScope);
+
+    const preferredSessionNumber = asPositiveInt(opts.sessionNumber ?? opts.session, null);
+    const hasPreferredSessionNumber = Number.isInteger(preferredSessionNumber);
+    const preferredScopeId = hasPreferredSessionNumber
+      ? `app-session-${preferredSessionNumber}`
+      : null;
+
+    if (preferredScopeId) {
+      this.commsSessionScopeId = publishAppGeneration(preferredScopeId);
+    }
+
+    let nextSessionNumber = preferredSessionNumber || 1;
+    if (!preferredSessionNumber) {
+      try {
+        const latestSessions = await executeEvidenceLedgerOperation(
+          'list-sessions',
+          { limit: 1, order: 'desc' },
+          { source: startupSource }
+        );
+        if (Array.isArray(latestSessions) && latestSessions.length > 0) {
+          const latestSessionNumber = asPositiveInt(latestSessions[0]?.sessionNumber, null);
+          if (latestSessionNumber) {
+            nextSessionNumber = latestSessionNumber + 1;
+          }
+        } else if (latestSessions?.ok === false) {
+          log.warn('EvidenceLedger', `Unable to inspect prior sessions at startup: ${latestSessions.reason || 'unknown'}`);
+        }
+      } catch (err) {
+        log.warn('EvidenceLedger', `Startup session lookup failed: ${err.message}`);
+      }
+    }
+
+    for (let attempt = 0; attempt < APP_STARTUP_SESSION_RETRY_LIMIT; attempt += 1) {
+      const sessionNumber = hasPreferredSessionNumber
+        ? preferredSessionNumber
+        : (nextSessionNumber + attempt);
+      const startResult = await executeEvidenceLedgerOperation(
+        'record-session-start',
+        {
+          sessionNumber,
+          mode: 'APP',
+          meta: {
+            source: 'squidrun-app',
+            pid: process.pid,
+            startup: true,
+          },
+        },
+        { source: startupSource }
+      );
+
+      if (startResult?.ok) {
+        const sessionId = typeof startResult.sessionId === 'string' ? startResult.sessionId : null;
+        this.ledgerAppSession = {
+          sessionId,
+          sessionNumber,
+        };
+        this.commsSessionScopeId = publishAppGeneration(preferredScopeId || (sessionId
+          ? `app-session-${sessionNumber}-${sessionId}`
+          : `app-session-${sessionNumber}`));
+
+        log.info('EvidenceLedger', `Recorded app startup session ${sessionNumber}${sessionId ? ` (${sessionId})` : ''}`);
+
+        if (sessionId) {
+          const snapshotResult = await executeEvidenceLedgerOperation(
+            'snapshot-context',
+            {
+              sessionId,
+              trigger: 'session_start',
+            },
+            { source: startupSource }
+          );
+          if (snapshotResult?.ok === false) {
+            log.warn('EvidenceLedger', `Startup session snapshot failed: ${snapshotResult.reason || 'unknown'}`);
+          }
+        }
+        return finalizeSessionScope(this.ledgerAppSession);
+      }
+
+      if (startResult?.reason === 'conflict' && preferredScopeId) {
+        // App status already established the canonical app session number.
+        // If session-start for that number already exists, keep scope stable.
+        this.ledgerAppSession = {
+          sessionId: null,
+          sessionNumber: preferredSessionNumber,
+        };
+        this.commsSessionScopeId = publishAppGeneration(preferredScopeId);
+        log.warn('EvidenceLedger', `Startup session ${preferredSessionNumber} already exists; reusing app-status scope.`);
+        return finalizeSessionScope(this.ledgerAppSession);
+      }
+
+      if (startResult?.reason !== 'conflict') {
+        log.warn('EvidenceLedger', `Startup session start failed: ${startResult?.reason || 'unknown'}`);
+        break;
+      }
+    }
+
+    log.warn('EvidenceLedger', `Falling back to ephemeral comms session scope (${fallbackScope})`);
+    return finalizeSessionScope(null);
+  }
+
+  getCurrentAppStatusSessionNumber() {
+    try {
+      if (!this.settings || typeof this.settings.readAppStatus !== 'function') return null;
+      const status = this.settings.readAppStatus();
+      return asPositiveInt(status?.session ?? status?.session_number ?? status?.sessionNumber, null);
+    } catch {
+      return null;
+    }
+  }
+
+  async resolveLedgerSessionForShutdown(sessionNumber = null) {
+    const canonicalSessionNumber = asPositiveInt(
+      sessionNumber ?? this.ledgerAppSession?.sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+      null
+    );
+    if (this.ledgerAppSession?.sessionId && this.ledgerAppSession?.sessionNumber === canonicalSessionNumber) {
+      return {
+        sessionId: this.ledgerAppSession.sessionId,
+        sessionNumber: canonicalSessionNumber,
+      };
+    }
+    if (!canonicalSessionNumber) return null;
+
+    const sessions = await executeEvidenceLedgerOperation(
+      'list-sessions',
+      { limit: 10, order: 'desc' },
+      {
+        source: {
+          via: 'app-shutdown',
+          role: 'system',
+          paneId: null,
+        },
+      }
+    );
+    if (!Array.isArray(sessions)) return null;
+
+    const match = sessions.find((entry) => {
+      return asPositiveInt(entry?.sessionNumber, null) === canonicalSessionNumber;
+    });
+    if (!match?.sessionId) return null;
+    return {
+      sessionId: match.sessionId,
+      sessionNumber: canonicalSessionNumber,
+    };
+  }
+
+  async captureSessionEndState(options = {}) {
+    if (this.sessionEndCapturePromise) {
+      return this.sessionEndCapturePromise;
+    }
+
+    this.sessionEndCapturePromise = (async () => {
+      const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+      const sessionNumber = asPositiveInt(
+        options.sessionNumber ?? this.ledgerAppSession?.sessionNumber ?? this.getCurrentAppStatusSessionNumber(),
+        null
+      );
+      if (!sessionNumber) {
+        return {
+          ok: false,
+          skipped: true,
+          reason: 'session_number_unavailable',
+        };
+      }
+
+      const source = {
+        via: 'app-shutdown',
+        role: 'system',
+        paneId: null,
+      };
+      const summaryResult = await generateSessionSummary({
+        sessionNumber,
+        includeSummaryText: true,
+        queryCommsJournal: (filters, queryOptions) => queryCommsJournalEntries(filters, queryOptions),
+        dbPath: options.dbPath || null,
+        nowMs,
+      });
+      const summaryMarkdown = typeof summaryResult?.summaryText === 'string'
+        ? summaryResult.summaryText
+        : `# Session ${sessionNumber} Summary\n\nNo messages recorded in this session.\n`;
+      const messageCount = Number.isFinite(Number(summaryResult?.messageCount))
+        ? Math.max(0, Math.floor(Number(summaryResult.messageCount)))
+        : 0;
+      const sessionSummary = {
+        sessionNumber,
+        sessionScopeId: this.commsSessionScopeId || null,
+        messageCount,
+        generatedAt: new Date(nowMs).toISOString(),
+        createdAtMs: nowMs,
+        summaryMarkdown,
+        fallbackPath: summaryResult?.fallbackResult?.path || null,
+        memoryNodeId: summaryResult?.memoryResult?.nodeId || null,
+      };
+      const sessionSummaryLine = `Session ${sessionNumber} captured ${messageCount} message${messageCount === 1 ? '' : 's'} before shutdown.`;
+      const ledgerSession = await this.resolveLedgerSessionForShutdown(sessionNumber);
+
+      let precompactResult = {
+        ok: false,
+        skipped: true,
+        reason: 'team_memory_not_initialized',
+      };
+      if (this.teamMemoryInitialized) {
+        try {
+          precompactResult = await teamMemory.executeTeamMemoryOperation('capture-precompact-memory', {
+            session_id: this.commsSessionScopeId || null,
+            session_ordinal: sessionNumber,
+            summary: summaryMarkdown,
+            reason: 'session_end',
+            nowMs,
+          });
+        } catch (err) {
+          precompactResult = { ok: false, reason: 'capture_failed', error: err.message };
+        }
+      }
+
+      if (!ledgerSession?.sessionId) {
+        return {
+          ok: summaryResult?.ok !== false,
+          skipped: true,
+          reason: 'ledger_session_unavailable',
+          summaryResult,
+          precompactResult,
+        };
+      }
+
+      const recordResult = await executeEvidenceLedgerOperation(
+        'record-session-end',
+        {
+          sessionId: ledgerSession.sessionId,
+          endedAtMs: nowMs,
+          summary: sessionSummaryLine,
+          stats: {
+            messageCount,
+          },
+          meta: {
+            source: 'squidrun-app',
+            sessionScopeId: this.commsSessionScopeId || null,
+            fallbackSummaryPath: sessionSummary.fallbackPath,
+            memoryNodeId: sessionSummary.memoryNodeId,
+          },
+        },
+        { source }
+      );
+      const snapshotResult = await executeEvidenceLedgerOperation(
+        'snapshot-context',
+        {
+          sessionId: ledgerSession.sessionId,
+          trigger: 'session_end',
+          nowMs,
+          content: {
+            session: sessionNumber,
+            date: new Date(nowMs).toISOString().slice(0, 10),
+            mode: 'APP',
+            status: 'READY',
+            source: 'ledger.session_end',
+            summary: sessionSummaryLine,
+            summaryMarkdown,
+            stats: {
+              messageCount,
+            },
+            sessionSummary,
+          },
+        },
+        { source }
+      );
+
+      return {
+        ok: recordResult?.ok !== false && snapshotResult?.ok !== false,
+        summaryResult,
+        precompactResult,
+        recordResult,
+        snapshotResult,
+        sessionSummary,
+      };
+    })();
+
+    return this.sessionEndCapturePromise;
+  }
+
+  getStartupSessionFloor() {
+    if (app && app.isPackaged === true) {
+      return 0;
+    }
+    return APP_SESSION_COUNTER_FLOOR;
+  }
+
+  isOnboardingComplete(state = null) {
+    if (!state || typeof state !== 'object') return false;
+    return state.onboarding_complete === true || state.onboardingComplete === true;
+  }
+
+  resolveOnboardingWorkspaceCandidates() {
+    const candidates = [];
+    const defaultWorkspace = this.getDefaultExternalWorkspacePath();
+    if (defaultWorkspace) {
+      candidates.push(path.resolve(defaultWorkspace));
+    }
+
+    try {
+      if (typeof getProjectRoot === 'function') {
+        const activeRoot = getProjectRoot();
+        if (typeof activeRoot === 'string' && activeRoot.trim()) {
+          candidates.push(path.resolve(activeRoot));
+        }
+      }
+    } catch (_) {
+      // Best-effort only.
+    }
+
+    if (this.packagedOnboardingState?.workspace_path) {
+      candidates.push(path.resolve(String(this.packagedOnboardingState.workspace_path)));
+    }
+
+    try {
+      const state = (typeof watcher.readState === 'function' ? watcher.readState() : null) || null;
+      const stateProject = typeof state?.project === 'string' ? state.project.trim() : '';
+      if (stateProject && !this.isBundledRuntimePath(stateProject)) {
+        candidates.push(path.resolve(stateProject));
+      }
+    } catch (_) {
+      // Best-effort only.
+    }
+
+    return Array.from(new Set(candidates));
+  }
+
+  readPersistedOnboardingState() {
+    const candidates = this.resolveOnboardingWorkspaceCandidates();
+    let fallback = null;
+    for (const workspacePath of candidates) {
+      const state = this.readOnboardingState(workspacePath);
+      if (!state) continue;
+      const payload = {
+        state,
+        path: this.getOnboardingStatePath(workspacePath),
+        workspacePath,
+      };
+      if (this.isOnboardingComplete(state)) {
+        return payload;
+      }
+      if (!fallback) fallback = payload;
+    }
+    return fallback || {
+      state: null,
+      path: this.getOnboardingStatePath(this.getDefaultExternalWorkspacePath()),
+      workspacePath: this.getDefaultExternalWorkspacePath(),
+    };
+  }
+
+  isHiddenPaneHostModeEnabled() {
+    if (process.env.SQUIDRUN_HIDDEN_PANE_HOSTS === '1') return true;
+    return this.ctx?.currentSettings?.hiddenPaneHostsEnabled === true;
+  }
+
+  getHiddenPaneHostPaneIds() {
+    if (!this.isHiddenPaneHostModeEnabled()) return [];
+    return Array.from(new Set([
+      ...PANE_IDS,
+      ...SQUID_ROOM_PANE_IDS,
+    ].map((paneId) => String(paneId))));
+  }
+
+  getPaneHostStatusPaneIds() {
+    const paneIds = new Set([
+      ...PANE_IDS.map((paneId) => String(paneId)),
+      ...SQUID_ROOM_PANE_IDS.map((paneId) => String(paneId)),
+      ...Array.from(this.paneHostReady || []).map((paneId) => String(paneId)),
+      ...Array.from(this.paneHostMissingPanes || []).map((paneId) => String(paneId)),
+    ]);
+    return Array.from(paneIds).filter(Boolean).sort();
+  }
+
+  derivePaneHostStatusFromLiveTerminals(terminals = null) {
+    if (!this.isHiddenPaneHostModeEnabled()) {
+      this.paneHostReady.clear();
+      this.paneHostMissingPanes.clear();
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+      return {
+        hiddenModeEnabled: false,
+        degraded: false,
+        missingPanes: [],
+        readyPanes: [],
+        lastErrorReason: null,
+        lastErrorAt: null,
+      };
+    }
+
+    const terminalList = Array.isArray(terminals)
+      ? terminals
+      : (this.ctx.daemonClient?.getTerminals?.() || []);
+    const paneIds = this.getPaneHostStatusPaneIds();
+    const readyPanes = new Set(Array.from(this.paneHostReady || []).map((paneId) => String(paneId)));
+    const missingPanes = new Set(Array.from(this.paneHostMissingPanes || []).map((paneId) => String(paneId)));
+
+    for (const paneId of paneIds) {
+      if (!this.getLiveDaemonTerminalForPane(paneId, terminalList)) continue;
+      readyPanes.add(paneId);
+      missingPanes.delete(paneId);
+    }
+
+    const degraded = missingPanes.size > 0;
+    return {
+      hiddenModeEnabled: this.isHiddenPaneHostModeEnabled(),
+      degraded,
+      missingPanes: Array.from(missingPanes).sort(),
+      readyPanes: Array.from(readyPanes).sort(),
+      lastErrorReason: degraded ? this.paneHostLastErrorReason : null,
+      lastErrorAt: degraded ? this.paneHostLastErrorAt : null,
+    };
+  }
+
+  updatePaneHostStatus() {
+    if (!this.settings || typeof this.settings.writeAppStatus !== 'function') return;
+    const derivedStatus = this.derivePaneHostStatusFromLiveTerminals();
+    this.settings.writeAppStatus({
+      statusPatch: {
+        paneHost: {
+          ...derivedStatus,
+          lastCheckedAt: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
+  reportPaneHostDegraded({
+    paneId = null,
+    reason = 'unknown',
+    message = '',
+    details = null,
+  } = {}) {
+    const id = paneId === null || paneId === undefined ? null : String(paneId).trim();
+    const normalizedReason = String(reason || 'unknown');
+    if (
+      id
+      && (normalizedReason === 'inject_hidden_not_ready' || normalizedReason === 'inject_hidden_send_failed')
+      && this.clearPaneHostDegradedFromLiveTerminal(id, { source: `degrade_suppressed:${normalizedReason}` })
+    ) {
+      return;
+    }
+    const wasMissing = id ? this.paneHostMissingPanes.has(id) : false;
+    const reasonChanged = this.paneHostLastErrorReason !== normalizedReason;
+    const nowIso = new Date().toISOString();
+
+    if (id) {
+      this.paneHostMissingPanes.add(id);
+    }
+    this.paneHostLastErrorReason = normalizedReason;
+    this.paneHostLastErrorAt = nowIso;
+
+    const fallbackMessage = (typeof message === 'string' && message.trim())
+      ? message.trim()
+      : `Hidden pane host degraded for pane ${id || 'unknown'}.`;
+
+    log.error('PaneHost', fallbackMessage);
+    this.activity.logActivity('error', id || 'system', fallbackMessage, {
+      subsystem: 'pane-host',
+      reason: normalizedReason,
+      paneId: id,
+      ...(details && typeof details === 'object' ? details : {}),
+    });
+
+    if (wasMissing && !reasonChanged) return;
+    this.updatePaneHostStatus();
+  }
+
+  clearPaneHostDegraded(paneId) {
+    const id = String(paneId || '').trim();
+    if (!id) return;
+    if (!this.paneHostMissingPanes.delete(id)) return;
+
+    if (this.paneHostMissingPanes.size === 0) {
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+    }
+
+    log.info('PaneHost', `Hidden pane host recovered for pane ${id}`);
+    this.updatePaneHostStatus();
+  }
+
+  getLiveDaemonTerminalForPane(paneId, terminalList = null) {
+    const id = String(paneId || '').trim();
+    if (!id) return null;
+
+    const terminals = Array.isArray(terminalList)
+      ? terminalList
+      : (this.getDaemonClientForPane(id)?.getTerminals?.() || this.ctx.daemonClient?.getTerminals?.() || []);
+    const terminal = Array.isArray(terminals)
+      ? terminals.find((entry) => String(entry?.paneId || '') === id)
+      : null;
+    const fallbackTerminal = terminal || this.getDaemonClientForPane(id)?.getTerminal?.(id) || this.ctx.daemonClient?.getTerminal?.(id);
+    if (!fallbackTerminal || String(fallbackTerminal?.paneId || id) !== id) return null;
+    if (fallbackTerminal.alive === false) return null;
+    const hasProcess = Number(fallbackTerminal.pid) > 0;
+    const hasPtyMode = String(fallbackTerminal.mode || '').toLowerCase() === 'pty';
+    const hasScrollback = typeof fallbackTerminal.scrollback === 'string' && fallbackTerminal.scrollback.length > 0;
+    return (hasProcess || hasPtyMode || hasScrollback) ? fallbackTerminal : null;
+  }
+
+  clearPaneHostDegradedFromLiveTerminal(paneId, options = {}) {
+    const id = String(paneId || '').trim();
+    if (!id) return false;
+    const terminal = this.getLiveDaemonTerminalForPane(id, options.terminals || null);
+    if (!terminal) return false;
+
+    const wasMissing = this.paneHostMissingPanes.has(id);
+    const wasReady = this.paneHostReady.has(id);
+    this.paneHostReady.add(id);
+    this.paneHostMissingPanes.delete(id);
+    if (this.paneHostMissingPanes.size === 0) {
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+    }
+
+    if (wasMissing || !wasReady) {
+      log.info(
+        'PaneHost',
+        `Recovered pane-host status from live daemon terminal for pane ${id}`
+        + `${options.source ? ` (${options.source})` : ''}`
+      );
+      this.updatePaneHostStatus();
+    }
+    return true;
+  }
+
+  reconcilePaneHostStatusFromDaemonTerminals(terminals = [], options = {}) {
+    if (!this.isHiddenPaneHostModeEnabled()) {
+      return { recovered: [], remainingMissing: [], skipped: true, reason: 'hidden_pane_host_disabled' };
+    }
+    const explicitPaneIds = Array.isArray(options.paneIds)
+      ? options.paneIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    const paneIds = explicitPaneIds.length > 0
+      ? explicitPaneIds
+      : Array.from(this.paneHostMissingPanes);
+    const recovered = [];
+    for (const paneId of paneIds) {
+      if (this.clearPaneHostDegradedFromLiveTerminal(paneId, {
+        terminals,
+        source: options.source || 'daemon_terminal_reconcile',
+      })) {
+        recovered.push(paneId);
+      }
+    }
+    return {
+      recovered,
+      remainingMissing: Array.from(this.paneHostMissingPanes).sort(),
+      skipped: false,
+    };
+  }
+
+  verifyPaneHostWindowsAfterBootstrap(source = 'startup') {
+    if (!this.isHiddenPaneHostModeEnabled()) return;
+    const paneIds = this.getHiddenPaneHostPaneIds();
+    if (!paneIds.length) return;
+    const diagnostics = this.paneHostWindowManager.getWindowDiagnostics?.() || null;
+    const now = Date.now();
+    const stillLoading = Boolean(diagnostics?.loading);
+    const loadingAgeMs = diagnostics?.lastLoadStartedAt
+      ? Math.max(0, now - diagnostics.lastLoadStartedAt)
+      : null;
+    const postLoadAgeMs = diagnostics?.lastDidFinishLoadAt
+      ? Math.max(0, now - diagnostics.lastDidFinishLoadAt)
+      : null;
+
+    if (stillLoading && (loadingAgeMs === null || loadingAgeMs < PANE_HOST_BOOTSTRAP_LOADING_GRACE_MS)) {
+      log.info(
+        'PaneHost',
+        `Hidden pane host still loading (${source}); deferring readiness check`
+        + ` for ${paneIds.join(', ')}${loadingAgeMs !== null ? ` after ${loadingAgeMs}ms` : ''}`
+      );
+      this.updatePaneHostStatus();
+      this.paneHostBootstrapVerifyTimer = setTimeout(() => {
+        this.paneHostBootstrapVerifyTimer = null;
+        this.verifyPaneHostWindowsAfterBootstrap('loading_wait');
+      }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      this.paneHostBootstrapVerifyTimer?.unref?.();
+      return;
+    }
+
+    const missingWindows = paneIds.filter((paneId) => !this.paneHostWindowManager.getPaneWindow(paneId));
+    const missingReady = paneIds.filter((paneId) => !this.paneHostReady.has(String(paneId)));
+
+    if (
+      missingWindows.length === 0
+      && missingReady.length > 0
+      && postLoadAgeMs !== null
+      && postLoadAgeMs < PANE_HOST_READY_GRACE_AFTER_LOAD_MS
+    ) {
+      log.info(
+        'PaneHost',
+        `Hidden pane host finished loading but is still awaiting ready signal`
+        + ` (${source}) for panes ${missingReady.join(', ')} after ${postLoadAgeMs}ms`
+      );
+      this.updatePaneHostStatus();
+      this.paneHostBootstrapVerifyTimer = setTimeout(() => {
+        this.paneHostBootstrapVerifyTimer = null;
+        this.verifyPaneHostWindowsAfterBootstrap('ready_wait');
+      }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+      this.paneHostBootstrapVerifyTimer?.unref?.();
+      return;
+    }
+
+    if (missingWindows.length === 0 && missingReady.length === 0) {
+      this.paneHostMissingPanes.clear();
+      this.paneHostLastErrorReason = null;
+      this.paneHostLastErrorAt = null;
+      log.info('PaneHost', `Verified hidden pane host bootstrap (${source}): windows ready for panes ${paneIds.join(', ')}`);
+      this.updatePaneHostStatus();
+      return;
+    }
+
+    for (const paneId of missingWindows) {
+      this.reportPaneHostDegraded({
+        paneId,
+        reason: 'bootstrap_window_missing',
+        message: `Hidden pane host window missing after bootstrap for pane ${paneId}.`,
+        details: { source },
+      });
+    }
+
+    for (const paneId of missingReady) {
+      this.reportPaneHostDegraded({
+        paneId,
+        reason: 'bootstrap_ready_signal_missing',
+        message: `Hidden pane host did not report ready after bootstrap for pane ${paneId}.`,
+        details: { source },
+      });
+    }
+
+    if (missingWindows.length > 0 || missingReady.length > 0) {
+      this.schedulePaneHostRecovery('bootstrap_verify');
+    }
+  }
+
+  schedulePaneHostRecovery(reason = 'unknown', delayMs = 750) {
+    if (!this.isHiddenPaneHostModeEnabled() || this.shuttingDown) return;
+    if (this.paneHostRecoveryTimer) {
+      clearTimeout(this.paneHostRecoveryTimer);
+      this.paneHostRecoveryTimer = null;
+    }
+    const waitMs = Math.max(100, Number(delayMs) || 750);
+    this.paneHostRecoveryTimer = setTimeout(() => {
+      this.paneHostRecoveryTimer = null;
+      if (this.shuttingDown) return;
+      log.warn('PaneHost', `Scheduling hidden pane host recovery (${reason})`);
+      this.schedulePaneHostBootstrap();
+    }, waitMs);
+    this.paneHostRecoveryTimer?.unref?.();
+  }
+
+  handlePaneHostLifecycleEvent(payload = {}) {
+    const eventType = String(payload?.type || 'unknown').trim().toLowerCase();
+    const paneIds = Array.isArray(payload?.paneIds)
+      ? payload.paneIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+
+    if (eventType === 'console-message') {
+      const levelNames = ['verbose', 'info', 'warning', 'error'];
+      const levelName = levelNames[Number(payload?.level)] || 'info';
+      const message = String(payload?.message || '').trim();
+      if (!message) return;
+      const prefix = `PaneHost(${paneIds.join(',') || 'unknown'})`;
+      if (levelName === 'error') {
+        log.error('PaneHost', `${prefix}: ${message}`);
+      } else if (levelName === 'warning') {
+        log.warn('PaneHost', `${prefix}: ${message}`);
+      } else {
+        log.info('PaneHost', `${prefix}: ${message}`);
+      }
+      return;
+    }
+
+    if (eventType === 'did-finish-load' || eventType === 'window-created') {
+      log.info('PaneHost', `Hidden pane host ${eventType} for panes: ${paneIds.join(', ')}`);
+      return;
+    }
+
+    const detailParts = [];
+    if (payload?.errorDescription) detailParts.push(`description=${payload.errorDescription}`);
+    if (payload?.validatedURL) detailParts.push(`url=${payload.validatedURL}`);
+    if (payload?.preloadPath) detailParts.push(`preload=${payload.preloadPath}`);
+    if (payload?.error) detailParts.push(`error=${payload.error}`);
+    if (payload?.reason) detailParts.push(`reason=${payload.reason}`);
+    if (payload?.exitCode !== undefined && payload?.exitCode !== null) detailParts.push(`exitCode=${payload.exitCode}`);
+    const detailsText = detailParts.length > 0 ? ` (${detailParts.join(', ')})` : '';
+    const message = `Hidden pane host lifecycle event: ${eventType}${detailsText}`;
+
+    for (const paneId of (paneIds.length > 0 ? paneIds : this.getHiddenPaneHostPaneIds())) {
+      this.paneHostReady.delete(String(paneId));
+      this.reportPaneHostDegraded({
+        paneId,
+        reason: `lifecycle_${eventType}`,
+        message: `${message} for pane ${paneId}.`,
+        details: payload,
+      });
+    }
+
+    if (['closed', 'render-process-gone', 'did-fail-load', 'preload-error', 'unresponsive'].includes(eventType)) {
+      this.schedulePaneHostRecovery(`lifecycle_${eventType}`);
+    }
+  }
+
+  async ensurePaneHostWindows() {
+    const paneIds = this.getHiddenPaneHostPaneIds();
+    if (!paneIds.length) {
+      this.updatePaneHostStatus();
+      return;
+    }
+    try {
+      await this.paneHostWindowManager.ensurePaneWindows(paneIds);
+      log.info('PaneHost', `Hidden pane host windows created for panes: ${paneIds.join(', ')}`);
+      this.updatePaneHostStatus();
+    } catch (err) {
+      this.reportPaneHostDegraded({
+        reason: 'bootstrap_ensure_failed',
+        message: `Failed to create hidden pane host windows: ${err.message}`,
+        details: { paneIds },
+      });
+    }
+  }
+
+  schedulePaneHostBootstrap() {
+    if (this.paneHostBootstrapTimer) {
+      clearTimeout(this.paneHostBootstrapTimer);
+      this.paneHostBootstrapTimer = null;
+    }
+    if (this.paneHostBootstrapVerifyTimer) {
+      clearTimeout(this.paneHostBootstrapVerifyTimer);
+      this.paneHostBootstrapVerifyTimer = null;
+    }
+    if (this.paneHostRecoveryTimer) {
+      clearTimeout(this.paneHostRecoveryTimer);
+      this.paneHostRecoveryTimer = null;
+    }
+    if (this.paneHostRecoveryTimer) {
+      clearTimeout(this.paneHostRecoveryTimer);
+      this.paneHostRecoveryTimer = null;
+    }
+
+    this.paneHostBootstrapTimer = setTimeout(() => {
+      this.paneHostBootstrapTimer = null;
+      void this.ensurePaneHostWindows().finally(() => {
+        this.paneHostBootstrapVerifyTimer = setTimeout(() => {
+          this.paneHostBootstrapVerifyTimer = null;
+          this.verifyPaneHostWindowsAfterBootstrap('createWindow');
+        }, PANE_HOST_BOOTSTRAP_VERIFY_DELAY_MS);
+        this.paneHostBootstrapVerifyTimer?.unref?.();
+      });
+    }, 0);
+    this.paneHostBootstrapTimer?.unref?.();
+  }
+
+  sendPaneHostMessage(paneId, channel, payload = {}) {
+    if (!this.isHiddenPaneHostModeEnabled()) return false;
+    return this.paneHostWindowManager.sendToPaneWindow(String(paneId), channel, {
+      ...payload,
+      paneId: String(paneId),
+    });
+  }
+
+  sendPaneHostBridgeEvent(paneId, type, payload = {}) {
+    if (!this.isHiddenPaneHostModeEnabled()) return false;
+    const data = (payload && typeof payload === 'object') ? payload : {};
+    return this.sendPaneHostMessage(paneId, 'kernel:bridge-event', {
+      source: 'pane-host',
+      type: String(type || ''),
+      ...data,
+    });
+  }
+
+  isTrustedPaneHostSender(event, paneId) {
+    const id = String(paneId || '').trim();
+    if (!id || !event?.sender) return false;
+    const paneWindow = this.paneHostWindowManager.getPaneWindow(id);
+    if (!paneWindow || paneWindow.isDestroyed() || !paneWindow.webContents) return false;
+    return event.sender.id === paneWindow.webContents.id;
+  }
+
+  handlePaneHostReadySignal(payload = {}) {
+    const paneId = String(payload?.paneId || '').trim();
+    if (!paneId) return;
+    this.paneHostReady.add(paneId);
+    this.clearPaneHostDegraded(paneId);
+    this.updatePaneHostStatus();
+    const terminal = this.ctx.daemonClient?.getTerminal?.(paneId);
+    if (terminal?.scrollback) {
+      this.sendPaneHostBridgeEvent(paneId, 'prime-scrollback', {
+        scrollback: terminal.scrollback,
+      });
+    }
+    void this.flushPendingPaneDeliveries({ paneId, reason: 'pane_host_ready' }).catch((err) => {
+      log.warn('PendingPaneDelivery', `Replay on pane-host-ready failed for pane ${paneId}: ${err.message}`);
+    });
+  }
+
+  dispatchPaneHostEnter(paneId) {
+    const id = String(paneId || '').trim();
+    if (!id) {
+      return { success: false, reason: 'missing_pane_id' };
+    }
+    const dc = this.ctx.daemonClient;
+    if (!dc || !dc.connected) {
+      return { success: false, reason: 'daemon_not_connected', paneId: id };
+    }
+    try {
+      if (this.isCodexPaneCommand(id)) {
+        const pasteEndAccepted = dc.write(id, '\u001b[201~');
+        if (!pasteEndAccepted) {
+          return { success: false, reason: 'daemon_paste_end_write_failed', paneId: id };
+        }
+      }
+      const accepted = dc.write(id, '\r');
+      if (!accepted) {
+        return { success: false, reason: 'daemon_write_failed', paneId: id };
+      }
+      return { success: true, paneId: id };
+    } catch (err) {
+      return {
+        success: false,
+        reason: 'daemon_write_failed',
+        paneId: id,
+        error: err?.message || 'daemon_write_failed',
+      };
+    }
+  }
+
+  isCodexPaneCommand(paneId) {
+    const id = String(paneId || '').trim();
+    if (!id) return false;
+    const commands = this.ctx.currentSettings?.paneCommands;
+    const command = commands && typeof commands === 'object'
+      ? String(commands[id] || '')
+      : '';
+    if (command.toLowerCase().includes('codex')) {
+      return true;
+    }
+
+    let persistedCommands = null;
+    try {
+      persistedCommands = this.settings?.loadSettings?.()?.paneCommands;
+    } catch {
+      persistedCommands = null;
+    }
+    const persistedCommand = persistedCommands && typeof persistedCommands === 'object'
+      ? String(persistedCommands[id] || '')
+      : '';
+    if (persistedCommand.toLowerCase().includes('codex')) return true;
+    if (command.trim() || persistedCommand.trim()) return false;
+
+    const runtimeCommand = resolvePaneFailureCliHint(id, this.ctx, this.cliIdentity);
+    return String(runtimeCommand || '').toLowerCase().includes('codex');
+  }
+
+  handleTriggerDeliveryAck(data = {}) {
+    if (data?.deliveryId) triggers.handleDeliveryAck(data.deliveryId, data.paneId);
+    appendBusTraceEvent({
+      eventType: 'pane_delivery_ack',
+      messageId: data?.messageId || data?.deliveryId || null,
+      deliveryId: data?.deliveryId || null,
+      paneId: data?.paneId || null,
+      success: true,
+      status: 'pane_delivery_ack',
+      modelReceiptVerified: false,
+    });
+  }
+
+  handleTriggerDeliveryOutcome(data = {}) {
+    if (data?.deliveryId) triggers.handleDeliveryOutcome(data.deliveryId, data.paneId, data);
+    appendBusTraceEvent({
+      eventType: 'pane_delivery_outcome',
+      messageId: data?.messageId || data?.deliveryId || null,
+      deliveryId: data?.deliveryId || null,
+      paneId: data?.paneId || null,
+      success: data?.accepted !== false,
+      accepted: data?.accepted === true,
+      verified: data?.verified === true,
+      status: data?.status || null,
+      reason: data?.reason || null,
+      modelReceiptVerified: false,
+    });
+    const statusLower = String(data?.status || '').toLowerCase();
+    const isUnverified = (
+      data?.verified === false
+      || statusLower.includes('unverified')
+      || statusLower === 'delivered.enter_sent'
+    );
+    if (isUnverified) {
+      const paneId = String(data?.paneId || 'unknown');
+      const status = data?.status || 'accepted.unverified';
+      const reason = data?.reason || 'verification_unavailable';
+      const warning = `Delivery remained unverified for pane ${paneId} (${status}${reason ? `: ${reason}` : ''})`;
+      log.warn('Delivery', warning);
+      this.activity.logActivity('warning', paneId, warning, {
+        subsystem: 'delivery-verification',
+        deliveryId: data?.deliveryId || null,
+        status,
+        reason,
+      });
+    }
+  }
+
+  sendToVisibleWindow(channel, payload, options = {}) {
+    const requestedWindowKey = toNonEmptyString(options.windowKey)
+      || toNonEmptyString(payload?.windowKey)
+      || toNonEmptyString(payload?.meta?.windowKey)
+      || 'main';
+    const windowKey = String(requestedWindowKey).trim() || 'main';
+    const window = this.getAppWindow(windowKey);
+    if (!this.canSendToWindow(window)) return false;
+    const sender = (windowKey === 'main' && typeof this.mainWindowSendRaw === 'function')
+      ? this.mainWindowSendRaw
+      : window.webContents.send.bind(window.webContents);
+    try {
+      sender(channel, payload);
+      return true;
+    } catch (err) {
+      log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
+      return false;
+    }
+  }
+
+  sendToAllWindows(channel, payload, options = {}) {
+    const excludedWindowKey = toNonEmptyString(options.excludeWindowKey);
+    let delivered = false;
+    const seen = new Set();
+    for (const [windowKey, windowRef] of this.getAppWindows()) {
+      const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+      if (excludedWindowKey && normalizedWindowKey === excludedWindowKey) {
+        continue;
+      }
+      if (seen.has(windowRef)) continue;
+      seen.add(windowRef);
+      delivered = this.sendToVisibleWindow(channel, payload, { windowKey: normalizedWindowKey }) || delivered;
+    }
+    return delivered;
+  }
+
+  getVisibleWindowKeyForPane(paneId) {
+    return this.getVisibleWindowKeysForPane(paneId)[0] || 'main';
+  }
+
+  getPaneRestartOwnerCandidateWindowKeys(paneId) {
+    const id = String(paneId || '').trim();
+    if (armSpawnAppService.isSquidRoomArmPaneId(id)) return ['squid-room'];
+    const candidates = [];
+    const addCandidate = (value) => {
+      const key = toNonEmptyString(value);
+      if (key && !candidates.includes(key)) candidates.push(key);
+    };
+    const activeProfile = normalizeProfileName(this.activeProfileName || getActiveProfileName() || 'main');
+    const launchProfile = this.getLaunchWindowProfile?.() || {};
+    if (!isMainProfile(activeProfile)) {
+      addCandidate(launchProfile.windowKey && launchProfile.windowKey !== 'main'
+        ? launchProfile.windowKey
+        : activeProfile);
+      addCandidate(activeProfile);
+    }
+    if (!isMainProfile(launchProfile.profileName || 'main') && launchProfile.windowKey !== 'main') {
+      addCandidate(launchProfile.windowKey);
+    }
+    addCandidate('main');
+    return candidates;
+  }
+
+  resolvePaneRestartOwner(paneId) {
+    const id = String(paneId || '').trim();
+    const candidateWindowKeys = this.getPaneRestartOwnerCandidateWindowKeys(id);
+    const ownerWindowKey = candidateWindowKeys.find((windowKey) => (
+      this.canSendToWindow(this.getAppWindow(windowKey))
+    )) || candidateWindowKeys[0] || 'main';
+    const ownerWindow = this.getAppWindow(ownerWindowKey);
+    const ownerInstance = this.getAppWindowInstanceScope(ownerWindowKey);
+    const webContents = ownerWindow && typeof ownerWindow.isDestroyed === 'function' && !ownerWindow.isDestroyed()
+      ? ownerWindow.webContents
+      : null;
+    return {
+      ownerWindowKey,
+      ownerProfileName: ownerInstance.profileName,
+      ownerSessionScopeId: ownerInstance.sessionScopeId,
+      ownerInstance,
+      webContents,
+      requiresWebContents: true,
+    };
+  }
+
+  requestPaneRestart(paneId, info = {}) {
+    const id = String(paneId || '').trim();
+    if (!id) return { ok: false, granted: false, reason: 'missing_pane_id' };
+    const owner = this.resolvePaneRestartOwner(id);
+    const ownerWindow = this.getAppWindow(owner.ownerWindowKey);
+    if (!this.canSendToWindow(ownerWindow)) {
+      return {
+        ok: false,
+        granted: false,
+        reason: 'restart_owner_unavailable',
+        paneId: id,
+        ownerWindowKey: owner.ownerWindowKey,
+      };
+    }
+    const result = this.paneRestartArbiter.begin({
+      paneId: id,
+      source: info.source || 'main-request',
+      requestId: info.requestId || info.actionId || null,
+      webContents: ownerWindow.webContents,
+    });
+    if (!result?.granted) {
+      log.info('PaneRestart', `Coalesced/denied restart for pane ${id}: ${result?.reason || 'not_granted'}`);
+      return result;
+    }
+    const delivered = this.sendToVisibleWindow('restart-pane', {
+      paneId: id,
+      source: info.source || 'main-request',
+      requestId: info.requestId || info.actionId || null,
+      restartClaim: result.claim,
+      restartClaimId: result.claim?.claimId || null,
+    }, { windowKey: owner.ownerWindowKey });
+    if (!delivered) {
+      this.paneRestartArbiter.complete({
+        paneId: id,
+        claimId: result.claim?.claimId,
+        status: 'delivery_failed',
+        reason: 'restart_owner_send_failed',
+      });
+      return {
+        ok: false,
+        granted: false,
+        reason: 'restart_owner_send_failed',
+        paneId: id,
+        ownerWindowKey: owner.ownerWindowKey,
+      };
+    }
+    return { ...result, delivered: true, ownerWindowKey: owner.ownerWindowKey };
+  }
+
+  async spawnAddressedArm(input = {}, options = {}) {
+    return armSpawnAppService.spawnAddressedArm(this, input, options);
+  }
+
+  async spawnAddressedArmAndProveLiveness(input = {}, options = {}) {
+    return armSpawnAppService.spawnAddressedArmAndProveLiveness(this, input, options);
+  }
+
+  getVisibleWindowKeysForPane(paneId) {
+    return armSpawnAppService.resolveVisibleWindowKeysForPane(this, paneId);
+  }
+
+  sendToVisibleWindowsForPane(channel, payload, paneId) {
+    let delivered = false;
+    const seenWindows = new Set();
+    for (const windowKey of this.getVisibleWindowKeysForPane(paneId)) {
+      const windowRef = this.getAppWindow(windowKey);
+      if (windowRef && seenWindows.has(windowRef)) continue;
+      if (windowRef) seenWindows.add(windowRef);
+      delivered = this.sendToVisibleWindow(channel, payload, { windowKey }) || delivered;
+    }
+    return delivered;
+  }
+
+  sendDaemonConnectedToAppWindows(terminals = []) {
+    this.reconcilePaneHostStatusFromDaemonTerminals(terminals, {
+      source: 'daemon_connected',
+    });
+    let delivered = false;
+    for (const [windowKey] of this.getAppWindows()) {
+      const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+      const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, {
+        windowKey: normalizedWindowKey,
+      });
+      delivered = this.sendToVisibleWindow('daemon-connected', {
+        terminals: visibleTerminals,
+        windowKey: normalizedWindowKey,
+      }, { windowKey: normalizedWindowKey }) || delivered;
+    }
+    return delivered;
+  }
+
+  getDaemonClientForPane(paneId) {
+    return this.ctx.daemonClient || null;
+  }
+
+  canSendToWindow(windowRef) {
+    if (!windowRef) return false;
+    if (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed()) {
+      return false;
+    }
+    const webContents = windowRef.webContents;
+    if (!webContents) return false;
+    if (typeof webContents.isDestroyed === 'function' && webContents.isDestroyed()) {
+      return false;
+    }
+    return typeof webContents.send === 'function';
+  }
+
+  clearDaemonConnectTimeout() {
+    if (this.daemonConnectTimeoutTimer) {
+      clearTimeout(this.daemonConnectTimeoutTimer);
+      this.daemonConnectTimeoutTimer = null;
+    }
+  }
+
+  notifyRendererDaemonTimeout(reason = 'daemon_connect_timeout') {
+    if (this.daemonConnectedForStartup) return;
+    if (this.daemonTimeoutNotified) return;
+    const delivered = this.sendToAllWindows('daemon-timeout', {
+      timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
+      reason,
+      message: "SquidRun couldn't start the background daemon.",
+    });
+    if (delivered) {
+      this.daemonTimeoutNotified = true;
+    }
+  }
+
+  getBootSequencePath() {
+    return resolveCoordPath(path.join('runtime', 'boot-sequence.jsonl'), { forWrite: true });
+  }
+
+  getRootCoherenceMarkerPaths(expectedRoot = null) {
+    const paths = [];
+    const root = toNonEmptyString(expectedRoot);
+    if (root) {
+      paths.push(path.join(path.resolve(root), '.squidrun', ROOT_COHERENCE_MARKER_RELPATH));
+    }
+    try {
+      paths.push(resolveCoordPath(ROOT_COHERENCE_MARKER_RELPATH, { forWrite: true }));
+    } catch {
+      // If coord resolution is the broken part, the manifest-root marker above remains.
+    }
+    return Array.from(new Set(paths.map((entry) => path.resolve(entry))));
+  }
+
+  appendRootCoherenceMarker(payload = {}) {
+    const expectedRoot = payload.expectedRoot || this.installedDeployment?.dataRoot || null;
+    const marker = {
+      schema: 'squidrun.root_coherence_assert.v1',
+      t: Date.now(),
+      iso: new Date().toISOString(),
+      pid: process.pid,
+      bootSequenceId: this.bootSequenceId || null,
+      ...payload,
+    };
+    try {
+      process.stderr.write(
+        `[ROOT COHERENCE] ${marker.iso} ${marker.reason || 'root_coherence_mismatch'}\n`
+      );
+    } catch {
+      // stderr is best effort only.
+    }
+    for (const markerPath of this.getRootCoherenceMarkerPaths(expectedRoot)) {
+      try {
+        fs.mkdirSync(path.dirname(markerPath), { recursive: true });
+        fs.appendFileSync(markerPath, `${JSON.stringify(marker)}\n`, 'utf8');
+      } catch {
+        // Diagnostic fallback must not hide the original mismatch.
+      }
+    }
+    return marker;
+  }
+
+  writeRootCoherenceDegradedStatus(payload = {}) {
+    const expectedRoot = payload.expectedRoot || this.installedDeployment?.dataRoot || null;
+    const statusPatch = {
+      boot: {
+        sequenceId: this.bootSequenceId || null,
+        stage: 'root_coherence_failed',
+        reason: payload.reason || 'root_coherence_mismatch',
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    const candidatePaths = [
+      expectedRoot ? path.join(path.resolve(expectedRoot), '.squidrun', 'app-status.json') : null,
+      payload.appStatusPath || null,
+    ].filter(Boolean);
+    for (const appStatusPath of Array.from(new Set(candidatePaths.map((entry) => path.resolve(entry))))) {
+      try {
+        let existing = {};
+        if (fs.existsSync(appStatusPath)) {
+          const parsed = JSON.parse(fs.readFileSync(appStatusPath, 'utf8'));
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            existing = parsed;
+          }
+        }
+        const next = {
+          ...existing,
+          boot: {
+            ...(existing.boot && typeof existing.boot === 'object' ? existing.boot : {}),
+            ...statusPatch.boot,
+          },
+        };
+        fs.mkdirSync(path.dirname(appStatusPath), { recursive: true });
+        fs.writeFileSync(appStatusPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
+      } catch {
+        // Best effort; the sync marker is the authoritative failure evidence.
+      }
+    }
+  }
+
+  resolveRootCoherencePaths() {
+    const websocketPortInfo = resolveWebSocketPortInfo({
+      env: process.env,
+      profileName: this.activeProfileName || getActiveProfileName(),
+    });
+    const settingsPath = websocketPortInfo?.settingsPath
+      || (this.installedDeployment?.dataRoot
+        ? path.join(this.installedDeployment.dataRoot, '.squidrun', 'settings', 'websocket.json')
+        : null);
+    const runtimePath = resolveCoordPath('runtime', { forWrite: true });
+    const crumbPath = this.getBootSequencePath();
+    const appStatusPath = typeof this.settings?.resolveAppStatusPath === 'function'
+      ? this.settings.resolveAppStatusPath()
+      : resolveCoordPath('app-status.json', { forWrite: true });
+    const telegramWorkerEnv = this.buildTelegramPollerEnv();
+    const telegramPollerStatePath = toNonEmptyString(telegramWorkerEnv.TELEGRAM_POLLER_STATE_PATH)
+      || (telegramWorkerEnv.SQUIDRUN_DATA_ROOT
+        ? path.join(path.resolve(telegramWorkerEnv.SQUIDRUN_DATA_ROOT), '.squidrun', 'runtime', 'telegram-poller-state.json')
+        : null);
+    const telegramSettingsPath = this.installedDeployment?.dataRoot
+      ? resolveTelegramSettingsPath(this.installedDeployment.dataRoot)
+      : null;
+    return {
+      settingsPath,
+      runtimePath,
+      crumbPath,
+      appStatusPath,
+      telegramPollerDataRoot: telegramWorkerEnv.SQUIDRUN_DATA_ROOT || null,
+      telegramPollerProjectRoot: telegramWorkerEnv.SQUIDRUN_PROJECT_ROOT || null,
+      telegramPollerStatePath,
+      telegramSettingsPath,
+      telegramWorkerEnv,
+      websocketPortInfo,
+    };
+  }
+
+  buildTelegramPollerEnv(baseEnv = process.env) {
+    const expectedRoot = this.installedDeployment?.active === true && this.installedDeployment?.dataRoot
+      ? path.resolve(this.installedDeployment.dataRoot)
+      : null;
+    const dataRoot = expectedRoot
+      || resolveRootPath(baseEnv.SQUIDRUN_DATA_ROOT)
+      || resolveRootPath(getProjectRoot())
+      || resolveRootPath(baseEnv.SQUIDRUN_PROJECT_ROOT);
+    const projectRoot = expectedRoot
+      || resolveRootPath(baseEnv.SQUIDRUN_PROJECT_ROOT)
+      || dataRoot;
+    const rootForState = dataRoot || projectRoot;
+    const nextEnv = {
+      ...buildProfileTelegramEnv(baseEnv, this.activeProfileName),
+      SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+    };
+    if (dataRoot) nextEnv.SQUIDRUN_DATA_ROOT = path.resolve(dataRoot);
+    if (projectRoot) nextEnv.SQUIDRUN_PROJECT_ROOT = path.resolve(projectRoot);
+    if (rootForState) {
+      nextEnv.TELEGRAM_POLLER_STATE_PATH = path.join(
+        path.resolve(rootForState),
+        '.squidrun',
+        'runtime',
+        'telegram-poller-state.json'
+      );
+    }
+    return nextEnv;
+  }
+
+  assertRootCoherenceAtBoot() {
+    if (this.installedDeployment?.active !== true) {
+      return { ok: true, skipped: true, reason: 'not_installed_deployment' };
+    }
+    const expectedRoot = this.installedDeployment?.dataRoot
+      ? path.resolve(this.installedDeployment.dataRoot)
+      : null;
+    if (!expectedRoot) {
+      return { ok: true, skipped: true, reason: 'missing_installed_data_root' };
+    }
+    const rawPaths = this.resolveRootCoherencePaths();
+    const telegramWorkerEnv = rawPaths.telegramWorkerEnv || this.buildTelegramPollerEnv();
+    const telegramPollerDataRoot = rawPaths.telegramPollerDataRoot || telegramWorkerEnv.SQUIDRUN_DATA_ROOT || expectedRoot;
+    const telegramPollerProjectRoot = rawPaths.telegramPollerProjectRoot || telegramWorkerEnv.SQUIDRUN_PROJECT_ROOT || expectedRoot;
+    const telegramPollerStatePath = rawPaths.telegramPollerStatePath
+      || telegramWorkerEnv.TELEGRAM_POLLER_STATE_PATH
+      || path.join(expectedRoot, '.squidrun', 'runtime', 'telegram-poller-state.json');
+    const telegramSettingsPath = rawPaths.telegramSettingsPath || resolveTelegramSettingsPath(expectedRoot);
+    const paths = {
+      ...rawPaths,
+      telegramPollerDataRoot,
+      telegramPollerProjectRoot,
+      telegramPollerStatePath,
+      telegramSettingsPath,
+      telegramWorkerEnv,
+    };
+    const checks = {
+      settingsPath: paths.settingsPath,
+      runtimePath: paths.runtimePath,
+      crumbPath: paths.crumbPath,
+      appStatusPath: paths.appStatusPath,
+      telegramPollerDataRoot: paths.telegramPollerDataRoot,
+      telegramPollerProjectRoot: paths.telegramPollerProjectRoot,
+      telegramPollerStatePath: paths.telegramPollerStatePath,
+      telegramSettingsPath: paths.telegramSettingsPath,
+    };
+    const mismatches = Object.entries(checks)
+      .filter(([, targetPath]) => !rootContainsPath(expectedRoot, targetPath))
+      .map(([name, targetPath]) => ({
+        name,
+        path: targetPath || null,
+        normalizedRoot: normalizeRootForCompare(targetPath ? path.dirname(targetPath) : null),
+      }));
+    const telegramSettings = readTelegramSettings(paths.telegramSettingsPath);
+    const expectedTelegramTokenFingerprint = fingerprintSecret(telegramSettings?.botToken);
+    const actualTelegramTokenFingerprint = fingerprintSecret(paths.telegramWorkerEnv?.TELEGRAM_BOT_TOKEN);
+    if (expectedTelegramTokenFingerprint && expectedTelegramTokenFingerprint !== actualTelegramTokenFingerprint) {
+      mismatches.push({
+        name: 'telegramWorkerTokenFingerprint',
+        path: paths.telegramSettingsPath || null,
+        expectedFingerprint: expectedTelegramTokenFingerprint,
+        actualFingerprint: actualTelegramTokenFingerprint,
+      });
+    }
+    const expectedTelegramChatId = normalizeChatId(telegramSettings?.ownerChatId ?? telegramSettings?.chatId);
+    const actualTelegramChatId = normalizeChatId(paths.telegramWorkerEnv?.TELEGRAM_CHAT_ID);
+    if (expectedTelegramChatId && expectedTelegramChatId !== actualTelegramChatId) {
+      mismatches.push({
+        name: 'telegramWorkerChatId',
+        path: paths.telegramSettingsPath || null,
+        expectedChatId: expectedTelegramChatId,
+        actualChatId: actualTelegramChatId,
+      });
+    }
+    if (mismatches.length === 0) {
+      this.appendBootSequenceBreadcrumb('root-coherence:ok', {
+        expectedRoot,
+        settingsSource: paths.websocketPortInfo?.source || null,
+      });
+      return {
+        ok: true,
+        expectedRoot,
+        paths: checks,
+      };
+    }
+
+    const reason = 'root_coherence_mismatch';
+    const payload = {
+      ok: false,
+      reason,
+      expectedRoot,
+      source: this.installedDeployment?.source || null,
+      paths: checks,
+      mismatches,
+      settingsSource: paths.websocketPortInfo?.source || null,
+    };
+    this.appendBootSequenceBreadcrumb('root-coherence:failed', payload);
+    this.appendRootCoherenceMarker(payload);
+    this.writeRootCoherenceDegradedStatus({
+      ...payload,
+      appStatusPath: paths.appStatusPath,
+    });
+    throw new Error(`Root coherence assertion failed: ${mismatches.map((entry) => entry.name).join(', ')}`);
+  }
+
+  appendBootSequenceBreadcrumb(step, details = {}) {
+    const stepName = String(step || '').trim();
+    if (!stepName) return false;
+    try {
+      const breadcrumb = {
+        schema: 'squidrun.boot_sequence.v1',
+        bootSequenceId: this.bootSequenceId || null,
+        step: stepName,
+        t: Date.now(),
+        iso: new Date().toISOString(),
+        pid: process.pid,
+        profile: this.activeProfileName || getActiveProfileName(),
+        ...(
+          details && typeof details === 'object' && !Array.isArray(details)
+            ? details
+            : {}
+        ),
+      };
+      const filePath = this.getBootSequencePath();
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.appendFileSync(filePath, `${JSON.stringify(breadcrumb)}\n`, 'utf8');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  writeBootHeartbeat(stage, details = {}) {
+    if (!this.settings || typeof this.settings.writeAppStatus !== 'function') return;
+    const stageName = String(stage || 'unknown').trim() || 'unknown';
+    this.settings.writeAppStatus({
+      statusPatch: {
+        boot: {
+          sequenceId: this.bootSequenceId || null,
+          stage: stageName,
+          lastHeartbeatAt: new Date().toISOString(),
+          pid: process.pid,
+          profile: this.activeProfileName || getActiveProfileName(),
+          ...(
+            details && typeof details === 'object' && !Array.isArray(details)
+              ? details
+              : {}
+          ),
+        },
+      },
+    });
+  }
+
+  async awaitBootStepWithTimeout(stepName, runStep, {
+    timeoutMs = BOOT_SESSION_SCOPE_TIMEOUT_MS,
+    timeoutResult = null,
+  } = {}) {
+    let timeoutTimer = null;
+    let settled = false;
+    const timeoutReason = `${stepName}_timeout`;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        log.warn('BootSequence', `${stepName} exceeded ${timeoutMs}ms; continuing degraded`);
+        this.appendBootSequenceBreadcrumb(stepName, {
+          event: 'timeout',
+          timeoutMs,
+          reason: timeoutReason,
+        });
+        resolve(
+          typeof timeoutResult === 'function'
+            ? timeoutResult(timeoutReason)
+            : timeoutResult
+        );
+      }, timeoutMs);
+
+      if (timeoutTimer && typeof timeoutTimer.unref === 'function') {
+        timeoutTimer.unref();
+      }
+    });
+
+    this.appendBootSequenceBreadcrumb(stepName, { event: 'start', timeoutMs });
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(runStep),
+        timeoutPromise,
+      ]);
+      if (!settled) {
+        this.appendBootSequenceBreadcrumb(stepName, { event: 'settled' });
+      }
+      return result;
+    } finally {
+      settled = true;
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+    }
+  }
+
+  async awaitDaemonStartupStepWithTimeout(stepName, runStep, timeoutResult) {
+    let timeoutTimer = null;
+    let settled = false;
+    const timeoutReason = `${stepName}_timeout`;
+    const timeoutPromise = new Promise((resolve) => {
+      timeoutTimer = setTimeout(() => {
+        if (settled) return;
+        this.daemonTimeoutTriggered = true;
+        log.warn('Daemon', `${stepName} did not settle within ${DAEMON_CONNECT_TIMEOUT_MS}ms`);
+        this.appendBootSequenceBreadcrumb(stepName, {
+          event: 'timeout',
+          timeoutMs: DAEMON_CONNECT_TIMEOUT_MS,
+          reason: timeoutReason,
+        });
+        this.notifyRendererDaemonTimeout(timeoutReason);
+        resolve(
+          typeof timeoutResult === 'function'
+            ? timeoutResult(timeoutReason)
+            : timeoutResult
+        );
+      }, DAEMON_CONNECT_TIMEOUT_MS);
+
+      if (timeoutTimer && typeof timeoutTimer.unref === 'function') {
+        timeoutTimer.unref();
+      }
+    });
+
+    this.appendBootSequenceBreadcrumb(stepName, { event: 'start', timeoutMs: DAEMON_CONNECT_TIMEOUT_MS });
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(runStep),
+        timeoutPromise,
+      ]);
+      if (!settled) {
+        this.appendBootSequenceBreadcrumb(stepName, { event: 'settled' });
+      }
+      return result;
+    } finally {
+      settled = true;
+      if (timeoutTimer) {
+        clearTimeout(timeoutTimer);
+      }
+    }
+  }
+
+  scheduleDaemonConnectTimeout() {
+    this.clearDaemonConnectTimeout();
+    if (this.daemonConnectedForStartup) return;
+
+    this.daemonConnectTimeoutTimer = setTimeout(() => {
+      this.daemonConnectTimeoutTimer = null;
+      if (this.daemonConnectedForStartup) return;
+      this.daemonTimeoutTriggered = true;
+      log.warn('Daemon', `No daemon connection within ${DAEMON_CONNECT_TIMEOUT_MS}ms`);
+      this.notifyRendererDaemonTimeout('daemon_connect_timeout');
+    }, DAEMON_CONNECT_TIMEOUT_MS);
+
+    if (this.daemonConnectTimeoutTimer && typeof this.daemonConnectTimeoutTimer.unref === 'function') {
+      this.daemonConnectTimeoutTimer.unref();
+    }
+  }
+
+  installMainWindowSendInterceptor() {
+    const window = this.ctx.mainWindow;
+    if (!this.canSendToWindow(window)) return;
+    if (this.mainWindowSendInterceptInstalled) return;
+
+    const originalSend = window.webContents.send.bind(window.webContents);
+    this.mainWindowSendRaw = originalSend;
+    window.webContents.send = (channel, payload, ...rest) => {
+      if (!this.canSendToWindow(window)) {
+        return false;
+      }
+      if (channel === 'inject-message' && !payload?._ipcPacketized) {
+        const handled = this.routeInjectMessage(payload || {});
+        if (handled) return;
+      }
+      try {
+        return originalSend(channel, payload, ...rest);
+      } catch (err) {
+        log.warn('RendererIPC', `Skipped send for ${channel}: ${err.message}`);
+        return false;
+      }
+    };
+    this.mainWindowSendInterceptInstalled = true;
+  }
+
+  primePaneHostFromTerminalSnapshot(terminals = []) {
+    if (!this.isHiddenPaneHostModeEnabled()) return;
+    const list = Array.isArray(terminals) ? terminals : [];
+    for (const term of list) {
+      const paneId = String(term?.paneId || '');
+      if (!paneId) continue;
+      if (!this.getHiddenPaneHostPaneIds().includes(paneId)) continue;
+      const scrollback = typeof term?.scrollback === 'string' ? term.scrollback : '';
+      if (!scrollback) continue;
+      this.sendPaneHostBridgeEvent(paneId, 'prime-scrollback', { scrollback });
+    }
+  }
+
+  filterTerminalsForVisibleShell(terminals = [], options = {}) {
+    const windowKey = toNonEmptyString(options.windowKey) || 'main';
+    return filterTerminalsForWorkspace(terminals, windowKey);
+  }
+
+  pruneVisibleInjectDeliveryCache(now = Date.now()) {
+    if (!this.visibleInjectDeliveryCache || this.visibleInjectDeliveryCache.size === 0) return;
+    for (const [key, entry] of this.visibleInjectDeliveryCache.entries()) {
+      if (!entry || Number(entry.expiresAt) <= now) {
+        this.visibleInjectDeliveryCache.delete(key);
+      }
+    }
+    while (this.visibleInjectDeliveryCache.size > VISIBLE_INJECT_DELIVERY_DEDUPE_MAX) {
+      const oldestKey = this.visibleInjectDeliveryCache.keys().next().value;
+      if (!oldestKey) break;
+      this.visibleInjectDeliveryCache.delete(oldestKey);
+    }
+  }
+
+  buildVisibleInjectDeliveryDedupeKey(packet = {}, paneId = '', windowKey = 'main', messageId = null, options = {}) {
+    const stableMessageId = toNonEmptyString(messageId)
+      || toNonEmptyString(packet?.traceContext?.messageId)
+      || toNonEmptyString(packet?.traceContext?.traceId)
+      || toNonEmptyString(packet?.traceContext?.correlationId)
+      || toNonEmptyString(packet?.deliveryId);
+    if (!stableMessageId) return null;
+
+    const normalizedWindowKey = toNonEmptyString(windowKey) || 'main';
+    const normalizedPaneId = toNonEmptyString(paneId);
+    if (!normalizedPaneId) return null;
+    const normalizedSessionScope = toNonEmptyString(options.sessionScopeId)
+      || toNonEmptyString(packet?.meta?.sessionScopeId)
+      || toNonEmptyString(packet?.meta?.session_scope_id)
+      || toNonEmptyString(packet?.meta?.sessionId)
+      || toNonEmptyString(packet?.meta?.session_id)
+      || 'unknown-session';
+    const normalizedProfile = toNonEmptyString(options.profileName)
+      || toNonEmptyString(packet?.meta?.profileName)
+      || toNonEmptyString(packet?.meta?.profile)
+      || normalizedWindowKey;
+    const normalizedRouteKind = toNonEmptyString(options.routeKind)
+      || toNonEmptyString(packet?.meta?.routeKind)
+      || toNonEmptyString(packet?.meta?.route_kind)
+      || (packet?.startupInjection || packet?.meta?.startupInjection ? 'startup' : 'inject');
+    const chunkIndex = packet?.ipcChunk ? Number(packet.ipcChunk.index) : 0;
+    const chunkCount = packet?.ipcChunk ? Number(packet.ipcChunk.count) : 1;
+    return [
+      normalizedWindowKey,
+      normalizedProfile,
+      normalizedSessionScope,
+      normalizedRouteKind,
+      normalizedPaneId,
+      stableMessageId,
+      Number.isFinite(chunkIndex) ? chunkIndex : 0,
+      Number.isFinite(chunkCount) ? chunkCount : 1,
+    ].join('|');
+  }
+
+  hasVisibleInjectDelivery(packet = {}, paneId = '', windowKey = 'main', messageId = null, now = Date.now(), options = {}) {
+    const dedupeKey = this.buildVisibleInjectDeliveryDedupeKey(packet, paneId, windowKey, messageId, options);
+    if (!dedupeKey) return { duplicate: false, dedupeKey: null };
+    this.pruneVisibleInjectDeliveryCache(now);
+    const entry = this.visibleInjectDeliveryCache.get(dedupeKey);
+    if (entry && Number(entry.expiresAt) > now) {
+      return { duplicate: true, dedupeKey };
+    }
+    if (entry) {
+      this.visibleInjectDeliveryCache.delete(dedupeKey);
+    }
+    return { duplicate: false, dedupeKey };
+  }
+
+  hasVisibleInjectDeliveryForMessage(paneId = '', windowKey = 'main', messageId = null, now = Date.now(), options = {}) {
+    const stableMessageId = toNonEmptyString(messageId);
+    const normalizedPaneId = toNonEmptyString(paneId);
+    if (!stableMessageId || !normalizedPaneId) return false;
+    const normalizedWindowKey = toNonEmptyString(windowKey) || 'main';
+    const normalizedProfile = toNonEmptyString(options.profileName);
+    const normalizedSessionScope = toNonEmptyString(options.sessionScopeId);
+    const normalizedRouteKind = toNonEmptyString(options.routeKind);
+    this.pruneVisibleInjectDeliveryCache(now);
+    for (const [dedupeKey, entry] of this.visibleInjectDeliveryCache.entries()) {
+      const parts = String(dedupeKey || '').split('|');
+      const matchesModernKey = parts.length >= 8
+        && parts[0] === normalizedWindowKey
+        && (!normalizedProfile || parts[1] === normalizedProfile)
+        && (!normalizedSessionScope || parts[2] === normalizedSessionScope)
+        && (!normalizedRouteKind || parts[3] === normalizedRouteKind)
+        && parts[4] === normalizedPaneId
+        && parts[5] === stableMessageId;
+      const matchesLegacyKey = parts.length < 8 && dedupeKey.startsWith([
+        normalizedWindowKey,
+        normalizedPaneId,
+        stableMessageId,
+      ].join('|') + '|');
+      if (!matchesModernKey && !matchesLegacyKey) continue;
+      if (Number(entry?.expiresAt || 0) > now) return true;
+    }
+    return false;
+  }
+
+  normalizeInjectRouteMetadata(packet = {}, fallbackWindowKey = 'main') {
+    const meta = packet?.meta && typeof packet.meta === 'object' ? packet.meta : {};
+    const windowKey = toNonEmptyString(packet?.windowKey)
+      || toNonEmptyString(meta.windowKey)
+      || toNonEmptyString(meta.window)
+      || toNonEmptyString(fallbackWindowKey)
+      || 'main';
+    return {
+      windowKey,
+      profileName: toNonEmptyString(meta.profileName)
+        || toNonEmptyString(meta.profile)
+        || null,
+      sessionScopeId: toNonEmptyString(meta.sessionScopeId)
+        || toNonEmptyString(meta.session_scope_id)
+        || toNonEmptyString(meta.sessionId)
+        || toNonEmptyString(meta.session_id)
+        || null,
+      routeKind: toNonEmptyString(meta.routeKind)
+        || toNonEmptyString(meta.route_kind)
+        || (packet?.startupInjection || meta.startupInjection ? 'startup' : null),
+    };
+  }
+
+  validateInjectRouteMetadata(packet = {}, paneId = '', targetWindowKey = 'main') {
+    const normalizedTargetWindowKey = toNonEmptyString(targetWindowKey) || 'main';
+    const routeMetadata = this.normalizeInjectRouteMetadata(packet, normalizedTargetWindowKey);
+    const targetScope = this.getAppWindowInstanceScope(normalizedTargetWindowKey);
+    const reasons = [];
+    const expectedWindowKey = toNonEmptyString(targetScope.windowKey) || normalizedTargetWindowKey;
+    const expectedProfileName = toNonEmptyString(targetScope.profileName) || null;
+    const expectedSessionScopeId = toNonEmptyString(targetScope.sessionScopeId) || null;
+
+    if (routeMetadata.windowKey && routeMetadata.windowKey !== expectedWindowKey) {
+      reasons.push(`window_mismatch:${routeMetadata.windowKey}->${expectedWindowKey}`);
+    }
+    if (routeMetadata.profileName && expectedProfileName && routeMetadata.profileName !== expectedProfileName) {
+      reasons.push(`profile_mismatch:${routeMetadata.profileName}->${expectedProfileName}`);
+    }
+    if (routeMetadata.sessionScopeId && expectedSessionScopeId && routeMetadata.sessionScopeId !== expectedSessionScopeId) {
+      reasons.push(`session_scope_mismatch:${routeMetadata.sessionScopeId}->${expectedSessionScopeId}`);
+    }
+
+    if (reasons.length === 0) {
+      return {
+        ok: true,
+        routeMetadata,
+        targetScope,
+      };
+    }
+
+    return {
+      ok: false,
+      reason: 'inject_route_metadata_mismatch',
+      blockers: reasons,
+      paneId: toNonEmptyString(paneId) || null,
+      routeMetadata,
+      targetScope,
+    };
+  }
+
+  recordVisibleInjectDelivery(dedupeKey, now = Date.now()) {
+    if (!dedupeKey) return;
+    this.pruneVisibleInjectDeliveryCache(now);
+    this.visibleInjectDeliveryCache.set(dedupeKey, {
+      deliveredAt: now,
+      expiresAt: now + VISIBLE_INJECT_DELIVERY_DEDUPE_TTL_MS,
+    });
+    this.pruneVisibleInjectDeliveryCache(now);
+  }
+
+  routeInjectMessage(payload = {}) {
+    if (!payload || typeof payload !== 'object') return false;
+    const panes = Array.isArray(payload.panes)
+      ? payload.panes.map((paneId) => String(paneId))
+      : [];
+    if (panes.length === 0) return false;
+    const startupInjection = payload.startupInjection === true
+      || payload?.meta?.startupInjection === true;
+    const packets = buildInjectMessageIpcPackets(payload, {
+      chunkThresholdBytes: DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+      chunkSizeBytes: DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+    });
+    if (packets.length === 0) return false;
+    const messageId = toNonEmptyString(payload?.traceContext?.messageId)
+      || toNonEmptyString(payload?.traceContext?.traceId)
+      || toNonEmptyString(payload?.traceContext?.correlationId)
+      || toNonEmptyString(payload?.deliveryId);
+    const originalMessage = String(payload?.message || '');
+    appendBusTraceEvent({
+      eventType: 'pane_ipc_packetized',
+      messageId: messageId || null,
+      deliveryId: payload?.deliveryId || null,
+      paneCount: panes.length,
+      packetCount: packets.length,
+      payloadBytes: getUtf8ByteLength(originalMessage),
+      payloadFingerprint: createPayloadFingerprint(originalMessage),
+      startupInjection,
+    });
+
+    let routed = false;
+    for (const packet of packets) {
+      const paneId = Array.isArray(packet.panes) && packet.panes.length > 0
+        ? String(packet.panes[0])
+        : null;
+      if (!paneId) continue;
+      const packetBytes = Number(packet.messageBytes || getUtf8ByteLength(packet.message || ''));
+      const totalBytes = Number(packet?.ipcChunk?.totalBytes || packet?.meta?.ipcOriginalBytes || packetBytes);
+      const expectedPacketBytes = Number.isFinite(Number(packet.messageBytes)) ? Number(packet.messageBytes) : null;
+      appendBusTraceEvent({
+        eventType: 'pane_ipc_packet_routed',
+        messageId: messageId || null,
+        deliveryId: packet.deliveryId || null,
+        paneId,
+        packetBytes,
+        expectedPacketBytes,
+        totalBytes,
+        byteMismatch: expectedPacketBytes !== null && expectedPacketBytes !== packetBytes,
+        chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+        chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        payloadFingerprint: createPayloadFingerprint(packet.message || ''),
+        startupInjection,
+      });
+      if (!packet.ipcChunk || packet.ipcChunk.index === 0) {
+        log.info('InjectIPC', `Pre-IPC route pane ${paneId}: ${totalBytes} bytes -> ${packet.ipcChunk?.count || 1} packet(s) (startup=${startupInjection})`);
+      }
+      const targetWindowKey = packet?.windowKey || packet?.meta?.windowKey || 'main';
+      const normalizedTargetWindowKey = String(targetWindowKey || 'main').trim() || 'main';
+      const routeValidation = this.validateInjectRouteMetadata(packet, paneId, normalizedTargetWindowKey);
+      if (!routeValidation.ok) {
+        this.lastInjectRouteBlock = routeValidation;
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff_blocked',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath: 'metadata_route_guard',
+          success: false,
+          reason: routeValidation.reason,
+          blockers: routeValidation.blockers,
+          routeMetadata: routeValidation.routeMetadata,
+          targetScope: routeValidation.targetScope,
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          startupInjection,
+        });
+        log.warn(
+          'InjectIPC',
+          `Blocked inject route for pane ${paneId}: ${routeValidation.reason} (${routeValidation.blockers.join(', ')})`
+        );
+        continue;
+      }
+      const preferHiddenPaneHost = packet?.meta?.preferHiddenPaneHost === true
+        || payload?.meta?.preferHiddenPaneHost === true;
+      const disableVisibleFallback = packet?.meta?.disableVisibleFallback === true
+        || payload?.meta?.disableVisibleFallback === true;
+      const visibleWindowAvailable = this.canSendToWindow(this.getAppWindow(normalizedTargetWindowKey));
+      const routeToVisibleWindow = (
+        !preferHiddenPaneHost
+        && (
+          visibleWindowAvailable
+          || !this.isHiddenPaneHostModeEnabled()
+          || startupInjection
+          || normalizedTargetWindowKey !== 'main'
+        )
+      );
+      if (routeToVisibleWindow) {
+        const deliveryPath = normalizedTargetWindowKey === 'main'
+          ? 'visible_window'
+          : 'visible_window_scoped';
+        const dedupe = this.hasVisibleInjectDelivery(packet, paneId, targetWindowKey, messageId, Date.now(), {
+          sessionScopeId: packet?.meta?.sessionScopeId || packet?.meta?.session_id || packet?.meta?.sessionId,
+          profileName: packet?.meta?.profileName || packet?.meta?.profile,
+          routeKind: startupInjection ? 'startup' : (packet?.meta?.routeKind || packet?.meta?.route_kind || deliveryPath),
+        });
+        if (dedupe.duplicate) {
+          appendBusTraceEvent({
+            eventType: 'pane_ipc_handoff_deduped',
+            messageId: messageId || null,
+            deliveryId: packet.deliveryId || null,
+            paneId,
+            deliveryPath,
+            success: true,
+            dedupeKey: dedupe.dedupeKey,
+            packetBytes,
+            chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+            chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          });
+          routed = true;
+          continue;
+        }
+        const delivered = this.sendToVisibleWindow('inject-message', {
+          ...packet,
+          startupInjection,
+          _ipcPacketized: true,
+          _routerAttempted: true,
+        }, {
+          windowKey: normalizedTargetWindowKey,
+        });
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath,
+          success: Boolean(delivered),
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        });
+        if (delivered) {
+          this.recordVisibleInjectDelivery(dedupe.dedupeKey);
+          routed = true;
+        }
+        continue;
+      }
+
+      const hostWindow = this.paneHostWindowManager.getPaneWindow(paneId);
+      const hostWebContents = hostWindow && !hostWindow.isDestroyed()
+        ? hostWindow.webContents
+        : null;
+      const hostWindowPresent = Boolean(hostWebContents && !hostWebContents.isDestroyed?.());
+      const hostLoading = Boolean(
+        hostWindowPresent
+        && typeof hostWebContents.isLoadingMainFrame === 'function'
+        && hostWebContents.isLoadingMainFrame()
+      );
+      const hostReady = this.paneHostReady.has(paneId);
+      const canRouteToHiddenHost = hostWindowPresent && hostReady && !hostLoading;
+
+      if (canRouteToHiddenHost) {
+        // startupInjection deleted from the wire (typed-seams item 6): the
+        // pane-host renderer never read it - a field only the sender knew.
+        const routedToHost = this.sendPaneHostBridgeEvent(paneId, 'inject-message', {
+          message: packet.message,
+          messageBytes: packet.messageBytes,
+          ipcChunk: packet.ipcChunk || null,
+          deliveryId: packet.deliveryId || null,
+          traceContext: packet.traceContext || null,
+          meta: packet.meta || null,
+        });
+        if (routedToHost) {
+          appendBusTraceEvent({
+            eventType: 'pane_ipc_handoff',
+            messageId: messageId || null,
+            deliveryId: packet.deliveryId || null,
+            paneId,
+            deliveryPath: 'hidden_pane_host',
+            success: true,
+            packetBytes,
+            chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+            chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          });
+          routed = true;
+          this.clearPaneHostDegraded(paneId);
+          continue;
+        }
+      }
+
+      const fallbackMeta = (packet.meta && typeof packet.meta === 'object')
+        ? { ...packet.meta }
+        : {};
+      fallbackMeta.deliveryPath = 'visible_fallback';
+      fallbackMeta.hiddenHostReady = hostReady;
+      fallbackMeta.hiddenHostWindowPresent = hostWindowPresent;
+      fallbackMeta.hiddenHostLoading = hostLoading;
+
+      if (disableVisibleFallback) {
+        appendBusTraceEvent({
+          eventType: 'pane_ipc_handoff',
+          messageId: messageId || null,
+          deliveryId: packet.deliveryId || null,
+          paneId,
+          deliveryPath: 'hidden_pane_host_unavailable',
+          success: false,
+          packetBytes,
+          chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+          chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+          hiddenHostReady: hostReady,
+          hiddenHostWindowPresent: hostWindowPresent,
+          hiddenHostLoading: hostLoading,
+          reason: 'visible_fallback_disabled',
+        });
+        this.reportPaneHostDegraded({
+          paneId,
+          reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
+          message: `Hidden pane host unavailable/not ready for pane ${paneId}; renderer fallback will handle delivery.`,
+          details: {
+            deliveryId: packet.deliveryId || null,
+            hiddenHostReady: hostReady,
+            hiddenHostWindowPresent: hostWindowPresent,
+            hiddenHostLoading: hostLoading,
+            fallback: 'visible_renderer_direct_injection',
+          },
+        });
+        continue;
+      }
+
+      const routedToVisible = this.sendToVisibleWindow('inject-message', {
+        ...packet,
+        panes: [paneId],
+        meta: fallbackMeta,
+        _ipcPacketized: true,
+        _routerAttempted: true,
+      }, {
+        windowKey: packet?.windowKey || fallbackMeta?.windowKey || 'main',
+      });
+      appendBusTraceEvent({
+        eventType: 'pane_ipc_handoff',
+        messageId: messageId || null,
+        deliveryId: packet.deliveryId || null,
+        paneId,
+        deliveryPath: 'visible_fallback',
+        success: Boolean(routedToVisible),
+        packetBytes,
+        chunkIndex: packet.ipcChunk ? packet.ipcChunk.index : 0,
+        chunkCount: packet.ipcChunk ? packet.ipcChunk.count : 1,
+        hiddenHostReady: hostReady,
+        hiddenHostWindowPresent: hostWindowPresent,
+        hiddenHostLoading: hostLoading,
+      });
+
+      if (routedToVisible) {
+        routed = true;
+        const recoveredFromLiveTerminal = this.clearPaneHostDegradedFromLiveTerminal(paneId, {
+          source: 'visible_renderer_fallback',
+        });
+        if (!recoveredFromLiveTerminal) {
+          this.reportPaneHostDegraded({
+            paneId,
+            reason: canRouteToHiddenHost ? 'inject_hidden_send_failed' : 'inject_hidden_not_ready',
+            message: `Hidden pane host unavailable/not ready for pane ${paneId}. Routed inject via visible renderer fallback.`,
+            details: {
+              deliveryId: packet.deliveryId || null,
+              hiddenHostReady: hostReady,
+              hiddenHostWindowPresent: hostWindowPresent,
+              hiddenHostLoading: hostLoading,
+              fallback: 'visible_renderer',
+            },
+          });
+        }
+      } else {
+        this.reportPaneHostDegraded({
+          paneId,
+          reason: 'inject_fallback_visible_unavailable',
+          message: `Hidden pane host unavailable for pane ${paneId}; visible renderer fallback also unavailable. Delivery FAILED.`,
+          details: {
+            deliveryId: packet.deliveryId || null,
+            hiddenHostReady: hostReady,
+            hiddenHostWindowPresent: hostWindowPresent,
+            hiddenHostLoading: hostLoading,
+          },
+        });
+      }
+    }
+    return routed;
+  }
+  ensurePaneHostReadyForwarder() {
+    if (this.paneHostReadyIpcRegistered) return;
+    this.paneHostReadyIpcRegistered = true;
+
+    this.paneHostReadyListener = (_event, payload = {}) => {
+      this.handlePaneHostReadySignal(payload);
+    };
+    ipcMain.on('pane-host-ready', this.paneHostReadyListener);
+  }
+
+  clearWebSocketStartRetry() {
+    return this.websocketStartupLifecycle.clearStartRetry();
+  }
+
+  resolveWebSocketRuntimePortInfo() {
+    return this.websocketStartupLifecycle.resolveRuntimePortInfo();
+  }
+
+  buildWebSocketStatusPatch(status) {
+    return this.websocketStartupLifecycle.buildStatusPatch(status);
+  }
+
+  writeWebSocketStatus(status) {
+    return this.websocketStartupLifecycle.writeStatus(status);
+  }
+
+  recordWebSocketStartSuccess(portInfo) {
+    return this.websocketStartupLifecycle.recordStartSuccess(portInfo);
+  }
+
+  recordWebSocketStartFailure(err, portInfo) {
+    return this.websocketStartupLifecycle.recordStartFailure(err, portInfo);
+  }
+
+  refreshStartupHealthAfterWebSocketFailure() {
+    return this.websocketStartupLifecycle.refreshStartupHealthAfterFailure();
+  }
+
+  isRetryableWebSocketStartError(err) {
+    return this.websocketStartupLifecycle.isRetryableStartError(err);
+  }
+
+  getWebSocketStartRetryDelayMs(attempt) {
+    return this.websocketStartupLifecycle.getStartRetryDelayMs(attempt);
+  }
+
+  scheduleWebSocketStartRetry(startOptions, err) {
+    return this.websocketStartupLifecycle.scheduleStartRetry(startOptions, err);
+  }
+
+  async init() {
+    log.info('App', 'Initializing SquidRun Application');
+    this.appendBootSequenceBreadcrumb('init:start');
+
+    // 1. Load settings
+    this.assertRootCoherenceAtBoot();
+    this.appendBootSequenceBreadcrumb('init:step-1:load-settings');
+    this.settings.loadSettings();
+    // v7 §3 Phase L. Settings become authoritative on the line above, and the
+    // startup backlog drain and poller start well below, so this is the one
+    // point where the operating state can be frozen with nothing able to get in
+    // front of it. Never re-read on settings reload (see the reload seam) or in
+    // buildTelegramPollerEnv; one generation, one answer.
+    this.captureTelegramActivationMode();
+    // v7 §4, loaded-release ruling v1. Same reasoning, same point in the
+    // sequence: the release this generation LOADED is frozen here, before any
+    // drain or scheduling authority exists, so a later disk change is a
+    // divergence this process can detect rather than a fingerprint it silently
+    // adopts.
+    this.captureTelegramLoadedRelease();
+
+    // 1.1 Packaged app bootstrap: ensure a writable external workspace exists.
+    this.appendBootSequenceBreadcrumb('init:step-1.1:packaged-workspace-bootstrap');
+    const packagedWorkspacePath = this.ensurePackagedWorkspaceBootstrap();
+    if (packagedWorkspacePath) {
+      log.info('ProjectLifecycle', `Using packaged external workspace: ${packagedWorkspacePath}`);
+    }
+
+    if (!this.restartLaunchProbe) {
+      this.kickoffStartupBriefingGeneration('app-init');
+    }
+
+    // 2. Create the requested startup window(s) as early as possible so users see immediate startup feedback.
+    this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:start');
+    const launchWindowsResult = await this.awaitBootStepWithTimeout(
+      'launch_windows_for_profile',
+      () => this.launchWindowsForProfile(this.launchWindowProfile),
+      {
+        timeoutMs: BOOT_LAUNCH_WINDOWS_TIMEOUT_MS,
+        timeoutResult: (reason) => ({ ok: false, reason, timedOut: true }),
+      }
+    );
+    if (launchWindowsResult?.ok === false) {
+      log.warn(
+        'BootSequence',
+        `Startup window launch degraded: ${launchWindowsResult.reason || launchWindowsResult.error || 'unknown'}`
+      );
+      this.writeBootHeartbeat('launch_windows_degraded', {
+        reason: launchWindowsResult.reason || launchWindowsResult.error || 'unknown',
+      });
+    }
+    this.appendBootSequenceBreadcrumb('init:step-2:launch-windows:done', {
+      degraded: launchWindowsResult?.ok === false,
+      reason: launchWindowsResult?.reason || null,
+    });
+    this.writeBootHeartbeat('windows_launched', {
+      degraded: launchWindowsResult?.ok === false,
+      reason: launchWindowsResult?.reason || null,
+    });
+
+    if (this.restartLaunchProbe) {
+      if (!this.restartLaunchProbeResult?.ok) {
+        throw new Error('restart launch probe did not produce a valid renderer result');
+      }
+      this.appendBootSequenceBreadcrumb('init:restart-launch-probe-complete', {
+        stage: this.restartLaunchProbeResult.stage,
+      });
+      return {
+        ok: true,
+        stage: 'renderer_ready',
+        renderer: this.restartLaunchProbeResult,
+      };
+    }
+
+    // Profile-specific desktop shortcuts are owned outside the default app
+    // bootstrap so they can carry explicit project-root/env overrides.
+
+    // 3. Generate firmware files on startup when feature flag is enabled.
+    this.appendBootSequenceBreadcrumb('init:step-3:firmware-preflight');
+    if (this.firmwareManager && typeof this.firmwareManager.ensureStartupFirmwareIfEnabled === 'function') {
+      try {
+        const firmwareResult = this.firmwareManager.ensureStartupFirmwareIfEnabled({ preflight: true });
+        if (firmwareResult?.ok === false) {
+          log.warn('Firmware', `Startup generation failed: ${firmwareResult.reason || 'unknown'}`);
+        }
+      } catch (err) {
+        log.warn('Firmware', `Startup generation error: ${err.message}`);
+      }
+    }
+
+    // 4. Auto-detect installed CLIs and patch invalid paneCommands (startup only)
+    this.appendBootSequenceBreadcrumb('init:step-4:auto-detect-clis');
+    if (typeof this.settings.autoDetectPaneCommandsOnStartup === 'function') {
+      this.settings.autoDetectPaneCommandsOnStartup();
+    }
+
+    this.appendBootSequenceBreadcrumb('init:step-4.1:refresh-system-capabilities');
+    try {
+      await this.refreshSystemCapabilities({ projectRoot: getProjectRoot() });
+    } catch (err) {
+      log.warn('LocalModels', `Capability detection failed: ${err.message}`);
+      this.lastSystemCapabilities = buildSystemCapabilitiesSnapshot({
+        projectRoot: getProjectRoot(),
+        settings: this.ctx.currentSettings,
+      });
+      writeSystemCapabilitiesSnapshot(this.lastSystemCapabilities, this.lastSystemCapabilities.path);
+      this.applyLocalModelEnvironment(this.lastSystemCapabilities);
+    }
+
+    // 5. Defer non-critical worker runtimes until first use.
+    // Keep startup focused on rendering + core watchers.
+    log.info(
+      'App',
+      'Deferring startup worker prewarm (evidence-ledger/team-memory/experiment/comms) until first use'
+    );
+
+    // 6. Load activity log
+    this.appendBootSequenceBreadcrumb('init:step-6:activity-log');
+    this.activity.loadActivityLog();
+
+    // 7. Load usage stats
+    this.appendBootSequenceBreadcrumb('init:step-7:usage-stats');
+    this.usage.loadUsageStats();
+
+    // 8. Initialize PTY daemon connection (heavy startup work begins after window is shown).
+    this.appendBootSequenceBreadcrumb('init:step-8:daemon-startup');
+    this.scheduleDaemonConnectTimeout();
+    const daemonConnected = await this.awaitDaemonStartupStepWithTimeout(
+      'init_daemon_client',
+      () => this.initDaemonClient({ preserveConnectTimeout: true }),
+      false
+    );
+    if (daemonConnected) {
+      this.daemonConnectedForStartup = true;
+      this.clearDaemonConnectTimeout();
+    }
+    if (!daemonConnected) {
+      log.warn('Daemon', 'Initial daemon connect attempt failed; waiting for reconnect/timeout fallback');
+    }
+    const supervisorResult = await this.awaitDaemonStartupStepWithTimeout(
+      'ensure_supervisor_daemon_running',
+      () => this.ensureSupervisorDaemonRunning('app-init'),
+      (reason) => ({ ok: false, reason, timedOut: true })
+    );
+    if (!supervisorResult?.ok) {
+      log.warn(
+        'Supervisor',
+        `Bootstrap failed during init: ${supervisorResult?.error || supervisorResult?.reason || 'unknown'}`
+      );
+    }
+    this.backgroundAgentManager.start();
+    this.appendBootSequenceBreadcrumb('init:step-9:background-agent-manager-started');
+    this.settings.writeAppStatus({
+      incrementSession: true,
+      sessionFloor: this.getStartupSessionFloor(),
+    });
+    this.appendBootSequenceBreadcrumb('init:step-9:app-status-session-written', {
+      session: this.getCurrentAppStatusSessionNumber(),
+    });
+    // Notify renderer to refresh session badge after session number is written.
+    this.sendToVisibleWindow('session-updated', {
+      session: this.getCurrentAppStatusSessionNumber(),
+    });
+    const startupScopeResult = await this.awaitBootStepWithTimeout(
+      'initialize_startup_session_scope',
+      () => this.initializeStartupSessionScope({
+        sessionNumber: this.getCurrentAppStatusSessionNumber(),
+      }),
+      {
+        timeoutMs: BOOT_SESSION_SCOPE_TIMEOUT_MS,
+        timeoutResult: (reason) => ({ ok: false, reason, timedOut: true }),
+      }
+    );
+    if (startupScopeResult?.ok === false) {
+      log.warn(
+        'BootSequence',
+        `Startup session scope degraded: ${startupScopeResult.reason || startupScopeResult.error || 'unknown'}`
+      );
+      this.writeBootHeartbeat('startup_session_scope_degraded', {
+        reason: startupScopeResult.reason || startupScopeResult.error || 'unknown',
+      });
+    }
+    this.appendBootSequenceBreadcrumb('init:step-9:startup-session-scope-complete', {
+      degraded: startupScopeResult?.ok === false,
+      reason: startupScopeResult?.reason || null,
+    });
+    this.startScopedTelegramTriggerDrainPoller();
+    const durableTelegramReplyHydration = this.hydratePendingTelegramReplyGuardsFromObligations({
+      sessionId: this.commsSessionScopeId || null,
+    });
+    if (durableTelegramReplyHydration?.ok === false) {
+      log.warn(
+        'TelegramReplyRequirement',
+        `Durable reply-obligation hydration failed: ${durableTelegramReplyHydration.reason || 'unknown'}`
+      );
+    }
+    this.appendBootSequenceBreadcrumb('init:step-9:telegram-startup-hooks-complete');
+    try {
+      const startupHealthResult = await this.awaitBootStepWithTimeout(
+        'refresh_startup_health_artifacts',
+        () => this.refreshStartupHealthArtifacts({
+          sessionNumber: this.getCurrentAppStatusSessionNumber(),
+        }),
+        {
+          timeoutMs: BOOT_STARTUP_HEALTH_TIMEOUT_MS,
+          timeoutResult: (reason) => ({ ok: false, reason, timedOut: true }),
+        }
+      );
+      if (startupHealthResult?.ok === false) {
+        log.warn(
+          'BootSequence',
+          `Startup health artifact refresh degraded: ${startupHealthResult.reason || startupHealthResult.error || 'unknown'}`
+        );
+        this.writeBootHeartbeat('startup_health_degraded', {
+          reason: startupHealthResult.reason || startupHealthResult.error || 'unknown',
+        });
+      }
+      if (
+        startupHealthResult?.ingestResult?.ok === false
+        && startupHealthResult?.ingestResult?.skipped !== true
+      ) {
+        log.warn(
+          'StartupHealth',
+          `Health artifact created but team-memory ingest degraded: ${startupHealthResult.ingestResult.reason || 'unknown'}`
+        );
+      }
+    } catch (err) {
+      log.warn('StartupHealth', `Startup health generation failed: ${err.message}`);
+    }
+
+    // 10. Register sleep/wake listeners for laptop resilience.
+    this.appendBootSequenceBreadcrumb('init:step-10:power-monitor-listeners');
+    this.setupPowerMonitorListeners();
+
+    // 11. Setup global IPC forwarders
+    this.appendBootSequenceBreadcrumb('init:step-11:ipc-forwarders');
+    this.ensureCliIdentityForwarder();
+    this.ensureTriggerDeliveryAckForwarder();
+
+    // 12. Start WebSocket server for instant agent messaging
+    this.appendBootSequenceBreadcrumb('init:step-12:websocket-start');
+    let webSocketStartOptions = null;
+    const webSocketPortInfo = this.resolveWebSocketRuntimePortInfo();
+    try {
+      webSocketStartOptions = {
+        port: webSocketPortInfo.port,
+        portSource: webSocketPortInfo.source,
+        sessionScopeId: this.commsSessionScopeId,
+        onMessage: async (data) => {
+          log.info('WebSocket', `Message from ${data.role || data.paneId || 'unknown'}: ${JSON.stringify(data.message).substring(0, 100)}`);
+
+          if (!data.message) return;
+
+          const emitKernelCommsEvent = (eventType, payload = {}, paneId = 'system', traceContext = null) => {
+            if (typeof eventType !== 'string' || !eventType.startsWith('comms.')) {
+              return {
+                ok: false,
+                status: 'invalid_comms_event',
+                eventType,
+              };
+            }
+            const traceId = traceContext?.traceId || traceContext?.correlationId || null;
+            const parentEventId = traceContext?.parentEventId || traceContext?.causationId || null;
+            this.kernelBridge.emitBridgeEvent(eventType, {
+              ...payload,
+              role: data.role || null,
+              clientId: data.clientId,
+              traceId,
+              parentEventId,
+              correlationId: traceId,
+              causationId: parentEventId,
+            }, paneId);
+            return {
+              ok: true,
+              status: 'comms_event_emitted',
+              eventType,
+            };
+          };
+
+          const withAgentPrefix = (content) => {
+            if (typeof content !== 'string') return content;
+            if (content.startsWith(AGENT_MESSAGE_PREFIX)) return content;
+            return `${AGENT_MESSAGE_PREFIX}${content}`;
+          };
+
+          /**
+           * MISROUTE DETECTOR. NOT AUTHENTICATION. READ THIS BEFORE TRUSTING IT.
+           * =================================================================
+           * This compares the `[CURRENT PROJECT] path=…` footer in an inbound
+           * agent message against this install's own project root, and refuses
+           * to inject the message when they disagree.
+           *
+           * WHAT IT CATCHES: a message that is wrong BY ACCIDENT — another
+           * install's agent honestly declaring its own project while its message
+           * lands in our coord directory. That is a real, observed event
+           * (2026-08-06: a Korean `(ARCHITECT #1)` work assignment arrived from
+           * the Client install, footer reading `name=Client`, and this
+           * pane's Builder acted on it as though it came from its own
+           * Architect).
+           *
+           * WHAT IT DOES NOT CATCH: a message that is wrong ON PURPOSE. The
+           * footer is SENDER-WRITTEN PAYLOAD — `ui/scripts/hm-send.js:1838-1850`
+           * appends it from the sending process's own context, and skips
+           * appending entirely if the text already contains the marker. Any
+           * sender can therefore type our project name into its own body and
+           * pass this check. Self-declared origin is not origin.
+           *
+           * SO DO NOT BUILD ON THIS AS A SECURITY BOUNDARY, and do not describe
+           * it as one. The real fix is to record TRUE origin at the receive
+           * boundary — the socket/port/process that handed us the bytes, which a
+           * sender cannot type — and that is a separate change. The footer is
+           * the claim; the receive path is the effect.
+           *
+           * A QUARANTINED MESSAGE IS EVIDENCE. It is not injected, not replied
+           * to in-band, and NOT deleted.
+           */
+          const foreignProjectRefusal = (content) => {
+            if (typeof content !== 'string' || !content) return null;
+            const match = content.match(/\[CURRENT PROJECT\][^\n]*/);
+            if (!match) return null;
+            const declaredPath = (match[0].match(/path=([^|\n]+)/) || [])[1];
+            if (!declaredPath) return null;
+            const ownRoot = getProjectRoot();
+            if (!ownRoot) return null;
+            // SEPARATOR STYLE IS NOT IDENTITY. `D:/projects/squidrun` and
+            // `D:\projects\squidrun` are the same directory, and a detector that
+            // called them different would quarantine legitimate messages — a
+            // false positive here silently drops OUR OWN traffic, which is worse
+            // than the misroute it exists to catch. Caught by test before ship.
+            const normalize = (p) => String(p).trim().replace(/[\\/]+/g, '/').replace(/\/+$/, '').toLowerCase();
+            const declared = normalize(declaredPath);
+            if (!declared || declared === normalize(ownRoot)) return null;
+            return { declaredPath: String(declaredPath).trim(), ownRoot };
+          };
+
+          const withProjectContext = (content, metadata = null) => {
+            const text = typeof content === 'string' ? content : String(content ?? '');
+            if (!text) return text;
+            const project = (metadata && typeof metadata === 'object' && !Array.isArray(metadata))
+              ? (metadata.project && typeof metadata.project === 'object' ? metadata.project : metadata)
+              : null;
+            if (!project || typeof project !== 'object') return text;
+
+            const name = typeof project.name === 'string' ? project.name.trim() : '';
+            const projectPath = typeof project.path === 'string' ? project.path.trim() : '';
+            if (!name && !projectPath) return text;
+
+            const marker = '[CURRENT PROJECT]';
+            if (text.includes(marker) || text.includes('[PROJECT CONTEXT SWITCHED]')) return text;
+
+            const fields = [];
+            if (name) fields.push(`name=${name}`);
+            if (projectPath) fields.push(`path=${projectPath}`);
+            if (fields.length === 0) return text;
+
+            return `${text}\n${marker} ${fields.join(' | ')}`;
+          };
+
+          if (data.message.type === 'evidence-ledger') {
+            return executeEvidenceLedgerOperation(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || 'system',
+                  paneId: data.paneId || null,
+                },
+              }
+            );
+          }
+
+          if (data.message.type === 'team-memory') {
+            return teamMemory.executeTeamMemoryOperation(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || 'system',
+                  paneId: data.paneId || null,
+                },
+              }
+            );
+          }
+
+          if (data.message.type === 'cognitive-memory') {
+            return executeCognitiveMemoryOperation(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || 'system',
+                  paneId: data.paneId || null,
+                },
+              }
+            );
+          }
+
+          if (data.message.type === 'contract-promotion') {
+            return executeContractPromotionAction(
+              data.message.action,
+              data.message.payload || {},
+              {
+                source: {
+                  via: 'websocket',
+                  role: data.role || null,
+                  paneId: data.paneId || null,
+                  clientId: data.clientId || null,
+                },
+              }
+            );
+          }
+
+          if (data.message.type === 'transition-ledger') {
+            return executeTransitionLedgerOperation(
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
+          if (data.message.type === 'github') {
+            return executeGitHubOperation(
+              data.message.action,
+              data.message.payload || {},
+              { ctx: this.ctx }
+            );
+          }
+
+          if (data.message.type === 'pane-control') {
+            const paneControlProfileName = normalizeProfileName(this.activeProfileName || getActiveProfileName());
+            const paneControlWindowKey = isMainProfile(paneControlProfileName) ? 'main' : paneControlProfileName;
+            return executePaneControlAction(
+              {
+                daemonClient: this.ctx.daemonClient,
+                mainWindow: this.ctx.mainWindow,
+                currentSettings: this.ctx.currentSettings,
+                recoveryManager: this.ctx.recoveryManager,
+                agentRunning: this.ctx.agentRunning,
+                instanceScope: {
+                  profileName: paneControlProfileName,
+                  windowKey: paneControlWindowKey,
+                  sessionScopeId: this.getWindowSessionScopeId(paneControlWindowKey),
+                },
+                isAddressedPane: (paneId) => armSpawnAppService.isSquidRoomArmPaneId(paneId),
+                nudgeAddressedPane: (paneId, message) => this.deliverPaneMessageReliably({
+                  paneId: String(paneId),
+                  message: withAgentPrefix(message),
+                  fromRole: data.role || 'unknown',
+                  traceContext: data.traceContext || data.message.traceContext || null,
+                  queueOnAcceptedUnverified: false,
+                  queueOnHardFailure: true,
+                  messageId: data.message.requestId || null,
+                  channel: 'pane-control',
+                  sender: data.role || 'unknown',
+                  logLabel: 'PaneControl',
+                }),
+                requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
+                switchPaneModel: (paneId, model) => executePaneModelSwitch(this.ctx, { paneId, model }, {
+                  saveSettings: (s) => this.settings.saveSettings(s),
+                  paneRestartArbiter: this.paneRestartArbiter,
+                }),
+              },
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
+          if (data.message.type === 'app-control') {
+            return executeAppControlAction(
+              {
+                mainWindow: this.ctx.mainWindow,
+                isPackaged: app.isPackaged === true,
+                getAppWindow: (windowKey) => this.getAppWindow(windowKey),
+                getAppWindows: () => this.getAppWindows(),
+                getPaneHostWindows: () => this.paneHostWindowManager?.getPaneHostWindows?.() || [],
+                restartTelegramPoller: (payload = {}) => this.restartTelegramPoller(payload),
+                openAppWindow: (windowKey, openOptions = {}) => this.openAppWindow(windowKey, openOptions),
+                closeAppWindow: (windowKey) => this.closeAppWindow(windowKey),
+              },
+              data.message.action,
+              data.message.payload || {}
+            );
+          }
+
+          if (data.message.type === 'comms-event' || data.message.type === 'comms-metric') {
+            return emitKernelCommsEvent(
+              data.message.eventType,
+              data.message.payload || {},
+              data.message?.payload?.paneId || 'system'
+            );
+          }
+
+          // Handle screenshot requests from agents
+          if (data.message.type === 'screenshot') {
+            try {
+              const payload = data.message.payload || {};
+              const paneId = payload.paneId || data.message.paneId || null;
+              const windowKey = toNonEmptyString(payload.windowKey) || 'main';
+              const targetWindow = this.getAppWindow(windowKey) || (windowKey === 'main' ? this.ctx.mainWindow : null);
+              if (!this.canSendToWindow(targetWindow)) {
+                return { success: false, error: `Window not available: ${windowKey}` };
+              }
+              const result = await captureScreenshot({
+                mainWindow: targetWindow,
+                SCREENSHOTS_DIR: path.join(WORKSPACE_PATH, 'screenshots'),
+                CAPTURE_EVENTS_LOG_PATH: path.join(WORKSPACE_PATH, 'runtime', 'surface-capture-events.jsonl'),
+              }, {
+                paneId,
+                windowKey,
+                requestId: data.message.requestId || null,
+                runId: toNonEmptyString(payload.runId) || null,
+                validateWindowReadiness: undefined,
+              });
+
+              // Legacy mode: if no requestId is present, push event result to requester role/client.
+              if (!data.message.requestId) {
+                websocketServer.sendToTarget(data.role || String(data.clientId), JSON.stringify({
+                  type: 'screenshot-result',
+                  success: Boolean(result?.success),
+                  ...result,
+                }));
+              }
+              return result;
+            } catch (err) {
+              log.error('WebSocket', `Screenshot failed: ${err.message}`);
+              return { success: false, error: err.message };
+            }
+          }
+
+          if (data.message.type === 'surface-capture-event-verify') {
+            try {
+              return verifySurfaceCaptureEvent(data.message.payload || {});
+            } catch (err) {
+              log.error('WebSocket', `Surface capture event verify failed: ${err.message}`);
+              return { ok: false, reason: 'surface_capture_event_verify_failed', error: err.message };
+            }
+          }
+
+          // Handle image generation requests from agents
+          if (data.message.type === 'image-gen') {
+            const { prompt, provider, style, size } = data.message;
+            log.info('WebSocket', `Image gen request from ${data.role || 'unknown'}: "${(prompt || '').substring(0, 60)}"`);
+            try {
+              const { generateImage } = require('../image-gen');
+              const result = await generateImage({ prompt, provider, style, size });
+              // Push result to renderer UI
+              if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+                this.ctx.mainWindow.webContents.send('oracle:image-generated', {
+                  imagePath: result.imagePath,
+                  provider: result.provider,
+                  prompt: prompt,
+                  time: new Date().toLocaleTimeString(),
+                });
+              }
+              // Send result back to the requesting WebSocket client
+              websocketServer.sendToTarget(data.role || String(data.clientId), JSON.stringify({
+                type: 'image-gen-result',
+                success: true,
+                imagePath: result.imagePath,
+                provider: result.provider,
+              }));
+            } catch (err) {
+              log.error('WebSocket', `Image gen failed: ${err.message}`);
+              websocketServer.sendToTarget(data.role || String(data.clientId), JSON.stringify({
+                type: 'image-gen-result',
+                success: false,
+                error: err.message,
+              }));
+            }
+            return;
+          }
+
+          if (data.message.type === 'background-agent') {
+            const action = String(data.message.action || '').trim().toLowerCase();
+            const payload = (data.message.payload && typeof data.message.payload === 'object' && !Array.isArray(data.message.payload))
+              ? data.message.payload
+              : {};
+            const senderRole = String(data.role || '').trim().toLowerCase();
+            const senderPaneId = String(data.paneId || '').trim();
+            const isBuilderSender = (
+              senderRole === 'builder'
+              || senderPaneId === BACKGROUND_BUILDER_OWNER_PANE_ID
+            );
+
+            if (!isBuilderSender) {
+              return {
+                ok: false,
+                accepted: false,
+                status: 'owner_binding_violation',
+                action: action || null,
+                senderRole: data.role || null,
+                senderPaneId: data.paneId || null,
+              };
+            }
+
+            if (action === 'spawn') {
+              const requestedSlot = Number.parseInt(String(payload.slot || ''), 10);
+              const requestedAlias = typeof payload.alias === 'string'
+                ? payload.alias
+                : (Number.isFinite(requestedSlot) && requestedSlot > 0 ? `builder-bg-${requestedSlot}` : null);
+              return this.backgroundAgentManager.spawnAgent({
+                ownerPaneId: BACKGROUND_BUILDER_OWNER_PANE_ID,
+                alias: requestedAlias,
+              });
+            }
+
+            if (action === 'kill') {
+              const target = payload.target || payload.alias || payload.paneId || null;
+              if (!target) {
+                return {
+                  ok: false,
+                  accepted: false,
+                  status: 'invalid_target',
+                  action,
+                };
+              }
+              return this.backgroundAgentManager.killAgent(target, { reason: 'builder_cli' });
+            }
+
+            if (action === 'kill-all' || action === 'killall') {
+              return this.backgroundAgentManager.killAll({ reason: 'builder_cli_kill_all' });
+            }
+
+            if (action === 'list' || action === 'status') {
+              return {
+                ok: true,
+                accepted: true,
+                status: 'ok',
+                agents: this.backgroundAgentManager.listAgents(),
+                targetMap: this.backgroundAgentManager.getTargetMap(),
+              };
+            }
+
+            if (action === 'target-map' || action === 'map') {
+              return {
+                ok: true,
+                accepted: true,
+                status: 'ok',
+                targetMap: this.backgroundAgentManager.getTargetMap(),
+              };
+            }
+
+            return {
+              ok: false,
+              accepted: false,
+              status: 'invalid_action',
+              action: action || null,
+            };
+          }
+
+          // Route WebSocket messages via triggers module (handles delivery)
+          if (data.message.type === 'bridge-discovery') {
+            const timeoutMs = Number.parseInt(String(data.message.timeoutMs || ''), 10);
+            return this.discoverBridgeDevices({
+              timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : undefined,
+            });
+          }
+
+          if (data.message.type === 'send') {
+            const { target, content } = data.message;
+            const bridgeTarget = parseCrossDeviceTarget(target);
+            const rawMessageMetadata = (
+              data.message?.metadata
+              && typeof data.message.metadata === 'object'
+              && !Array.isArray(data.message.metadata)
+            ) ? data.message.metadata : {};
+            const profileRoutingMetadata = (
+              rawMessageMetadata.routing
+              && typeof rawMessageMetadata.routing === 'object'
+              && !Array.isArray(rawMessageMetadata.routing)
+            ) ? rawMessageMetadata.routing : null;
+            const profileRouteAttribution = (
+              rawMessageMetadata.routeAttribution
+              && typeof rawMessageMetadata.routeAttribution === 'object'
+              && !Array.isArray(rawMessageMetadata.routeAttribution)
+            ) ? rawMessageMetadata.routeAttribution : null;
+            const routeKind = bridgeTarget ? 'bridge' : (profileRoutingMetadata ? 'profile' : 'local');
+            const attempt = Number(data.message.attempt || 1);
+            const maxAttempts = Number(data.message.maxAttempts || 1);
+            const messageId = data.message.messageId || null;
+            const rawTraceContext = data.traceContext || data.message.traceContext || null;
+            const traceContext = {
+              ...(rawTraceContext && typeof rawTraceContext === 'object' ? rawTraceContext : {}),
+              ...(messageId ? {
+                messageId,
+                traceId: rawTraceContext?.traceId || rawTraceContext?.correlationId || messageId,
+                correlationId: rawTraceContext?.correlationId || rawTraceContext?.traceId || messageId,
+              } : {}),
+            };
+            const nowMs = Date.now();
+            const sentAtMs = Number(data.message.sentAtMs || data.message.timestamp || nowMs);
+            const targetPaneIdForJournal = this.resolveTargetToPane(target);
+            const targetRoleForJournal = (() => {
+              if (bridgeTarget) return 'architect';
+              if (targetPaneIdForJournal === '1') return 'architect';
+              if (targetPaneIdForJournal === '2') return 'builder';
+              if (targetPaneIdForJournal === '3') return 'oracle';
+              if (armSpawnAppService.isSquidRoomArmPaneId(targetPaneIdForJournal)) {
+                return String(targetPaneIdForJournal);
+              }
+              const backgroundAlias = resolveBackgroundBuilderAlias(targetPaneIdForJournal || target);
+              if (backgroundAlias) return backgroundAlias;
+              if (this.isTelegramReplyTarget(target)) return this.normalizeOutboundTarget(target);
+              return null;
+            })();
+            const canonicalEnvelope = buildOutboundMessageEnvelope({
+              ...(data.message?.metadata?.envelope || {}),
+              message_id: messageId,
+              session_id: data.message?.metadata?.session_id || this.commsSessionScopeId || null,
+              sender: data.message?.metadata?.sender || { role: data.role || 'unknown' },
+              target: data.message?.metadata?.target || {
+                raw: target || null,
+                role: targetRoleForJournal,
+                pane_id: targetPaneIdForJournal || null,
+              },
+              content: typeof content === 'string' ? content : String(content ?? ''),
+              priority: data.message?.priority || null,
+              timestamp_ms: sentAtMs,
+              project: data.message?.metadata?.project || null,
+            });
+            const senderRoleForJournal = String(canonicalEnvelope.sender?.role || data.role || 'unknown').trim().toLowerCase();
+            const canonicalMetadata = buildCanonicalEnvelopeMetadata(canonicalEnvelope);
+            const contentWithProjectContext = withProjectContext(canonicalEnvelope.content, canonicalMetadata);
+
+            // MISROUTE QUARANTINE (see `foreignProjectRefusal` above for what
+            // this does and, more importantly, what it does NOT do). A message
+            // whose declared project is not ours never reaches a pane, because a
+            // message that reaches a pane is read as an instruction by whoever
+            // is sitting there. The record is kept and journalled; nothing is
+            // purged and nothing is answered in-band.
+            const foreign = foreignProjectRefusal(contentWithProjectContext);
+            if (foreign) {
+              log.error(
+                'AgentBus',
+                `QUARANTINED cross-install agent message ${canonicalEnvelope.message_id}: it declares `
+                + `project path "${foreign.declaredPath}" but this install is "${foreign.ownRoot}". `
+                + 'It was NOT delivered to a pane. This is a misroute detector, not authentication: '
+                + 'the footer is sender-written, so this catches wrong-by-accident and not '
+                + 'wrong-on-purpose. The message is retained as evidence — do not delete it, do not '
+                + 'reply to it in-band, and route any real request through Operator.'
+              );
+              appendBusTraceEvent({
+                eventType: 'ws_broker_quarantined_foreign_project',
+                messageId: canonicalEnvelope.message_id,
+                senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+                recipient: canonicalEnvelope.target?.raw || target || null,
+                declaredProjectPath: foreign.declaredPath,
+                ownProjectRoot: foreign.ownRoot,
+                payloadBytes: getUtf8ByteLength(contentWithProjectContext),
+              });
+              return {
+                ok: false,
+                status: 'quarantined_foreign_project',
+                messageId: canonicalEnvelope.message_id,
+                declaredProjectPath: foreign.declaredPath,
+              };
+            }
+
+            appendBusTraceEvent({
+              eventType: 'ws_broker_received',
+              messageId: canonicalEnvelope.message_id,
+              senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+              recipient: canonicalEnvelope.target?.raw || target || null,
+              targetPaneId: targetPaneIdForJournal || null,
+              payloadBytes: getUtf8ByteLength(canonicalEnvelope.content),
+              injectedPayloadBytes: getUtf8ByteLength(contentWithProjectContext),
+              payloadFingerprint: createPayloadFingerprint(canonicalEnvelope.content),
+              injectedPayloadFingerprint: createPayloadFingerprint(contentWithProjectContext),
+              attempt,
+              maxAttempts,
+              traceId: traceContext?.traceId || traceContext?.correlationId || null,
+            });
+            const bridgeStructured = bridgeTarget
+              ? (
+                normalizeBridgeMetadata(
+                  { structured: data.message?.metadata?.structured || null },
+                  canonicalEnvelope.content,
+                  { ensureStructured: true }
+                )?.structured || null
+              )
+              : null;
+            const maybeTriggerAutonomousSmoke = (deliveryResult) => {
+              this.maybeTriggerAutonomousSmokeFromSend({
+                senderRole: canonicalEnvelope.sender?.role || data.role || null,
+                messageContent: canonicalEnvelope.content,
+                projectMetadata: canonicalMetadata?.project || canonicalEnvelope.project || null,
+                deliveryResult,
+              });
+            };
+            const maybeRecordRecallUsage = async (deliveryResult) => {
+              if (!deliveryResult) return;
+              const accepted = deliveryResult.accepted === true || deliveryResult.queued === true || deliveryResult.verified === true || deliveryResult.ok === true;
+              if (!accepted) return;
+              try {
+                await recordRecallUsageFromMessage(canonicalEnvelope.content, {
+                  paneId: asString(data.paneId || ROLE_ID_MAP?.[senderRoleForJournal] || '', '') || null,
+                  role: senderRoleForJournal,
+                  target: canonicalEnvelope.target?.raw || target || null,
+                  routeKind,
+                  nowMs,
+                });
+              } catch (err) {
+                log.warn('RecallFeedback', `Outbound recall usage tracking failed: ${err.message}`);
+              }
+            };
+
+            if (canonicalEnvelope.message_id) {
+              const journalResult = await executeEvidenceLedgerOperation(
+                'upsert-comms-journal',
+                {
+                  messageId: canonicalEnvelope.message_id,
+                  sessionId: canonicalEnvelope.session_id || this.commsSessionScopeId || null,
+                  senderRole: canonicalEnvelope.sender?.role || data.role || 'unknown',
+                  targetRole: canonicalEnvelope.target?.role || targetRoleForJournal,
+                  channel: 'ws',
+                  direction: 'outbound',
+                  sentAtMs: canonicalEnvelope.timestamp_ms,
+                  brokeredAtMs: nowMs,
+                  rawBody: canonicalEnvelope.content,
+                  status: 'brokered',
+                  attempt,
+                  metadata: {
+                    source: 'websocket-broker',
+                    ...canonicalMetadata,
+                    ...(profileRoutingMetadata ? { routing: profileRoutingMetadata } : {}),
+                    ...(profileRouteAttribution ? { routeAttribution: profileRouteAttribution } : {}),
+                    ...(typeof rawMessageMetadata.sourceAddress === 'string'
+                      ? { sourceAddress: rawMessageMetadata.sourceAddress }
+                      : {}),
+                    ...(typeof rawMessageMetadata.targetAddress === 'string'
+                      ? { targetAddress: rawMessageMetadata.targetAddress }
+                      : {}),
+                    routeKind,
+                    targetRaw: canonicalEnvelope.target?.raw || target || null,
+                    traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                    maxAttempts,
+                    structured: bridgeStructured,
+                    structuredType: bridgeStructured?.type || null,
+                  },
+                },
+                {
+                  source: {
+                    via: 'websocket',
+                    role: data.role || 'system',
+                    paneId: data.paneId || null,
+                  },
+                }
+              );
+              if (journalResult?.ok === false) {
+                log.warn('EvidenceLedger', `Comms journal broker upsert failed: ${journalResult.reason || 'unknown'}`);
+              }
+            }
+
+            if (attempt === 1) {
+              emitKernelCommsEvent('comms.send.started', {
+                messageId: canonicalEnvelope.message_id,
+                target: canonicalEnvelope.target?.raw || target || null,
+                attempt,
+                maxAttempts,
+              }, 'system', traceContext);
+            } else if (attempt > 1) {
+              emitKernelCommsEvent('comms.retry.attempted', {
+                messageId: canonicalEnvelope.message_id,
+                target: canonicalEnvelope.target?.raw || target || null,
+                attempt,
+                maxAttempts,
+              }, 'system', traceContext);
+            }
+
+            const senderBackgroundAlias = resolveBackgroundBuilderAlias(data.role || '');
+            if (senderBackgroundAlias) {
+              const resolvedTargetPane = this.resolveTargetToPane(target);
+              const isBuilderTarget = (
+                String(resolvedTargetPane || '') === BACKGROUND_BUILDER_OWNER_PANE_ID
+                || String(target || '').trim().toLowerCase() === 'builder'
+                || String(target || '').trim() === BACKGROUND_BUILDER_OWNER_PANE_ID
+              );
+              if (!isBuilderTarget) {
+                const blocked = {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'owner_binding_violation',
+                  target,
+                  sender: senderBackgroundAlias,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: target || null,
+                  fromRole: data.role || 'unknown',
+                  result: blocked,
+                  traceContext,
+                });
+                return blocked;
+              }
+            }
+
+            if (bridgeTarget) {
+              const senderRole = String(canonicalEnvelope.sender?.role || data.role || '').trim().toLowerCase();
+              if (senderRole !== 'architect') {
+                const blocked = {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'bridge_architect_only',
+                  target: bridgeTarget.raw,
+                  toDevice: bridgeTarget.toDevice,
+                };
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: bridgeTarget.raw,
+                  fromRole: data.role || 'unknown',
+                  result: blocked,
+                  traceContext,
+                });
+                return blocked;
+              }
+
+              const bridgeResult = await this.routeBridgeMessage({
+                targetDevice: bridgeTarget.toDevice,
+                content: canonicalEnvelope.content,
+                fromRole: senderRole,
+                messageId: canonicalEnvelope.message_id,
+                traceContext,
+                structuredMessage: bridgeStructured,
+              });
+              await this.recordDeliveryOutcomePattern({
+                channel: 'send',
+                target: bridgeTarget.raw,
+                fromRole: data.role || 'unknown',
+                result: bridgeResult,
+                traceContext,
+              });
+              const payload = {
+                ok: Boolean(bridgeResult?.ok),
+                accepted: Boolean(bridgeResult?.accepted),
+                queued: Boolean(bridgeResult?.queued),
+                verified: Boolean(bridgeResult?.verified),
+                status: bridgeResult?.status || 'bridge_unhandled',
+                mode: 'bridge',
+                routeKind: 'bridge',
+                toDevice: bridgeTarget.toDevice,
+                error: bridgeResult?.error || null,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
+              await maybeRecordRecallUsage(payload);
+              maybeTriggerAutonomousSmoke(payload);
+              return payload;
+            }
+
+            const telegramReplyTarget = this.isTelegramReplyTarget(target);
+            if (telegramReplyTarget) {
+              const normalizedTarget = this.normalizeOutboundTarget(target);
+              const preflight = await this.evaluateTeamMemoryGuardPreflight({
+                target: normalizedTarget,
+                content: canonicalEnvelope.content,
+                fromRole: data.role || 'unknown',
+                traceContext,
+              });
+              if (preflight.blocked) {
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: normalizedTarget,
+                  fromRole: data.role || 'unknown',
+                  result: {
+                    accepted: false,
+                    queued: false,
+                    verified: false,
+                    status: 'guard_blocked',
+                  },
+                  traceContext,
+                });
+                return {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'guard_blocked',
+                  target: normalizedTarget,
+                  guardActions: preflight.actions,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+              }
+
+              const telegramResult = await this.routeTelegramReply({
+                target: normalizedTarget,
+                content: canonicalEnvelope.content,
+                fromRole: data.role || 'unknown',
+                messageId: canonicalEnvelope.message_id,
+                chatId: data.message?.metadata?.telegram?.chatId || data.message?.metadata?.chatId || null,
+              });
+              const deliveryResult = {
+                accepted: Boolean(telegramResult?.accepted),
+                queued: Boolean(telegramResult?.queued),
+                verified: Boolean(telegramResult?.verified),
+                status: telegramResult?.status || 'telegram_unhandled',
+                error: telegramResult?.error || null,
+              };
+              await this.recordDeliveryOutcomePattern({
+                channel: 'send',
+                target: normalizedTarget,
+                fromRole: data.role || 'unknown',
+                result: deliveryResult,
+                traceContext,
+              });
+              emitKernelCommsEvent(
+                telegramResult?.ok ? 'comms.delivery.acked' : 'comms.delivery.failed',
+                {
+                  messageId: canonicalEnvelope.message_id,
+                  target: normalizedTarget,
+                  channel: 'telegram',
+                  attempt,
+                  maxAttempts,
+                  status: telegramResult?.status || 'telegram_unhandled',
+                  ackStatus: telegramResult?.ok ? (telegramResult?.status || 'telegram_delivered') : null,
+                  errorCode: telegramResult?.ok ? null : (telegramResult?.error || telegramResult?.status || 'telegram_send_failed'),
+                  error: telegramResult?.ok ? null : (telegramResult?.error || null),
+                  chatId: telegramResult?.chatId || null,
+                  windowKey: telegramResult?.windowKey || null,
+                  profile: telegramResult?.profile || null,
+                  sessionScopeId: telegramResult?.sessionScopeId || null,
+                  telegramMessageId: telegramResult?.messageId || null,
+                  summary: telegramResult?.ok
+                    ? `Telegram delivery acknowledged${telegramResult?.chatId ? ` (chat ${telegramResult.chatId})` : ''}`
+                    : `Telegram delivery failed: ${telegramResult?.error || telegramResult?.status || 'telegram_send_failed'}`,
+                },
+                'system',
+                traceContext
+              );
+              const payload = {
+                ok: Boolean(telegramResult?.ok),
+                accepted: Boolean(telegramResult?.accepted),
+                queued: Boolean(telegramResult?.queued),
+                verified: Boolean(telegramResult?.verified),
+                status: telegramResult?.status || 'telegram_unhandled',
+                target: normalizedTarget,
+                mode: 'telegram',
+                messageId: telegramResult?.messageId || null,
+                chatId: telegramResult?.chatId || null,
+                windowKey: telegramResult?.windowKey || null,
+                profile: telegramResult?.profile || null,
+                sessionScopeId: telegramResult?.sessionScopeId || null,
+                error: telegramResult?.error || null,
+                guardActions: preflight.actions,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
+              await maybeRecordRecallUsage(payload);
+              maybeTriggerAutonomousSmoke(payload);
+              return payload;
+            }
+
+            const paneId = this.resolveTargetToPane(target);
+            if (paneId) {
+              const preflight = await this.evaluateTeamMemoryGuardPreflight({
+                target: target || String(paneId),
+                content: contentWithProjectContext,
+                fromRole: data.role || 'unknown',
+                traceContext,
+              });
+              if (preflight.blocked) {
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: target || String(paneId),
+                  fromRole: data.role || 'unknown',
+                  result: {
+                    accepted: false,
+                    queued: false,
+                    verified: false,
+                    status: 'guard_blocked',
+                  },
+                  traceContext,
+                });
+                return {
+                  ok: false,
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'guard_blocked',
+                  paneId: String(paneId),
+                  guardActions: preflight.actions,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+              }
+
+              if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
+                log.info('WebSocket', `Routing 'send' to background pane ${paneId} (direct daemon write)`);
+                const result = await this.backgroundAgentManager.sendMessageToAgent(
+                  paneId,
+                  withAgentPrefix(contentWithProjectContext),
+                  {
+                    fromRole: data.role || 'unknown',
+                    traceContext,
+                  }
+                );
+                await this.recordDeliveryOutcomePattern({
+                  channel: 'send',
+                  target: String(paneId),
+                  fromRole: data.role || 'unknown',
+                  result,
+                  traceContext,
+                });
+                const payload = {
+                  ok: Boolean(result?.ok),
+                  accepted: Boolean(result?.accepted),
+                  queued: Boolean(result?.queued),
+                  verified: Boolean(result?.verified),
+                  status: result?.status || 'delivery_failed',
+                  paneId: String(paneId),
+                  mode: result?.mode || 'daemon-pty',
+                  notified: Array.isArray(result?.notified) ? result.notified : [],
+                  deliveryId: result?.deliveryId || null,
+                  details: result?.details || null,
+                  guardActions: preflight.actions,
+                  traceId: traceContext?.traceId || traceContext?.correlationId || null,
+                };
+                await maybeRecordRecallUsage(payload);
+                maybeTriggerAutonomousSmoke(payload);
+                return payload;
+              }
+
+              log.info('WebSocket', `Routing 'send' to pane ${paneId} (via triggers)`);
+              const result = await this.deliverPaneMessageReliably({
+                paneId: String(paneId),
+                message: withAgentPrefix(contentWithProjectContext),
+                fromRole: data.role || 'unknown',
+                traceContext,
+                queueOnAcceptedUnverified: false,
+                queueOnHardFailure: true,
+                messageId: canonicalEnvelope.message_id || null,
+                channel: 'ws',
+                sender: senderRoleForJournal,
+                logLabel: 'WebSocket',
+              });
+              await this.recordDeliveryOutcomePattern({
+                channel: 'send',
+                target: String(paneId),
+                fromRole: data.role || 'unknown',
+                result,
+                traceContext,
+              });
+              await this.finalizeLocalTriggerDeliveryJournal({
+                messageId: canonicalEnvelope.message_id,
+                result,
+                paneId: String(paneId),
+                target: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
+                senderRole: senderRoleForJournal,
+                rawBody: canonicalEnvelope.content,
+                sessionId: canonicalEnvelope.session_id || this.commsSessionScopeId || null,
+                sentAtMs: canonicalEnvelope.timestamp_ms || nowMs,
+                traceContext,
+                routeKind: 'local',
+              });
+              this.scheduleAgentResponseWatchdog({
+                senderRole: senderRoleForJournal,
+                targetRole: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
+                content: canonicalEnvelope.content,
+                sentAtMs: canonicalEnvelope.timestamp_ms || nowMs,
+                sourceMessageId: canonicalEnvelope.message_id || null,
+                responseWatchdogState: findRecordIntentionalAutonomyState(data.message?.metadata),
+              });
+              this.maybeResolveAgentResponseWatchdog({
+                senderRole: senderRoleForJournal,
+                targetRole: canonicalEnvelope.target?.role || targetRoleForJournal || String(paneId),
+                deliveryAccepted: result?.accepted !== false || result?.verified === true,
+                deliveryStatus: result?.status || null,
+              });
+              const payload = {
+                ok: Boolean(result?.verified),
+                accepted: Boolean(result?.accepted),
+                queued: Boolean(result?.queued),
+                verified: Boolean(result?.verified),
+                status: result?.status || (result?.verified ? 'delivered.verified' : 'routed_unverified'),
+                paneId: String(paneId),
+                mode: result?.mode || null,
+                notified: Array.isArray(result?.notified) ? result.notified : [],
+                deliveryId: result?.deliveryId || null,
+                details: result?.details || null,
+                guardActions: preflight.actions,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
+              await maybeRecordRecallUsage(payload);
+              maybeTriggerAutonomousSmoke(payload);
+              return payload;
+            } else {
+              log.warn('WebSocket', `Unknown target for 'send': ${target}`);
+              await this.recordDeliveryOutcomePattern({
+                channel: 'send',
+                target,
+                fromRole: data.role || 'unknown',
+                result: {
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'invalid_target',
+                },
+                traceContext,
+              });
+              return {
+                ok: false,
+                accepted: false,
+                queued: false,
+                verified: false,
+                status: 'invalid_target',
+                target,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
+            }
+          } else if (data.message.type === 'broadcast') {
+            log.info('WebSocket', `Routing 'broadcast' (via triggers)`);
+            const traceContext = data.traceContext || data.message.traceContext || null;
+            const preflight = await this.evaluateTeamMemoryGuardPreflight({
+              target: 'all',
+              content: data.message.content,
+              fromRole: data.role || 'unknown',
+              traceContext,
+            });
+            if (preflight.blocked) {
+              await this.recordDeliveryOutcomePattern({
+                channel: 'broadcast',
+                target: 'all',
+                fromRole: data.role || 'unknown',
+                result: {
+                  accepted: false,
+                  queued: false,
+                  verified: false,
+                  status: 'guard_blocked',
+                },
+                traceContext,
+              });
+              return {
+                ok: false,
+                accepted: false,
+                queued: false,
+                verified: false,
+                status: 'guard_blocked',
+                mode: 'pty',
+                guardActions: preflight.actions,
+                traceId: traceContext?.traceId || traceContext?.correlationId || null,
+              };
+            }
+            const result = await triggers.broadcastToAllAgents(
+              withAgentPrefix(data.message.content),
+              data.role || 'unknown',
+              { traceContext, awaitDelivery: true }
+            );
+            await this.recordDeliveryOutcomePattern({
+              channel: 'broadcast',
+              target: 'all',
+              fromRole: data.role || 'unknown',
+              result,
+              traceContext,
+            });
+            await this.finalizeLocalTriggerDeliveryJournal({
+              messageId: data.message.messageId || null,
+              result,
+              target: 'all',
+              senderRole: data.role || 'unknown',
+              rawBody: data.message.content,
+              traceContext,
+              routeKind: 'local',
+            });
+            return {
+              ok: Boolean(result?.verified),
+              accepted: Boolean(result?.accepted),
+              queued: Boolean(result?.queued),
+              verified: Boolean(result?.verified),
+              status: result?.status || (result?.verified ? 'delivered.verified' : 'broadcast_unverified'),
+              mode: result?.mode || null,
+              notified: Array.isArray(result?.notified) ? result.notified : [],
+              deliveryId: result?.deliveryId || null,
+              details: result?.details || null,
+              guardActions: preflight.actions,
+              traceId: traceContext?.traceId || traceContext?.correlationId || null,
+            };
+          }
+
+          return null;
+        }
+      };
+      await websocketServer.start(webSocketStartOptions);
+      this.clearWebSocketStartRetry();
+      this.recordWebSocketStartSuccess(webSocketPortInfo);
+      this.appendBootSequenceBreadcrumb('init:step-12:websocket-started', {
+        port: webSocketPortInfo.port,
+        source: webSocketPortInfo.source || null,
+      });
+    } catch (err) {
+      log.error('WebSocket', `Failed to start server: ${err.message}`);
+      this.recordWebSocketStartFailure(err, webSocketPortInfo);
+      this.appendBootSequenceBreadcrumb('init:step-12:websocket-start-failed', {
+        error: err.message,
+        code: err.code || null,
+      });
+      this.refreshStartupHealthAfterWebSocketFailure();
+      this.scheduleWebSocketStartRetry(webSocketStartOptions, err);
+    }
+
+    this.appendBootSequenceBreadcrumb('init:step-13:pollers-and-bridge');
+    this.startSmsPoller();
+    // Telegram must have one getUpdates owner. Duplicate pollers race offsets
+    // and lose messages; the old standalone long-poll relay was removed for
+    // that reason. Keep this lifecycle path as the single runtime owner until
+    // the poller is extracted to a single-owner child process or supervisor lane.
+    this.startTelegramPoller();
+    // AFTER the real start, never before: the watch's first act is to judge a
+    // worker, and judging one that has not been started yet would recover a
+    // poller into existence on a path that deliberately did not want one.
+    this.startTelegramFreshnessWatch();
+    this.startBridgeClient();
+    this.startAutoHandoffMaterializer();
+    this.evidenceLedgerPruneHousekeeping.start();
+
+    this.writeBootHeartbeat('init_complete', {
+      session: this.getCurrentAppStatusSessionNumber(),
+    });
+    this.appendBootSequenceBreadcrumb('init:complete', {
+      session: this.getCurrentAppStatusSessionNumber(),
+    });
+    log.info('App', 'Initialization complete');
+  }
+
+  kickoffStartupBriefingGeneration(reason = 'app-init') {
+    if (this.startupBriefingPromise) {
+      return this.startupBriefingPromise;
+    }
+
+    this.startupBriefingPromise = generateStartupBriefing({
+      projectRoot: getProjectRoot(),
+      source: reason,
+    }).then((result) => {
+      if (!result?.ok) {
+        log.warn('StartupBriefing', `Generation failed: ${result?.error || 'unknown'}`);
+      }
+      return result;
+    }).catch((err) => {
+      log.warn('StartupBriefing', `Generation crashed: ${err.message}`);
+      return { ok: false, error: err.message };
+    });
+
+    return this.startupBriefingPromise;
+  }
+
+  async runAutoHandoffMaterializer(reason = 'timer') {
+    if (!this.autoHandoffEnabled) {
+      return { ok: false, reason: 'disabled' };
+    }
+    if (this.autoHandoffWriteInFlight) {
+      return this.autoHandoffWritePromise || { ok: false, reason: 'in_flight' };
+    }
+
+    this.autoHandoffWriteInFlight = true;
+    this.autoHandoffWritePromise = (async () => {
+      try {
+        const handoffWindowKey = isMainProfile(this.activeProfileName) ? 'main' : this.activeProfileName;
+        const result = await materializeSessionHandoff({
+          sessionId: this.commsSessionScopeId || null,
+          windowKey: handoffWindowKey,
+          profileName: this.activeProfileName,
+          enableSessionHistory: true,
+          querySessionSnapshot: ({ sessionId }) => executeEvidenceLedgerOperation(
+            'get-context',
+            {
+              sessionId,
+              preferSnapshot: true,
+            },
+            {
+              source: {
+                via: 'auto-handoff',
+                role: 'system',
+                paneId: null,
+              },
+            }
+          ),
+        });
+        if (result?.ok === false) {
+          log.warn('AutoHandoff', `Materialize failed (${reason}): ${result.reason || result.error || 'unknown'}`);
+        } else if (result?.written) {
+          log.info(
+            'AutoHandoff',
+            `Materialized session handoff (${reason}): ${result.outputPath} rows=${result.rowsScanned || 0}`
+          );
+        }
+        return result;
+      } catch (err) {
+        log.warn('AutoHandoff', `Materialize error (${reason}): ${err.message}`);
+        return { ok: false, reason: 'materialize_error', error: err.message };
+      } finally {
+        this.autoHandoffWriteInFlight = false;
+        this.autoHandoffWritePromise = null;
+      }
+    })();
+
+    return this.autoHandoffWritePromise;
+  }
+
+  startAutoHandoffMaterializer() {
+    if (!this.autoHandoffEnabled) {
+      return;
+    }
+    void this.stopAutoHandoffMaterializer({ flush: false });
+
+    const cleanup = removeLegacyPaneHandoffFiles({ ignoreErrors: true });
+    if (cleanup?.removed?.length > 0) {
+      log.info('AutoHandoff', `Removed legacy pane handoff files (${cleanup.removed.length})`);
+    }
+    if (cleanup?.failed?.length > 0) {
+      for (const failure of cleanup.failed) {
+        log.warn('AutoHandoff', `Failed removing legacy handoff file ${failure.path}: ${failure.error}`);
+      }
+    }
+
+    void this.runAutoHandoffMaterializer('startup');
+    const intervalMs = Math.max(5000, Number.isFinite(AUTO_HANDOFF_INTERVAL_MS) ? AUTO_HANDOFF_INTERVAL_MS : 30000);
+    this.autoHandoffTimer = setInterval(() => {
+      void this.runAutoHandoffMaterializer('timer');
+    }, intervalMs);
+  }
+
+  async stopAutoHandoffMaterializer(options = {}) {
+    if (this.autoHandoffTimer) {
+      clearInterval(this.autoHandoffTimer);
+      this.autoHandoffTimer = null;
+    }
+
+    if (options.flush === true && this.autoHandoffEnabled) {
+      if (this.autoHandoffWritePromise) {
+        await this.autoHandoffWritePromise;
+      }
+      return this.runAutoHandoffMaterializer('shutdown');
+    }
+
+    return { ok: true, reason: 'stopped' };
+  }
+
+  /**
+   * Deferred Team Memory tasks — runs AFTER window is visible.
+   * Backfill, integrity check, and periodic sweeps are not time-critical
+   * and should not block startup.
+   */
+  async _deferredTeamMemoryStartup() {
+    const backfillResult = await teamMemory.runBackfill({
+      payload: {
+        limit: Number.isFinite(TEAM_MEMORY_BACKFILL_LIMIT) ? TEAM_MEMORY_BACKFILL_LIMIT : 5000,
+      },
+    });
+    if (backfillResult?.ok) {
+      log.info(
+        'TeamMemory',
+        `Backfill scan complete (events=${backfillResult.scannedEvents || 0}, inserted=${backfillResult.insertedClaims || 0}, duplicates=${backfillResult.duplicateClaims || 0})`
+      );
+    } else {
+      log.warn('TeamMemory', `Backfill unavailable: ${backfillResult?.reason || 'unknown'}`);
+    }
+
+    const integrityResult = await teamMemory.runIntegrityCheck({});
+    if (integrityResult?.ok === false) {
+      log.warn('TeamMemory', `Initial integrity scan unavailable: ${integrityResult.reason || 'unknown'}`);
+    }
+
+    teamMemory.startIntegritySweep({
+      intervalMs: TEAM_MEMORY_INTEGRITY_SWEEP_INTERVAL_MS,
+      immediate: true,
+    });
+    teamMemory.startPatternMiningSweep({
+      intervalMs: TEAM_MEMORY_PATTERN_MINING_INTERVAL_MS,
+      immediate: true,
+      onGuardAction: (entry) => {
+        if (!entry || typeof entry !== 'object') return;
+        const paneId = String(this.resolveTargetToPane(entry?.event?.target || '') || '1');
+        const message = String(entry.message || 'Team memory guard fired');
+        this.activity.logActivity('guard', paneId, message, entry);
+        this.handleTeamMemoryGuardExperiment(entry).catch((err) => {
+          log.warn('TeamMemoryGuard', `Failed block-guard experiment dispatch: ${err.message}`);
+        });
+        this.appendTeamMemoryPatternEvent(
+          buildGuardFiringPatternEvent(entry, Date.now()),
+          'guard-firing'
+        ).catch((err) => {
+          log.warn('TeamMemoryGuard', `Failed guard-firing pattern append: ${err.message}`);
+        });
+      },
+    });
+    if (typeof teamMemory.startCommsTaggedClaimsSweep === 'function') {
+      teamMemory.startCommsTaggedClaimsSweep({
+        intervalMs: TEAM_MEMORY_TAGGED_CLAIM_SWEEP_INTERVAL_MS,
+        immediate: true,
+        sessionId: this.commsSessionScopeId || null,
+      });
+    }
+
+    log.info('TeamMemory', 'Deferred startup tasks complete (backfill + sweeps)');
+  }
+
+  async createWindow() {
+    const rawOptions = arguments[0] && typeof arguments[0] === 'object' ? arguments[0] : {};
+    const windowKey = String(rawOptions.windowKey || 'main').trim() || 'main';
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:start`, {
+      lifecycleRoot: rawOptions.lifecycleRoot === true,
+    });
+    const displayOnlyWindow = this.restartLaunchProbe
+      || toBooleanFlag(rawOptions.displayOnly, false);
+    const skipStartupBundle = displayOnlyWindow || toBooleanFlag(rawOptions.skipStartupBundle, false);
+    const windowTeam = String(rawOptions.windowTeam || windowKey).trim() || windowKey;
+    const windowProfileName = toNonEmptyString(rawOptions.profileName) || this.activeProfileName;
+    const lifecycleRoot = rawOptions.lifecycleRoot === true
+      || (windowKey === 'main' && !this.canSendToWindow(this.ctx.mainWindow));
+    const existingWindow = this.getAppWindow(windowKey);
+    if (this.canSendToWindow(existingWindow)) {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:reuse-existing`);
+      if (!this.restartLaunchProbe && typeof existingWindow.show === 'function') existingWindow.show();
+      return;
+    }
+
+    const isPrimaryWindow = windowKey === 'main';
+    const windowTitle = rawOptions.title
+      || (isPrimaryWindow
+        ? (this.activeProfileName === 'scoped' ? 'SquidRun - Scoped' : 'SquidRun')
+        : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`);
+    const shouldAutoBootWindowAgents = displayOnlyWindow || toBooleanFlag(rawOptions.autoBootAgents, true) === false
+      ? false
+      : (this.activeProfileName !== 'main'
+        || windowKey !== 'main'
+        || this.isStandaloneProfileWindow(windowKey));
+    const installedDeploymentWindow = this.isInstalledDeploymentMainWindow(windowKey, windowProfileName);
+    const standaloneWindow = this.isStandaloneProfileWindow(windowKey) || installedDeploymentWindow;
+    const lifecycleMode = this.getWindowLifecycleMode(windowKey);
+    let initialStartupBundle = null;
+    if (skipStartupBundle) {
+      initialStartupBundle = null;
+    } else if (this.activeProfileName !== 'scoped' && windowKey !== 'scoped' && (this.activeProfileName !== 'main' || windowKey !== 'main')) {
+      try {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:start`, {
+          profileName: windowKey === 'main' ? this.activeProfileName : windowKey,
+        });
+        initialStartupBundle = await this.writeProfileStartupBundle(windowKey === 'main' ? this.activeProfileName : windowKey);
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:done`, {
+          bundleReady: Boolean(initialStartupBundle?.bundlePath && initialStartupBundle?.text),
+        });
+      } catch (err) {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:startup-bundle:failed`, {
+          error: err?.message || String(err),
+        });
+        log.warn('Window', `Failed to prebuild ${windowKey} startup bundle before renderer load: ${err.message}`);
+      }
+    }
+    const startupBundlePath = skipStartupBundle
+      ? ''
+      : (initialStartupBundle?.bundlePath || this.getProfileStartupBundlePath(windowKey));
+    const query = {
+      windowKey,
+      windowTeam,
+      profileName: windowProfileName,
+      profileLabel: windowProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(windowProfileName),
+      roleLayout: 'standard',
+      sessionScopeId: this.getWindowSessionScopeId(windowKey),
+      startupBundlePath: startupBundlePath || '',
+      startupSourceFiles: JSON.stringify(initialStartupBundle?.sourcePaths || []),
+      startupBundleReady: String(Boolean(initialStartupBundle?.bundlePath && initialStartupBundle?.text)),
+      autoBootAgents: String(shouldAutoBootWindowAgents),
+      displayOnly: String(displayOnlyWindow),
+      skipStartupBundle: String(skipStartupBundle),
+      standaloneWindow: String(standaloneWindow),
+      installedDeploymentWindow: String(installedDeploymentWindow),
+      lifecycleMode,
+      contextReady: 'true',
+    };
+
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:browser-window:start`, {
+      lifecycleRoot,
+      profileName: windowProfileName,
+      skipStartupBundle,
+    });
+    const windowRef = new BrowserWindow({
+      width: 1400,
+      height: 800,
+      show: !this.restartLaunchProbe,
+      skipTaskbar: this.restartLaunchProbe,
+      focusable: !this.restartLaunchProbe,
+      icon: path.join(__dirname, '..', '..', 'assets', process.platform === 'win32' ? 'squidrun-favicon.ico' : 'squidrun-favicon-256.png'),
+      backgroundColor: '#0c1014',
+      autoHideMenuBar: true,
+      ...((process.platform === 'win32' || process.platform === 'linux') ? {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: {
+          color: '#0c1014',
+          symbolColor: '#8fa1b3',
+          height: 32,
+        },
+      } : {}),
+      webPreferences: {
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: false,
+        preload: path.join(__dirname, '..', '..', 'preload.js'),
+      },
+      title: windowTitle,
+    });
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:browser-window:done`, {
+      lifecycleRoot,
+    });
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:register:start`, {
+      sessionScopeId: this.getWindowSessionScopeId(windowKey),
+    });
+    this.registerAppWindow(windowKey, windowRef, {
+      lifecycleRoot,
+      profileName: windowProfileName,
+      sessionScopeId: this.getWindowSessionScopeId(windowKey),
+    });
+    this.enforceMenuSuppression(windowRef);
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:register:done`, {
+      lifecycleRoot,
+    });
+
+    if (lifecycleRoot) {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:lifecycle-root-hooks:start`);
+      this.installMainWindowSendInterceptor();
+      this.ensurePaneHostReadyForwarder();
+      this.setupPermissions();
+
+      // Register IPC handlers and load listeners before renderer startup to avoid startup races.
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:init-modules:start`);
+      this.initModules();
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:init-modules:done`);
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:start`);
+      this.setupWindowListeners(windowRef, {
+        windowKey,
+        windowTeam,
+        lifecycleRoot,
+        profileName: windowProfileName,
+        autoBootAgents: shouldAutoBootWindowAgents,
+        displayOnly: displayOnlyWindow,
+        skipStartupBundle,
+      });
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:done`);
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:lifecycle-root-hooks:done`);
+    } else {
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:start`);
+      this.setupWindowListeners(windowRef, {
+        windowKey,
+        windowTeam,
+        lifecycleRoot,
+        profileName: windowProfileName,
+        autoBootAgents: shouldAutoBootWindowAgents,
+        displayOnly: displayOnlyWindow,
+        skipStartupBundle,
+      });
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:setup-window-listeners:done`);
+    }
+
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:dispatch`, {
+      rendererEntry: RENDERER_ENTRY_HTML,
+    });
+    const rendererLoad = windowRef.loadFile(RENDERER_ENTRY_HTML, { query });
+    if (this.restartLaunchProbe) {
+      try {
+        this.restartLaunchProbeResult = await inspectRestartLaunchProbeWindow(windowRef, rendererLoad);
+      } catch (err) {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:restart-launch-probe:failed`, {
+          error: err?.message || String(err),
+          code: err?.code || null,
+          details: err?.details || null,
+        });
+        throw err;
+      }
+    } else {
+      rendererLoad.catch((err) => {
+        this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:load-file:failed`, {
+          error: err?.message || String(err),
+        });
+        log.error('Window', `Failed to load renderer entry ${RENDERER_ENTRY_HTML}: ${err.message}`);
+        this.activity.logActivity('error', 'system', 'Renderer failed to load', {
+          reason: 'load_file_failed',
+          filePath: RENDERER_ENTRY_HTML,
+          error: err.message,
+        });
+      });
+    }
+
+    if (lifecycleRoot) {
+      // Hidden pane host windows are non-critical; defer to a separate task so
+      // main-window listeners/post-load init always install first.
+      this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:pane-host-bootstrap:schedule`);
+      if (!this.restartLaunchProbe) this.schedulePaneHostBootstrap();
+
+      // Honesty audit #3 (S464): the persisted setting IS the authority.
+      // The old env gate (SQUIDRUN_DEBUG/NODE_ENV, never set in Operator's
+      // packaged build) made the toggle a silent no-op: it persisted and
+      // animated while doing nothing. The toggle now means what it says in
+      // every build - and flipping it live opens/closes immediately via the
+      // set-setting handler.
+      if (this.ctx.currentSettings.devTools) {
+        windowRef.webContents.openDevTools();
+      }
+    }
+
+    this.appendBootSequenceBreadcrumb(`createWindow:${windowKey}:return`, {
+      lifecycleRoot,
+    });
+  }
+
+  setLaunchWindowProfile(profile = {}) {
+    const windowKey = toNonEmptyString(profile.windowKey) || 'main';
+    const profileName = toNonEmptyString(profile.profileName) || this.activeProfileName;
+    const includeMainWindow = windowKey === 'main'
+      ? true
+      : profile.includeMainWindow !== false && profile.standaloneWindow !== true;
+    this.launchWindowProfile = {
+      profileName,
+      windowKey,
+      includeMainWindow,
+      standaloneWindow: includeMainWindow !== true,
+      focusWindowKey: toNonEmptyString(profile.focusWindowKey) || windowKey,
+    };
+    return { ...this.launchWindowProfile };
+  }
+
+  getLaunchWindowProfile() {
+    return { ...(this.launchWindowProfile || { windowKey: 'main', includeMainWindow: true, standaloneWindow: false, focusWindowKey: 'main' }) };
+  }
+
+  async launchWindowsForProfile(profile = null) {
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:start');
+    const nextProfile = profile && typeof profile === 'object'
+      ? this.setLaunchWindowProfile(profile)
+      : this.getLaunchWindowProfile();
+    const windowKey = toNonEmptyString(nextProfile.windowKey) || 'main';
+    const includeMainWindow = nextProfile.includeMainWindow === true || windowKey === 'main';
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:resolved-profile', {
+      windowKey,
+      includeMainWindow,
+      focusWindowKey: nextProfile.focusWindowKey || windowKey,
+    });
+
+    if (includeMainWindow) {
+      this.appendBootSequenceBreadcrumb('launchWindowsForProfile:open-main:start');
+      await this.openAppWindow('main', {
+        lifecycleRoot: this.getOpenAppWindowCount() === 0,
+      });
+      this.appendBootSequenceBreadcrumb('launchWindowsForProfile:open-main:done');
+    }
+    if (windowKey !== 'main') {
+      this.appendBootSequenceBreadcrumb(`launchWindowsForProfile:open-${windowKey}:start`);
+      await this.openAppWindow(windowKey, {
+        lifecycleRoot: this.getOpenAppWindowCount() === 0,
+      });
+      this.appendBootSequenceBreadcrumb(`launchWindowsForProfile:open-${windowKey}:done`);
+    }
+
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:focus:start', {
+      focusWindowKey: nextProfile.focusWindowKey || windowKey,
+    });
+    if (!this.restartLaunchProbe) {
+      this.focusAppWindow(nextProfile.focusWindowKey || windowKey);
+    }
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:focus:done');
+    this.appendBootSequenceBreadcrumb('launchWindowsForProfile:return');
+    return nextProfile;
+  }
+
+  focusAppWindow(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    const window = this.getAppWindow(windowKey);
+    if (!this.canSendToWindow(window)) return false;
+    if (typeof window.isMinimized === 'function' && window.isMinimized()) {
+      window.restore();
+    }
+    if (typeof window.isVisible === 'function' && !window.isVisible()) {
+      window.show();
+    } else if (typeof window.show === 'function') {
+      window.show();
+    }
+    if (typeof window.moveTop === 'function') {
+      window.moveTop();
+    }
+    if (typeof window.focus === 'function') {
+      window.focus();
+    }
+    return true;
+  }
+
+  verifyAppWindowVisible(rawWindowKey = 'main', expectedTitle = '') {
+    return verifyAppWindowVisible({
+      rawWindowKey,
+      expectedTitle,
+      getAppWindow: (windowKey) => this.getAppWindow(windowKey),
+      canSendToWindow: (windowRef) => this.canSendToWindow(windowRef),
+    });
+  }
+
+  async openAppWindow(rawWindowKey = 'main', options = {}) {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:start`, {
+      lifecycleRoot: options.lifecycleRoot === true,
+    });
+    if (windowKey === 'team-room') {
+      return this.teamRoomController.openWindow();
+    }
+    if (windowKey === 'live-task-audit-sidecar') {
+      const existing = this.getAppWindow(windowKey);
+      if (this.canSendToWindow(existing)) {
+        if (existing.webContents && typeof existing.webContents.reloadIgnoringCache === 'function') {
+          existing.webContents.reloadIgnoringCache();
+        } else if (typeof existing.reload === 'function') {
+          existing.reload();
+        }
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Task Audit',
+          status: 'reused_existing_reloaded',
+        };
+      }
+      try {
+        const result = liveTaskAuditSidecarWindowModule.createLiveTaskAuditSidecarWindow({ BrowserWindow }) || {};
+        const win = result.window || null;
+        if (!win) {
+          return {
+            ok: false,
+            windowKey,
+            reason: 'live_task_audit_sidecar_window_factory_returned_no_window',
+          };
+        }
+        this.registerAppWindow(windowKey, win);
+        this.enforceMenuSuppression(win);
+        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Task Audit',
+          htmlPath: result.htmlPath || null,
+          preloadPath: result.preloadPath || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          windowKey,
+          reason: err?.message || 'live_task_audit_sidecar_window_open_failed',
+        };
+      }
+    }
+    if (windowKey === 'spine-overlay') {
+      const existing = this.getAppWindow(windowKey);
+      if (this.canSendToWindow(existing)) {
+        if (existing.webContents && typeof existing.webContents.reloadIgnoringCache === 'function') {
+          existing.webContents.reloadIgnoringCache();
+        } else if (typeof existing.reload === 'function') {
+          existing.reload();
+        }
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Spine Overlay',
+          status: 'reused_existing_reloaded',
+        };
+      }
+      try {
+        const result = spineOverlayWindowModule.createSpineOverlayWindow({ BrowserWindow }) || {};
+        const win = result.window || null;
+        if (!win) {
+          return {
+            ok: false,
+            windowKey,
+            reason: 'spine_overlay_window_factory_returned_no_window',
+          };
+        }
+        this.registerAppWindow(windowKey, win);
+        this.enforceMenuSuppression(win);
+        this.setupWindowListeners(win, { windowKey, lifecycleRoot: false });
+        this.focusAppWindow(windowKey);
+        return {
+          ok: true,
+          windowKey,
+          title: 'SquidRun Spine Overlay',
+          htmlPath: result.htmlPath || null,
+          preloadPath: result.preloadPath || null,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          windowKey,
+          reason: err?.message || 'spine_overlay_window_open_failed',
+        };
+      }
+    }
+    const windowTitle = windowKey === 'main'
+      ? 'SquidRun'
+      : `SquidRun - ${this.formatWindowKeyLabel(windowKey)}`;
+    const isSquidRoomWindow = isSquidRoomWindowKey(windowKey);
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:start`);
+    await this.createWindow({
+      windowKey,
+      windowTeam: isSquidRoomWindow ? 'squid-room' : (options.windowTeam || windowKey),
+      title: options.title || windowTitle,
+      profileName: isSquidRoomWindow ? 'main' : options.profileName,
+      autoBootAgents: isSquidRoomWindow ? false : options.autoBootAgents,
+      displayOnly: isSquidRoomWindow ? true : options.displayOnly,
+      skipStartupBundle: isSquidRoomWindow ? true : options.skipStartupBundle,
+      lifecycleRoot: options.lifecycleRoot === true,
+    });
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:create-window:done`);
+    if (isSquidRoomWindow) {
+      this.writeSquidRoomWindowState(true, options.restoredFromState ? 'startup_restore' : 'open_app_window');
+    }
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:focus:start`);
+    const focused = this.focusAppWindow(windowKey);
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:focus:done`, {
+      focused,
+    });
+    this.appendBootSequenceBreadcrumb(`openAppWindow:${windowKey}:return`, {
+      focused,
+    });
+    return {
+      ok: true,
+      windowKey,
+      title: windowTitle,
+    };
+  }
+
+  async closeAppWindow(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'main') {
+      return {
+        ok: false,
+        reason: 'main_window_requires_quit',
+        windowKey,
+      };
+    }
+    const window = this.getAppWindow(windowKey);
+    if (!window) {
+      return {
+        ok: false,
+        reason: 'window_not_found',
+        windowKey,
+      };
+    }
+    if (this.isStandaloneProfileWindow(windowKey)) {
+      void this.performFullShutdown(`profile-app-close:${windowKey}`).catch((err) => {
+        log.error('Shutdown', `Profile app close failed for ${windowKey}: ${err.message}`);
+      });
+      return {
+        ok: true,
+        windowKey,
+        status: 'profile_app_shutdown_started',
+      };
+    }
+    return this.requestWindowClose(window, windowKey);
+  }
+
+  requestWindowClose(window, windowKey = 'main') {
+    return new Promise((resolve) => {
+      let resolved = false;
+      const finish = (result) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(result);
+      };
+      const onClosed = () => finish({
+        ok: true,
+        windowKey,
+        status: 'closed',
+      });
+
+      if (typeof window.once === 'function') {
+        window.once('closed', onClosed);
+      }
+
+      setTimeout(() => {
+        if (typeof window.off === 'function') {
+          window.off('closed', onClosed);
+        } else if (typeof window.removeListener === 'function') {
+          window.removeListener('closed', onClosed);
+        }
+        const stillOpen = this.canSendToWindow(window);
+        finish({
+          ok: !stillOpen,
+          windowKey,
+          status: stillOpen ? 'close_pending' : 'closed',
+          reason: stillOpen ? 'window_close_not_completed' : null,
+        });
+      }, 750);
+
+      try {
+        window.close();
+      } catch (err) {
+        finish({
+          ok: false,
+          windowKey,
+          reason: 'window_close_failed',
+          error: err.message,
+        });
+      }
+    });
+  }
+
+  isStandaloneProfileWindow(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'main') return false;
+    const launchProfile = this.getLaunchWindowProfile();
+    const window = this.getAppWindow(windowKey);
+    const mainWindow = this.getAppWindow('main');
+    const mainWindowIsAlias = mainWindow && mainWindow === window;
+    return launchProfile?.standaloneWindow === true
+      && String(launchProfile.windowKey || '').trim() === windowKey
+      && (!this.canSendToWindow(mainWindow) || mainWindowIsAlias);
+  }
+
+  getWindowLifecycleMode(rawWindowKey = 'main') {
+    const windowKey = String(rawWindowKey || 'main').trim() || 'main';
+    if (windowKey === 'main') return 'main-app';
+    return this.isStandaloneProfileWindow(windowKey)
+      ? 'standalone-profile-app'
+      : 'secondary-window';
+  }
+
+  formatWindowKeyLabel(windowKey) {
+    const raw = String(windowKey || 'main').trim();
+    if (!raw) return 'Window';
+    return raw
+      .split(/[-_\s]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
+  }
+
+  getWindowSessionScopeId(windowKey = 'main') {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    const baseScopeId = toNonEmptyString(this.commsSessionScopeId) || `app-${process.pid}-${Date.now()}`;
+    if (normalizedWindowKey === 'main' && !isMainProfile(this.activeProfileName)) {
+      return `${baseScopeId}:${this.activeProfileName}`;
+    }
+    return normalizedWindowKey === 'main'
+      ? baseScopeId
+      : `${baseScopeId}:${normalizedWindowKey}`;
+  }
+
+  getOpenAppWindowCount(excludedWindowKey = null) {
+    const excludedKey = toNonEmptyString(excludedWindowKey);
+    if (typeof this.ctx.getWindows === 'function') {
+      return Array.from(this.ctx.getWindows().entries())
+        .filter(([windowKey, windowRef]) => {
+          if (excludedKey && String(windowKey || '').trim() === excludedKey) return false;
+          return this.canSendToWindow(windowRef);
+        })
+        .length;
+    }
+    const fallbackWindow = excludedKey === 'main' ? null : this.ctx.mainWindow;
+    return this.canSendToWindow(fallbackWindow) ? 1 : 0;
+  }
+
+  getFallbackMainWindow(excludedWindow = null) {
+    const currentMainWindow = this.getAppWindow('main');
+    if (this.canSendToWindow(currentMainWindow) && currentMainWindow !== excludedWindow) {
+      return currentMainWindow;
+    }
+    if (typeof this.ctx.getWindows !== 'function') return null;
+    for (const [, windowRef] of this.ctx.getWindows().entries()) {
+      if (!this.canSendToWindow(windowRef)) continue;
+      if (windowRef === excludedWindow) continue;
+      return windowRef;
+    }
+    return null;
+  }
+
+  readSquidRoomWindowState() {
+    try {
+      if (!fs.existsSync(this.squidRoomWindowStatePath)) return null;
+      return JSON.parse(fs.readFileSync(this.squidRoomWindowStatePath, 'utf8'));
+    } catch (err) {
+      log.warn('Window', `Failed to read Squid Room window state: ${err.message}`);
+      return null;
+    }
+  }
+
+  writeSquidRoomWindowState(open, reason = 'unknown') {
+    try {
+      fs.mkdirSync(path.dirname(this.squidRoomWindowStatePath), { recursive: true });
+      fs.writeFileSync(this.squidRoomWindowStatePath, JSON.stringify({
+        schema: 'squidrun.squid_room_window_state.v0',
+        windowKey: 'squid-room',
+        open: Boolean(open),
+        reason,
+        updatedAt: new Date().toISOString(),
+        sessionScopeId: this.commsSessionScopeId || null,
+      }, null, 2), 'utf8');
+      return { ok: true };
+    } catch (err) {
+      log.warn('Window', `Failed to write Squid Room window state: ${err.message}`);
+      return { ok: false, reason: err.message };
+    }
+  }
+
+  restorePersistedSquidRoomWindow() {
+    if (this.squidRoomRestoreAttempted) return { ok: true, skipped: true, reason: 'already_attempted' };
+    this.squidRoomRestoreAttempted = true;
+    const state = this.readSquidRoomWindowState();
+    if (state?.open !== true) return { ok: true, skipped: true, reason: 'not_marked_open' };
+    if (this.canSendToWindow(this.getAppWindow('squid-room'))) {
+      return { ok: true, skipped: true, reason: 'already_open' };
+    }
+    setTimeout(() => {
+      if (this.shuttingDown || this.fullShutdownPromise) return;
+      void this.openAppWindow('squid-room', { restoredFromState: true })
+        .catch((err) => {
+          log.warn('Window', `Failed to restore Squid Room window: ${err.message}`);
+        });
+    }, 500);
+    return { ok: true, scheduled: true };
+  }
+
+  handleAppWindowClosed(windowKey, windowRef) {
+    if (isSquidRoomWindowKey(windowKey) && !this.shuttingDown && !this.fullShutdownPromise) {
+      this.writeSquidRoomWindowState(false, 'window_closed');
+    }
+    this.unregisterAppWindow(windowKey);
+    if (this.ctx.mainWindow !== windowRef) return;
+    const replacementWindow = this.getFallbackMainWindow(windowRef);
+    if (typeof this.ctx.setMainWindow === 'function') {
+      this.ctx.setMainWindow(replacementWindow || null);
+      return;
+    }
+    this.ctx.mainWindow = replacementWindow || null;
+  }
+
+  seedRendererWindowState(window, options = {}) {
+    if (!this.canSendToWindow(window)) return;
+    const windowKey = String(options.windowKey || 'main').trim() || 'main';
+    try {
+      window.webContents.send('state-changed', watcher.readState());
+    } catch (err) {
+      log.warn('Window', `Failed to seed state for ${windowKey}: ${err.message}`);
+    }
+
+    if (this.ctx.daemonClient?.connected) {
+      try {
+        const terminals = this.filterTerminalsForVisibleShell(this.ctx.daemonClient.getTerminals?.() || [], { windowKey });
+        window.webContents.send('daemon-connected', { terminals, windowKey });
+        return;
+      } catch (err) {
+        log.warn('Window', `Failed to seed daemon state for ${windowKey}: ${err.message}`);
+      }
+    }
+
+    if (this.daemonTimeoutTriggered && !this.daemonConnectedForStartup) {
+      try {
+        window.webContents.send('daemon-timeout', {
+          reason: 'daemon_connect_timeout_replay',
+          windowKey,
+        });
+      } catch (err) {
+        log.warn('Window', `Failed to replay daemon timeout for ${windowKey}: ${err.message}`);
+      }
+    }
+  }
+
+  getScopedDesktopShortcutPath() {
+    if (process.platform !== 'win32' || typeof app?.getPath !== 'function') return null;
+    return path.join(app.getPath('desktop'), 'SquidRun - Scoped.lnk');
+  }
+
+  buildScopedDesktopShortcutOptions() {
+    if (process.platform !== 'win32') return null;
+    const uiRoot = path.resolve(path.join(__dirname, '..', '..'));
+    const isPackaged = app.isPackaged === true;
+    return {
+      target: process.execPath,
+      args: isPackaged
+        ? '--profile=scoped --window=scoped --standalone-window'
+        : `"${uiRoot}" --profile=scoped --window=scoped --standalone-window`,
+      cwd: isPackaged ? path.dirname(process.execPath) : uiRoot,
+      description: 'Open the Scoped SquidRun profile.',
+      icon: path.join(uiRoot, 'assets', 'squidrun-favicon.ico'),
+      iconIndex: 0,
+      appUserModelId: WINDOWS_APP_USER_MODEL_ID,
+    };
+  }
+
+  ensureScopedDesktopShortcut() {
+    if (process.platform !== 'win32') {
+      return { ok: false, skipped: true, reason: 'unsupported_platform' };
+    }
+    if (!shell || typeof shell.writeShortcutLink !== 'function') {
+      return { ok: false, skipped: true, reason: 'shortcut_api_unavailable' };
+    }
+    const shortcutPath = this.getScopedDesktopShortcutPath();
+    const shortcutOptions = this.buildScopedDesktopShortcutOptions();
+    if (!shortcutPath || !shortcutOptions?.target) {
+      return { ok: false, skipped: true, reason: 'shortcut_target_unavailable' };
+    }
+    const written = shell.writeShortcutLink(shortcutPath, 'create', shortcutOptions);
+    return {
+      ok: written === true,
+      shortcutPath,
+      shortcutOptions,
+      reason: written === true ? null : 'write_shortcut_failed',
+    };
+  }
+
+  getScopedStartupBundlePath() {
+    return this.getProfileStartupBundlePath('scoped');
+  }
+
+  getProfileStartupBundlePath(rawWindowKey = null) {
+    const windowKey = toNonEmptyString(rawWindowKey)
+      || (isMainProfile(this.activeProfileName) ? 'main' : this.activeProfileName);
+    if (windowKey === 'main' && isMainProfile(this.activeProfileName)) return null;
+    const profileKey = windowKey === 'main' ? this.activeProfileName : windowKey;
+    if (isMainProfile(profileKey)) return null;
+    return resolveCoordPath(path.join('runtime', 'window-teams', profileKey, 'startup-bundle.md'), { forWrite: true });
+  }
+
+  getScopedStartupSourcePaths() {
+    return [
+      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'CLAUDE.md', 'scoped'),
+      resolveProfileInstructionPath(getProjectRoot() || process.cwd(), 'ROLES.md', 'scoped'),
+      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'scoped-profile.md'),
+      path.join(getProjectRoot() || process.cwd(), 'workspace', 'knowledge', 'scoped-handoff.md'),
+    ];
+  }
+
+  async readRecentScopedTelegramHistory(limit = 8) {
+    const result = await executeEvidenceLedgerOperation(
+      'query-comms-journal',
+      {
+        channel: 'telegram',
+        order: 'desc',
+        limit: Math.max(limit * 4, 24),
+      },
+      {
+        source: {
+          via: 'scoped-startup-bundle',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    ).catch((err) => ({ ok: false, error: err.message, items: [] }));
+    const rows = Array.isArray(result)
+      ? result
+      : (Array.isArray(result?.items) ? result.items : []);
+    return rows
+      .filter((row) => {
+        const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const metadataChatId = normalizeChatId(metadata.chatId || metadata.telegramChatId || null);
+        const windowKey = toNonEmptyString(metadata.windowKey) || null;
+        const sessionId = toNonEmptyString(row?.sessionId) || null;
+        return metadataChatId === SCOPED_PROFILE_CHAT_ID
+          || windowKey === 'scoped'
+          || sessionId === this.getWindowSessionScopeId('scoped')
+          || sessionId?.endsWith(':scoped') === true;
+      })
+      .slice(0, limit);
+  }
+
+  async readScopedCognitiveMemoryEntries(limit = 6) {
+    const result = await executeCognitiveMemoryOperation(
+      'retrieve',
+      {
+        agentId: 'architect',
+        query: 'scoped profile operations handoff corrections',
+        limit,
+      },
+      {
+        source: {
+          via: 'scoped-startup-bundle',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    ).catch((err) => ({ ok: false, error: err.message, results: [] }));
+    return Array.isArray(result?.results) ? result.results.slice(0, limit) : [];
+  }
+
+  async buildScopedStartupBundle() {
+    const sourcePaths = this.getScopedStartupSourcePaths();
+    const claudePath = sourcePaths[0];
+    const rolesPath = sourcePaths[1];
+    const scopedOperationsPath = sourcePaths[2];
+    const scopedHandoffPath = sourcePaths[3];
+    const [telegramHistory, cognitiveEntries] = await Promise.all([
+      this.readRecentScopedTelegramHistory(8),
+      this.readScopedCognitiveMemoryEntries(6),
+    ]);
+
+    const claudeLines = this.readTextFileSafe(claudePath)
+      .split(/\r?\n/)
+      .filter((line) => /scoped|profile|telegram|handoff|boundary/i.test(line))
+      .slice(0, 16);
+    const rolesLines = this.readTextFileSafe(rolesPath)
+      .split(/\r?\n/)
+      .filter((line) => /scoped|profile|telegram|handoff|boundary/i.test(line))
+      .slice(0, 16);
+    const scopedOperationsPreview = this.readTextFileSafe(scopedOperationsPath)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(0, 20);
+    const scopedHandoffPreview = this.readTextFileSafe(scopedHandoffPath)
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(0, 16);
+
+    const lines = [
+      '# Scoped Startup Bundle',
+      '',
+      `Generated: ${new Date().toISOString()}`,
+      `Session Scope: ${this.getWindowSessionScopeId('scoped')}`,
+      '',
+      'Window purpose:',
+      '- This window is for scoped-profile work only.',
+      '- Keep private profile context out of the main pane unless explicitly routed.',
+      '- Do not mix unrelated live-risk workflows into this lane.',
+      '',
+      'Authoritative source files:',
+      ...sourcePaths.map((filePath) => `- ${filePath}`),
+      '',
+      'Scoped CLAUDE.md lines:',
+      ...(claudeLines.length > 0 ? claudeLines.map((line) => `> ${line}`) : ['> No Scoped-specific CLAUDE.md lines found.']),
+      '',
+      'Scoped ROLES.md lines:',
+      ...(rolesLines.length > 0 ? rolesLines.map((line) => `> ${line}`) : ['> No Scoped-specific ROLES.md lines found.']),
+      '',
+      `Scoped operations preview (${scopedOperationsPath}):`,
+      ...(scopedOperationsPreview.length > 0 ? scopedOperationsPreview.map((line) => `- ${line}`) : ['- Missing or empty scoped-profile.md']),
+      '',
+      `Scoped handoff preview (${scopedHandoffPath}):`,
+      ...(scopedHandoffPreview.length > 0 ? scopedHandoffPreview.map((line) => `- ${line}`) : ['- Missing or empty scoped-handoff.md']),
+    ];
+
+    lines.push('');
+    lines.push(`Recent Scoped Telegram history (chat ${SCOPED_PROFILE_CHAT_ID}):`);
+    if (telegramHistory.length > 0) {
+      for (const entry of telegramHistory) {
+        const metadata = entry?.metadata && typeof entry.metadata === 'object' ? entry.metadata : {};
+        const sender = toNonEmptyString(metadata.from) || toNonEmptyString(entry?.senderRole) || 'unknown';
+        const body = String(entry?.rawBody || '').replace(/\s+/g, ' ').trim();
+        if (!body) continue;
+        lines.push(`- ${sender}: ${body.slice(0, 280)}`);
+      }
+    } else {
+      lines.push('- No recent Telegram history found for Scoped in the evidence ledger.');
+    }
+
+    lines.push('');
+    lines.push('Relevant cognitive memory entries:');
+    if (cognitiveEntries.length > 0) {
+      for (const entry of cognitiveEntries) {
+        const title = toNonEmptyString(entry?.title) || toNonEmptyString(entry?.heading) || 'Memory';
+        const sourcePath = toNonEmptyString(entry?.sourcePath) || 'cognitive-memory';
+        const content = String(entry?.content || '').replace(/\s+/g, ' ').trim();
+        lines.push(`- ${title} (${sourcePath}): ${content.slice(0, 260)}`);
+      }
+    } else {
+      lines.push('- No cognitive memory entries were retrieved for the Scoped startup query.');
+    }
+
+    return {
+      ok: true,
+      sessionScopeId: this.getWindowSessionScopeId('scoped'),
+      sourcePaths,
+      bundlePath: this.getScopedStartupBundlePath(),
+      text: lines.join('\n'),
+    };
+  }
+
+  async writeScopedStartupBundle(bundle = null) {
+    const nextBundle = bundle && typeof bundle === 'object' ? bundle : await this.buildScopedStartupBundle();
+    if (!nextBundle?.bundlePath || !nextBundle?.text) return nextBundle;
+    fs.mkdirSync(path.dirname(nextBundle.bundlePath), { recursive: true });
+    fs.writeFileSync(nextBundle.bundlePath, `${nextBundle.text}\n`, 'utf8');
+    return nextBundle;
+  }
+
+  async injectScopedStartupBundle() {
+    const bundle = await this.writeScopedStartupBundle();
+    const sessionScopeId = bundle?.sessionScopeId || this.getWindowSessionScopeId('scoped');
+    for (const paneId of ['1', '2', '3']) {
+      this.routeInjectMessage({
+        panes: [paneId],
+        message: `${bundle.text}\r`,
+        startupInjection: true,
+        meta: {
+          windowKey: 'scoped',
+          session_id: sessionScopeId,
+          startupInjection: true,
+          contextBundle: 'scoped',
+          authoritative: true,
+          sourceFiles: bundle?.sourcePaths || [],
+          bundlePath: bundle?.bundlePath || null,
+        },
+      });
+    }
+    return bundle;
+  }
+
+  buildProfileStartupBundle(profileKey = this.activeProfileName) {
+    const normalizedProfile = toNonEmptyString(profileKey) || this.activeProfileName;
+    const profileRoot = getProfileProjectRootOverride(normalizedProfile, process.env) || getProjectRoot() || process.cwd();
+    this.ensureProfileWorkspaceLink(normalizedProfile, profileRoot);
+    const sourcePaths = [
+      path.join(profileRoot, 'AGENTS.md'),
+      path.join(profileRoot, 'CLAUDE.md'),
+      path.join(profileRoot, 'ROLES.md'),
+    ];
+    const lines = [
+      `# ${this.formatWindowKeyLabel(normalizedProfile)} Startup Bundle`,
+      '',
+      `Generated: ${new Date().toISOString()}`,
+      `Session Scope: ${this.getWindowSessionScopeId(normalizedProfile)}`,
+      '',
+      'Profile identity:',
+      `- Profile: ${normalizedProfile}`,
+      `- Workspace: ${profileRoot}`,
+      '- Follow the profile-local AGENTS.md, CLAUDE.md, and ROLES.md files before acting.',
+      '',
+      'Authoritative source files:',
+      ...sourcePaths.map((filePath) => `- ${filePath}`),
+    ];
+
+    return {
+      ok: true,
+      sessionScopeId: this.getWindowSessionScopeId(normalizedProfile),
+      sourcePaths,
+      bundlePath: this.getProfileStartupBundlePath(normalizedProfile),
+      text: lines.join('\n'),
+    };
+  }
+
+  ensureProfileWorkspaceLink(profileKey, profileRoot) {
+    const normalizedProfile = toNonEmptyString(profileKey);
+    const resolvedProfileRoot = toNonEmptyString(profileRoot);
+    if (!normalizedProfile || !resolvedProfileRoot || isMainProfile(normalizedProfile)) return null;
+    const coordRoot = path.join(resolvedProfileRoot, '.squidrun');
+    const linkPath = path.join(coordRoot, 'link.json');
+    const squidrunRoot = path.resolve(path.join(__dirname, '..', '..', '..'));
+    const resolveCommsScript = (scriptName) => {
+      const primary = path.join(squidrunRoot, 'ui', 'scripts', scriptName);
+      if (fs.existsSync(primary)) return primary;
+      const runtimeCopy = path.join(squidrunRoot, '.squidrun', 'bin', 'runtime', 'ui', 'scripts', scriptName);
+      return fs.existsSync(runtimeCopy) ? runtimeCopy : primary;
+    };
+    const payload = {
+      squidrun_root: normalizeToPosixPath(squidrunRoot),
+      comms: {
+        hm_send: normalizeToPosixPath(resolveCommsScript('hm-send.js')),
+        hm_comms: normalizeToPosixPath(resolveCommsScript('hm-comms.js')),
+      },
+      workspace: normalizeToPosixPath(path.resolve(resolvedProfileRoot)),
+      session_id: this.getWindowSessionScopeId(normalizedProfile),
+      role_targets: {
+        architect: 'architect',
+        builder: 'builder',
+        oracle: 'oracle',
+      },
+      version: 1,
+      profile: normalizedProfile,
+    };
+    try {
+      fs.mkdirSync(coordRoot, { recursive: true });
+      fs.writeFileSync(linkPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+      return linkPath;
+    } catch (err) {
+      log.warn('Profile', `Failed to write ${normalizedProfile} profile link.json: ${err.message}`);
+      return null;
+    }
+  }
+
+  async writeProfileStartupBundle(profileKey = this.activeProfileName) {
+    const normalizedProfile = toNonEmptyString(profileKey) || this.activeProfileName;
+    if (normalizedProfile === 'scoped') return this.writeScopedStartupBundle();
+    const bundle = this.buildProfileStartupBundle(normalizedProfile);
+    if (!bundle?.bundlePath || !bundle?.text) return bundle;
+    fs.mkdirSync(path.dirname(bundle.bundlePath), { recursive: true });
+    fs.writeFileSync(bundle.bundlePath, `${bundle.text}\n`, 'utf8');
+    return bundle;
+  }
+
+  getAppWindow(windowKey = 'main') {
+    if (typeof this.ctx.getWindow === 'function') {
+      return this.ctx.getWindow(windowKey);
+    }
+    return String(windowKey || 'main') === 'main' ? this.ctx.mainWindow : null;
+  }
+
+  getAppWindows() {
+    if (typeof this.ctx.getWindows === 'function') {
+      return Array.from(this.ctx.getWindows().entries());
+    }
+    if (this.canSendToWindow(this.ctx.mainWindow)) {
+      return [['main', this.ctx.mainWindow]];
+    }
+    return [];
+  }
+
+  buildAppWindowInstanceScope(windowKey = 'main', options = {}) {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    const profileName = normalizeProfileName(
+      options.profileName
+      || (normalizedWindowKey === 'squid-room'
+        ? 'main'
+        : (normalizedWindowKey === 'main' ? this.activeProfileName : normalizedWindowKey))
+      || 'main'
+    );
+    const sessionScopeId = toNonEmptyString(options.sessionScopeId)
+      || this.getWindowSessionScopeId(normalizedWindowKey);
+    return {
+      profileName,
+      windowKey: normalizedWindowKey,
+      sessionScopeId,
+    };
+  }
+
+  getAppWindowInstanceScope(windowKey = 'main') {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    const registered = this.appWindowInstanceScopes?.get?.(normalizedWindowKey);
+    if (registered) {
+      // S463 Bug 2: windows register during boot BEFORE
+      // initializeStartupSessionScope upgrades commsSessionScopeId from the
+      // pid fallback (app-<pid>-<ts>) to the canonical app-session id, so the
+      // registry froze a value no renderer ever sees and owner assertions
+      // could never match. Serve the LIVE scope id instead of the frozen one.
+      return {
+        ...registered,
+        sessionScopeId: this.getWindowSessionScopeId(normalizedWindowKey),
+      };
+    }
+    return this.buildAppWindowInstanceScope(normalizedWindowKey);
+  }
+
+  registerAppWindow(windowKey, windowRef, options = {}) {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    if (typeof this.ctx.setWindow === 'function') {
+      this.ctx.setWindow(normalizedWindowKey, windowRef);
+    }
+    this.appWindowInstanceScopes.set(
+      normalizedWindowKey,
+      this.buildAppWindowInstanceScope(normalizedWindowKey, options)
+    );
+    if (normalizedWindowKey === 'main') {
+      this.ctx.mainWindow = windowRef;
+      if (typeof this.ctx.setMainWindow === 'function') {
+        this.ctx.setMainWindow(windowRef);
+      }
+      return;
+    }
+    if (options.lifecycleRoot === true) {
+      if (typeof this.ctx.setMainWindow === 'function') {
+        this.ctx.setMainWindow(windowRef);
+      } else {
+        this.ctx.mainWindow = windowRef;
+      }
+    }
+  }
+
+  unregisterAppWindow(windowKey) {
+    const normalizedWindowKey = String(windowKey || 'main').trim() || 'main';
+    this.appWindowInstanceScopes.delete(normalizedWindowKey);
+    if (typeof this.ctx.deleteWindow === 'function') {
+      this.ctx.deleteWindow(normalizedWindowKey);
+      return;
+    }
+    if (normalizedWindowKey === 'main') {
+      this.ctx.mainWindow = null;
+    }
+  }
+
+  enforceMenuSuppression(windowRef) {
+    if (Menu && typeof Menu.setApplicationMenu === 'function') {
+      try {
+        Menu.setApplicationMenu(null);
+      } catch (err) {
+        log.warn('App', `Failed to clear application menu: ${err.message}`);
+      }
+    }
+
+    if (!windowRef || (typeof windowRef.isDestroyed === 'function' && windowRef.isDestroyed())) {
+      return;
+    }
+
+    if (typeof windowRef.removeMenu === 'function') {
+      windowRef.removeMenu();
+    } else if (typeof windowRef.setMenu === 'function') {
+      windowRef.setMenu(null);
+    }
+
+    if (typeof windowRef.setAutoHideMenuBar === 'function') {
+      windowRef.setAutoHideMenuBar(true);
+    }
+    if (typeof windowRef.setMenuBarVisibility === 'function') {
+      windowRef.setMenuBarVisibility(false);
+    }
+  }
+
+  setupPermissions() {
+    session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {   
+      const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];       
+      const mediaTypes = details?.mediaTypes || [];
+      if (allowedPermissions.includes(permission) || mediaTypes.includes('audio')) {
+        return true;
+      }
+      return false;
+    });
+
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+      const allowedPermissions = ['media', 'audioCapture', 'clipboard-read', 'clipboard-write', 'clipboard-sanitized-write'];       
+      if (allowedPermissions.includes(permission)) {
+        callback(true);
+      } else {
+        callback(false);
+      }
+    });
+  }
+
+  initModules() {
+    const window = this.ctx.mainWindow;
+
+    // Triggers
+    triggers.init(window, this.ctx.agentRunning, (type, paneId, msg, details) =>
+      this.activity.logActivity(type, paneId, msg, details));
+    triggers.setWatcher(watcher);
+    if (typeof triggers.setInjectMessageRouter === 'function') {
+      triggers.setInjectMessageRouter((payload) => this.routeInjectMessage(payload));
+    }
+
+    ipcMain.removeHandler('pane-host-inject');
+    ipcMain.handle('pane-host-inject', async (event, paneId, payload = {}) => {
+      const id = String(paneId || '').trim();
+      if (!id) {
+        return { success: false, reason: 'missing_pane_id' };
+      }
+      const action = String(payload?.action || '').trim().toLowerCase();
+      if (action) {
+        if (!this.isTrustedPaneHostSender(event, id)) {
+          return { success: false, reason: 'unauthorized_sender', paneId: id, action };
+        }
+
+        if (action === 'ready') {
+          this.handlePaneHostReadySignal({ paneId: id });
+          return { success: true, paneId: id, action };
+        }
+
+        if (action === 'dispatch-enter') {
+          const result = this.dispatchPaneHostEnter(id);
+          return {
+            ...result,
+            action,
+          };
+        }
+
+        if (action === 'delivery-ack') {
+          // Typed-seams fix (Architect #4-S468 item 1): the producer sends
+          // messageId too - dropping it broke receipt correlation whenever
+          // deliveryId was null and messageId was the only key.
+          this.handleTriggerDeliveryAck({
+            deliveryId: payload?.deliveryId || null,
+            messageId: payload?.messageId || null,
+            paneId: id,
+          });
+          return { success: true, paneId: id, action };
+        }
+
+        if (action === 'delivery-outcome') {
+          // Item 5: the dead payload.outcome branch is gone - the only
+          // producer sends fields FLAT; the wrapper object never existed.
+          const outcome = {};
+          Object.assign(outcome, payload, { paneId: id });
+          delete outcome.action;
+          this.handleTriggerDeliveryOutcome(outcome);
+          return { success: true, paneId: id, action };
+        }
+
+        return { success: false, reason: 'unsupported_action', paneId: id, action };
+      }
+
+      if (!this.isHiddenPaneHostModeEnabled()) {
+        return { success: false, reason: 'hidden_hosts_disabled' };
+      }
+      const routed = this.routeInjectMessage({
+        panes: [id],
+        message: payload?.message || '',
+        deliveryId: payload?.deliveryId || null,
+        traceContext: payload?.traceContext || null,
+        meta: {
+          ...((payload?.meta && typeof payload.meta === 'object') ? payload.meta : {}),
+          preferHiddenPaneHost: true,
+          disableVisibleFallback: true,
+        },
+      });
+      return routed
+        ? {
+          success: true,
+          paneId: id,
+          mode: 'routed-inject',
+          verified: false,
+          status: 'pane_host_route_pending',
+          reason: 'hidden_pane_host_delivery_pending',
+        }
+        : { success: false, reason: 'inject_route_unavailable', paneId: id };
+    });
+
+    // Direct Enter dispatch for hidden pane hosts — bypasses pty-write IPC handler
+    // to use the same direct daemonClient.write path as the working Enter button.
+    ipcMain.removeHandler('pane-host-dispatch-enter');
+    ipcMain.handle('pane-host-dispatch-enter', (_event, paneId) => this.dispatchPaneHostEnter(paneId));
+
+    // Recovery
+    this.ctx.setRecoveryManager(this.initRecoveryManager());
+    triggers.setSelfHealing(this.ctx.recoveryManager);
+
+    // Plugins
+    this.ctx.setPluginManager(this.initPluginManager());
+    triggers.setPluginManager(this.ctx.pluginManager);
+    this.ctx.pluginManager.loadAll();
+
+    // Backup
+    this.ctx.setBackupManager(this.initBackupManager());
+
+    // Watcher
+    watcher.init(window, triggers, () => this.ctx.currentSettings);
+
+    // IPC Handlers
+    ipcHandlers.init({
+      mainWindow: window,
+      daemonClient: this.ctx.daemonClient,
+      agentRunning: this.ctx.agentRunning,
+      currentSettings: this.ctx.currentSettings,
+      watcher,
+      triggers,
+      usageStats: this.ctx.usageStats,
+      sessionStartTimes: this.ctx.sessionStartTimes,
+      recoveryManager: this.ctx.recoveryManager,
+      paneRestartArbiter: this.paneRestartArbiter,
+      installedDeployment: this.installedDeployment,
+      pluginManager: this.ctx.pluginManager,
+      backupManager: this.ctx.backupManager,
+    });
+
+    ipcHandlers.setupIPCHandlers({
+      loadSettings: () => this.settings.loadSettings(),
+      saveSettings: (s) => this.settings.saveSettings(s),
+      readAppStatus: () => this.settings.readAppStatus(),
+      getStartupServicesStatus: () => this.getStartupServicesStatus(),
+      getSessionId: () => this.commsSessionScopeId,
+      recordSessionStart: (id) => this.usage.recordSessionStart(id),
+      recordSessionEnd: (id) => this.usage.recordSessionEnd(id),
+      recordSessionLifecycle: (payload = {}) => this.recordSessionLifecyclePattern(payload),
+      updateIntentState: (payload = {}) => this.updateIntentStateAtomic(payload),
+      saveUsageStats: () => this.usage.saveUsageStats(),
+      broadcastClaudeState: () => this.broadcastClaudeState(),
+      logActivity: (t, p, m, d) => this.activity.logActivity(t, p, m, d),
+      getActivityLog: (f) => this.activity.getActivityLog(f),
+      clearActivityLog: () => this.activity.clearActivityLog(),
+      saveActivityLog: () => this.activity.saveActivityLog(),
+      firmwareManager: this.firmwareManager,
+      problemOrchestrator: this.problemOrchestrator,
+      getBridgeDevices: (options = {}) => this.getBridgeDevices(options),
+      getBridgeStatus: () => this.getBridgeStatus(),
+      getBridgePairingState: () => this.getBridgePairingState(),
+      initiateBridgePairing: (options = {}) => this.initiateBridgePairing(options),
+      joinBridgePairing: (payload = {}) => this.joinBridgePairing(payload),
+      startRuntimeLifecycle: (reason) => this.startRuntimeServices(reason || 'ipc-start'),
+      stopRuntimeLifecycle: (reason) => this.stopRuntimeServices(reason || 'ipc-stop'),
+      getRuntimeLifecycleState: () => this.runtimeLifecycleState,
+      installedDeployment: this.installedDeployment,
+      performFullShutdown: (reason) => this.performFullShutdown(reason || 'ipc-full-restart'),
+      getDaemonClientForPane: (paneId) => this.getDaemonClientForPane(paneId),
+      paneRestartArbiter: this.paneRestartArbiter,
+      requestPaneRestart: (paneId, info = {}) => this.requestPaneRestart(paneId, info),
+      sendAgentMessage: (target, body, metadata = {}) => {
+        const PANE_BY_ROLE = { architect: '1', builder: '2', oracle: '3' };
+        const paneId = PANE_BY_ROLE[String(target || '').toLowerCase()];
+        if (!paneId) return Promise.resolve({ ok: false, reason: `unknown_target:${target}` });
+        const senderRole = typeof metadata?.senderRole === 'string' && metadata.senderRole.trim()
+          ? metadata.senderRole.trim()
+          : 'mira-conversation';
+        return Promise.resolve(triggers.sendDirectMessage([paneId], body, senderRole, {
+          meta: {
+            ...(metadata && typeof metadata === 'object' ? metadata : {}),
+            deliverySource: metadata?.source || 'mira-conversation',
+            targetRole: String(target || '').toLowerCase(),
+          },
+        }));
+      },
+    });
+
+    ipcMain.removeHandler('get-onboarding-state');
+    ipcMain.handle('get-onboarding-state', () => {
+      const snapshot = this.readPersistedOnboardingState();
+      const onboardingPath = snapshot?.path || this.getOnboardingStatePath(this.getDefaultExternalWorkspacePath());
+      const state = snapshot?.state || null;
+      return {
+        success: true,
+        path: onboardingPath,
+        workspacePath: snapshot?.workspacePath || this.getDefaultExternalWorkspacePath(),
+        onboardingComplete: this.isOnboardingComplete(state),
+        state,
+      };
+    });
+
+    ipcMain.removeHandler('complete-onboarding');
+    ipcMain.handle('complete-onboarding', (_event, payload = {}) => {
+      try {
+        const snapshot = this.readPersistedOnboardingState();
+        const snapshotWorkspace = typeof snapshot?.workspacePath === 'string'
+          ? snapshot.workspacePath.trim()
+          : '';
+        const workspacePath = snapshotWorkspace && !this.isBundledRuntimePath(snapshotWorkspace)
+          ? snapshotWorkspace
+          : this.getDefaultExternalWorkspacePath();
+        const result = this.writeOnboardingState(payload, workspacePath);
+        return {
+          success: true,
+          state: result.state,
+          path: result.path,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err.message,
+        };
+      }
+    });
+
+    ipcMain.removeHandler('open-app-window');
+    ipcMain.handle('open-app-window', async (_event, payload = {}) => {
+      const requestedWindowKey = typeof payload === 'string'
+        ? payload
+        : (payload?.windowKey || payload?.key || 'main');
+      const openOptions = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload
+        : {};
+      return this.openAppWindow(requestedWindowKey, openOptions);
+    });
+
+    ipcMain.removeHandler('live-task-audit-sidecar:snapshot');
+    ipcMain.handle('live-task-audit-sidecar:snapshot', () => buildLiveTaskAuditSnapshot({
+      sessionId: this.commsSessionScopeId || null,
+    }));
+    ipcMain.removeHandler('spine-overlay:snapshot');
+    ipcMain.handle('spine-overlay:snapshot', () => buildSpineOverlaySnapshotAsync({
+      profileName: this.activeProfileName || getActiveProfileName(),
+      dryRun: this.ctx.currentSettings?.dryRun === true,
+    }));
+    armStateProjectionHandlersModule.registerArmStateProjectionHandlers({ ipcMain });
+
+    ipcMain.removeHandler('close-app-window');
+    ipcMain.handle('close-app-window', async (_event, payload = {}) => {
+      const requestedWindowKey = typeof payload === 'string'
+        ? payload
+        : (payload?.windowKey || payload?.key || 'main');
+      return this.closeAppWindow(requestedWindowKey);
+    });
+
+    // Pipeline
+    pipeline.init({
+      mainWindow: window,
+      sendDirectMessage: (targets, message, fromRole) => triggers.sendDirectMessage(targets, message, fromRole),
+    });
+    // Pipeline IPC handlers
+    ipcMain.removeHandler('pipeline-get-items');
+    ipcMain.handle('pipeline-get-items', (event, stageFilter) => {
+      return pipeline.getItems(stageFilter || null);
+    });
+    ipcMain.removeHandler('pipeline-get-active');
+    ipcMain.handle('pipeline-get-active', () => {
+      return pipeline.getActiveItems();
+    });
+    ipcMain.removeHandler('pipeline-mark-committed');
+    ipcMain.handle('pipeline-mark-committed', (event, itemId) => {
+      return pipeline.markCommitted(itemId);
+    });
+
+    // Shared State (P3)
+    sharedState.init({
+      watcher,
+      mainWindow: window,
+    });
+
+    // Shared State IPC handlers
+    ipcMain.removeHandler('shared-state-get');
+    ipcMain.handle('shared-state-get', () => {
+      return sharedState.getState();
+    });
+    ipcMain.removeHandler('shared-state-changelog');
+    ipcMain.handle('shared-state-changelog', (event, { paneId, since } = {}) => {
+      if (paneId) return sharedState.getChangelogForPane(paneId);
+      return sharedState.getChangesSince(since || 0);
+    });
+    ipcMain.removeHandler('shared-state-mark-seen');
+    ipcMain.handle('shared-state-mark-seen', (event, paneId) => {
+      sharedState.markPaneSeen(paneId);
+    });
+
+    // Context Compressor (P4)
+    contextCompressor.init({
+      sharedState,
+      mainWindow: window,
+      watcher,
+      isIdle: () => (Date.now() - this.lastDaemonOutputAtMs) > APP_IDLE_THRESHOLD_MS,
+    });
+
+    ipcMain.removeHandler('context-snapshot-refresh');
+    ipcMain.handle('context-snapshot-refresh', (event, paneId) => {
+      if (paneId) return contextCompressor.refresh(paneId);
+      return contextCompressor.refreshAll();
+    });
+  }
+
+  emitCommsBridgeEvent(eventType, payload = {}) {
+    if (typeof eventType !== 'string' || !eventType.startsWith('comms.')) return false;
+    this.kernelBridge.emitBridgeEvent(eventType, payload, 'system');
+    return true;
+  }
+
+  schedulePtyDataFlush() {
+    if (this.ptyDataFlushTimer) return;
+    this.ptyDataFlushTimer = setTimeout(() => {
+      this.ptyDataFlushTimer = null;
+      this.flushBufferedPtyData();
+    }, PTY_DATA_IPC_BATCH_INTERVAL_MS);
+    if (typeof this.ptyDataFlushTimer.unref === 'function') {
+      this.ptyDataFlushTimer.unref();
+    }
+  }
+
+  queuePtyDataForUi(paneId, data) {
+    const paneKey = String(paneId);
+    const chunk = String(data ?? '');
+    if (!chunk) return;
+    const current = this.pendingPtyDataByPane.get(paneKey) || '';
+    this.pendingPtyDataByPane.set(paneKey, current + chunk);
+    this.schedulePtyDataFlush();
+  }
+
+  hasOnlySquidRunInjectedKernelMeta(kernelMetas = []) {
+    if (!Array.isArray(kernelMetas) || kernelMetas.length === 0) return false;
+    return kernelMetas.every((kernelMeta) => {
+      const source = toNonEmptyString(kernelMeta?.source);
+      const meta = (kernelMeta?.meta && typeof kernelMeta.meta === 'object' && !Array.isArray(kernelMeta.meta))
+        ? kernelMeta.meta
+        : {};
+      const injectedSource = source === 'injection.js'
+        || (source && source.startsWith('squidrun-app.direct-pane-delivery'));
+      const telegramReplyTarget = meta.replyTarget === 'telegram'
+        || meta.reply_target === 'telegram'
+        || meta.channel === 'telegram'
+        || meta.originChannel === 'telegram';
+      return injectedSource && meta.replyTargetRequired === true && telegramReplyTarget;
+    });
+  }
+
+  flushBufferedPtyData(targetPaneId = null) {
+    if (this.pendingPtyDataByPane.size === 0) return;
+
+    const paneIds = targetPaneId === null
+      ? Array.from(this.pendingPtyDataByPane.keys())
+      : [String(targetPaneId)];
+
+    for (const paneId of paneIds) {
+      const buffered = this.pendingPtyDataByPane.get(paneId);
+      if (!buffered) continue;
+      this.pendingPtyDataByPane.delete(paneId);
+
+      if (this.isHiddenPaneHostModeEnabled()) {
+        this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-data-${paneId}`, buffered);
+      }
+      this.visiblePtyOutputFilter.ingest(paneId, buffered);
+      this.flushVisibleFilteredPtyData(paneId, { originalChunk: buffered });
+    }
+
+    this.refreshPtyVisibleReleaseTimer();
+  }
+
+  flushVisibleFilteredPtyData(targetPaneId = null, options = {}) {
+    const releases = this.visiblePtyOutputFilter.releaseReady(targetPaneId, {
+      ...options,
+      includeKernelMeta: true,
+    });
+    for (const entry of releases) {
+      if (!entry || !entry.text) continue;
+      const outputKind = this.hasOnlySquidRunInjectedKernelMeta(entry.kernelMetas)
+        ? 'squidrun_injected_echo'
+        : 'agent_visible_output';
+      this.inspectPaneOutputForReplyGuards(entry.paneId, entry.text, {
+        outputKind,
+        kernelMetas: entry.kernelMetas || [],
+        originalChunk: options.originalChunk || null,
+      });
+      this.sendToVisibleWindowsForPane(`pty-data-${entry.paneId}`, entry.text, entry.paneId);
+    }
+  }
+
+  refreshPtyVisibleReleaseTimer() {
+    this.clearPtyVisibleReleaseTimer();
+    const delay = this.visiblePtyOutputFilter.getNextReleaseDelayMs();
+    if (delay === null) return;
+
+    this.ptyVisibleReleaseTimer = setTimeout(() => {
+      this.ptyVisibleReleaseTimer = null;
+      this.flushVisibleFilteredPtyData();
+      this.refreshPtyVisibleReleaseTimer();
+    }, Math.max(0, delay));
+    if (typeof this.ptyVisibleReleaseTimer.unref === 'function') {
+      this.ptyVisibleReleaseTimer.unref();
+    }
+  }
+
+  handlePtyDataKernelEvent(eventData = {}) {
+    const result = this.visiblePtyOutputFilter.applyKernelEvent(eventData);
+    if (result?.paneId && result.changed) {
+      this.flushVisibleFilteredPtyData(result.paneId);
+    }
+    this.refreshPtyVisibleReleaseTimer();
+    return result;
+  }
+
+  handleArmSpawnLifecycleEvent(eventData = {}, options = {}) {
+    return armSpawnAppService.handleArmSpawnLifecycleEvent(this, eventData, options);
+  }
+
+  clearPtyDataFlushTimer() {
+    if (!this.ptyDataFlushTimer) return;
+    clearTimeout(this.ptyDataFlushTimer);
+    this.ptyDataFlushTimer = null;
+  }
+
+  clearPtyVisibleReleaseTimer() {
+    if (!this.ptyVisibleReleaseTimer) return;
+    clearTimeout(this.ptyVisibleReleaseTimer);
+    this.ptyVisibleReleaseTimer = null;
+  }
+
+  async requestDaemonTerminalSnapshot(timeoutMs = 2000) {
+    const daemonClient = this.ctx.daemonClient;
+    if (!daemonClient || typeof daemonClient.list !== 'function') return [];
+
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = null;
+
+      const cleanup = () => {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        daemonClient.off('list', handleList);
+      };
+
+      const finish = (terminals) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (Array.isArray(terminals)) {
+          resolve(terminals);
+          return;
+        }
+        resolve(daemonClient.getTerminals?.() || []);
+      };
+
+      const handleList = (terminals) => {
+        finish(terminals);
+      };
+
+      daemonClient.on('list', handleList);
+      timer = setTimeout(() => {
+        finish(null);
+      }, Math.max(250, Number(timeoutMs) || 2000));
+
+      const sent = daemonClient.list();
+      if (!sent) {
+        finish(null);
+      }
+    });
+  }
+
+  async runWakeRecovery() {
+    if (this.wakeRecoveryInFlight) {
+      this.emitCommsBridgeEvent('comms.transport.recovery.skipped', {
+        reason: 'already_in_flight',
+      });
+      return;
+    }
+
+    this.wakeRecoveryInFlight = true;
+    const startedAtMs = Date.now();
+    this.emitCommsBridgeEvent('comms.transport.recovery.started', {
+      startedAtMs,
+    });
+
+    try {
+      const supervisorResult = await this.ensureSupervisorDaemonRunning('wake-recovery');
+      if (!supervisorResult?.ok) {
+        log.warn(
+          'Supervisor',
+          `Wake recovery bootstrap failed: ${supervisorResult?.error || supervisorResult?.reason || 'unknown'}`
+        );
+      }
+
+      const daemonClient = this.ctx.daemonClient;
+      if (!daemonClient) {
+        this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
+          reason: 'daemon_client_unavailable',
+        });
+        return;
+      }
+
+      if (!daemonClient.connected) {
+        this.emitCommsBridgeEvent('comms.transport.reconnect.attempted', {
+          reason: 'post_wake',
+        });
+        const connected = await daemonClient.connect();
+        if (!connected) {
+          this.emitCommsBridgeEvent('comms.transport.reconnect.failed', {
+            reason: 'connect_failed',
+          });
+          this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
+            reason: 'connect_failed',
+          });
+          return;
+        }
+        this.emitCommsBridgeEvent('comms.transport.reconnect.succeeded', {
+          reason: 'post_wake',
+        });
+      }
+
+      const snapshotTerminals = await this.requestDaemonTerminalSnapshot(2500);
+      const terminals = this.filterTerminalsForVisibleShell(snapshotTerminals, { windowKey: 'main' });
+      for (const paneId of PANE_IDS) {
+        daemonClient.resume(String(paneId));
+      }
+
+      this.sendDaemonConnectedToAppWindows(snapshotTerminals);
+      this.primePaneHostFromTerminalSnapshot(terminals);
+
+      this.emitCommsBridgeEvent('comms.transport.recovery.completed', {
+        durationMs: Math.max(0, Date.now() - startedAtMs),
+        terminalCount: Array.isArray(terminals) ? terminals.length : 0,
+      });
+    } catch (err) {
+      this.emitCommsBridgeEvent('comms.transport.recovery.failed', {
+        reason: err.message,
+      });
+    } finally {
+      this.wakeRecoveryInFlight = false;
+    }
+  }
+
+  setupPowerMonitorListeners() {
+    if (!powerMonitor || typeof powerMonitor.on !== 'function') return;
+    if (this.powerMonitorListeners.length > 0) return;
+
+    const register = (eventName, handler) => {
+      powerMonitor.on(eventName, handler);
+      this.powerMonitorListeners.push({ eventName, handler });
+    };
+
+    register('suspend', () => {
+      const suspendedAtMs = Date.now();
+      this.lastSystemSuspendAtMs = suspendedAtMs;
+      this.emitCommsBridgeEvent('comms.system.suspend', {
+        timestamp: suspendedAtMs,
+      });
+
+      if (this.ctx.daemonClient?.connected) {
+        this.ctx.daemonClient.saveSession();
+      }
+    });
+
+    register('resume', () => {
+      const resumedAtMs = Date.now();
+      this.lastSystemResumeAtMs = resumedAtMs;
+      const sleptMs = Number.isFinite(this.lastSystemSuspendAtMs)
+        ? Math.max(0, resumedAtMs - this.lastSystemSuspendAtMs)
+        : null;
+      this.emitCommsBridgeEvent('comms.system.resume', {
+        timestamp: resumedAtMs,
+        sleptMs,
+      });
+      void this.runWakeRecovery();
+    });
+  }
+
+  setupWindowListeners(window = this.ctx.mainWindow, options = {}) {
+    const windowKey = String(options.windowKey || 'main').trim() || 'main';
+    const windowTeam = String(options.windowTeam || windowKey).trim() || windowKey;
+    const displayOnlyWindow = toBooleanFlag(options.displayOnly, false);
+    const skipStartupBundle = displayOnlyWindow || toBooleanFlag(options.skipStartupBundle, false);
+    const windowProfileName = toNonEmptyString(options.profileName) || this.activeProfileName;
+    const isPrimaryWindow = windowKey === 'main';
+    const lifecycleRoot = options.lifecycleRoot === true;
+    const shouldAutoBootWindowAgents = displayOnlyWindow || toBooleanFlag(options.autoBootAgents, true) === false
+      ? false
+      : (this.activeProfileName !== 'main'
+        || windowKey !== 'main'
+        || this.isStandaloneProfileWindow(windowKey));
+    const installedDeploymentWindow = this.isInstalledDeploymentMainWindow(windowKey, windowProfileName);
+    const standaloneWindow = this.isStandaloneProfileWindow(windowKey) || installedDeploymentWindow;
+    const lifecycleMode = this.getWindowLifecycleMode(windowKey);
+    const startupBundlePath = skipStartupBundle ? '' : this.getProfileStartupBundlePath(windowKey);
+
+    if (!window) return;
+
+    ['minimize', 'hide', 'restore', 'show'].forEach((reason) => window.on(reason, () => emitWindowVisibilityState(window, { windowKey, reason, log })));
+
+    window.on('close', (event) => {
+      if (!isPrimaryWindow) {
+        if (!this.isStandaloneProfileWindow(windowKey)) {
+          return;
+        }
+        if (this.shuttingDown || this.fullShutdownPromise) return;
+        event.preventDefault();
+        void this.performFullShutdown(`profile-window-close:${windowKey}`).catch((err) => {
+          log.error('Shutdown', `Standalone profile close flow failed for ${windowKey}: ${err.message}`);
+        });
+        return;
+      }
+      // An installed operator window owns the process lifecycle. Closing it
+      // must not strand a headless host merely because a Team Room or pane
+      // window is still registered. Development main windows retain the
+      // multi-window behavior below.
+      if (!installedDeploymentWindow && this.getOpenAppWindowCount(windowKey) > 0) {
+        return;
+      }
+      if (this.shuttingDown || this.fullShutdownPromise) return;
+      event.preventDefault();
+      void (async () => {
+        try {
+          const confirmed = await this.confirmFullShutdown(window);
+          if (!confirmed) return;
+          await this.performFullShutdown('window-close');
+        } catch (err) {
+          log.error('Shutdown', `Window-close shutdown flow failed: ${err.message}`);
+        }
+      })();
+    });
+
+    window.on('closed', () => {
+      this.handleAppWindowClosed(windowKey, window);
+    });
+
+    window.webContents.on('did-start-loading', () => {
+      log.info('Window', 'did-start-loading');
+    });
+
+    // CORONER (S463): a renderer died silently in the squid room with no
+    // trace anywhere - that is only allowed to happen once. Record the
+    // reason/exitCode + process metrics for every renderer death and
+    // unresponsive stall to a runtime file AND the main log.
+    // ACTIVATION: next app restart (window-creation code runs in main).
+    const recordWindowDeath = (kind, details = {}) => {
+      const report = {
+        at: new Date().toISOString(),
+        kind,
+        windowKey,
+        ...details,
+        appMetrics: (() => {
+          try {
+            return app.getAppMetrics().map((metric) => ({
+              type: metric.type,
+              pid: metric.pid,
+              workingSetMB: metric.memory?.workingSetSize
+                ? Math.round(metric.memory.workingSetSize / 1024)
+                : null,
+            }));
+          } catch (_) { return null; }
+        })(),
+      };
+      log.error('WindowCoroner', `${kind} (${windowKey}): ${JSON.stringify({ ...details })}`);
+      try {
+        const coronerPath = resolveCoordPath('runtime/window-coroner.jsonl', { forWrite: true });
+        fs.appendFileSync(coronerPath, `${JSON.stringify(report)}\n`);
+      } catch (err) {
+        log.warn('WindowCoroner', `Failed to persist report: ${err.message}`);
+      }
+    };
+    window.webContents.on('render-process-gone', (_event, details) => {
+      recordWindowDeath('render-process-gone', {
+        reason: details?.reason || null,
+        exitCode: details?.exitCode ?? null,
+      });
+    });
+    window.webContents.on('unresponsive', () => {
+      recordWindowDeath('unresponsive', {});
+    });
+    window.webContents.on('responsive', () => {
+      log.info('WindowCoroner', `responsive again (${windowKey})`);
+    });
+
+    window.webContents.on('dom-ready', () => {
+      log.info('Window', 'dom-ready');
+    });
+
+    window.webContents.on('did-finish-load', async () => {
+      log.info('Window', `did-finish-load${isPrimaryWindow ? '' : ` (${windowKey})`}`);
+      if (lifecycleRoot && !this.restartLaunchProbe) {
+        await this.initPostLoad();
+        this.restorePersistedSquidRoomWindow();
+      }
+      let startupBundle = null;
+      if (skipStartupBundle) {
+        startupBundle = null;
+      } else if (this.activeProfileName === 'scoped' || windowKey === 'scoped') {
+        try {
+          startupBundle = await this.injectScopedStartupBundle();
+        } catch (err) {
+          log.warn('Window', `Failed to build Scoped startup bundle: ${err.message}`);
+        }
+      } else if (this.activeProfileName !== 'main' || windowKey !== 'main') {
+        try {
+          startupBundle = await this.writeProfileStartupBundle(windowKey === 'main' ? this.activeProfileName : windowKey);
+        } catch (err) {
+          log.warn('Window', `Failed to build ${windowKey} startup bundle: ${err.message}`);
+        }
+      }
+      try {
+        window.webContents.send('window-context', {
+          windowKey,
+          windowTeam: this.activeProfileName === 'scoped' && windowKey === 'main' ? 'scoped' : windowTeam,
+          profileName: windowProfileName,
+          profileLabel: windowProfileName === 'scoped' ? 'Scoped' : this.formatWindowKeyLabel(windowProfileName),
+          roleLayout: 'standard',
+          sessionScopeId: this.getWindowSessionScopeId(windowKey),
+          startupBundlePath: skipStartupBundle ? null : (startupBundle?.bundlePath || startupBundlePath || null),
+          startupSourceFiles: startupBundle?.sourcePaths || [],
+          startupBundleReady: Boolean(startupBundle?.bundlePath && startupBundle?.text),
+          autoBootAgents: shouldAutoBootWindowAgents,
+          displayOnly: displayOnlyWindow,
+          skipStartupBundle,
+          standaloneWindow,
+          installedDeploymentWindow,
+          lifecycleMode,
+        });
+      } catch (err) {
+        log.warn('Window', `Failed to seed window context for ${windowKey}: ${err.message}`);
+      }
+      if (!isPrimaryWindow) {
+        try {
+          this.seedRendererWindowState(window, { windowKey });
+        } catch (err) {
+          log.warn('Window', `Failed to seed secondary window runtime state for ${windowKey}: ${err.message}`);
+        }
+      }
+    });
+
+    window.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      log.error(
+        'Window',
+        `did-fail-load code=${errorCode} description=${errorDescription} url=${validatedURL || 'unknown'}`
+      );
+      this.activity.logActivity('error', 'system', 'Renderer did-fail-load', {
+        errorCode,
+        errorDescription,
+        validatedURL: validatedURL || null,
+      });
+    });
+
+    window.webContents.on('preload-error', (event, preloadPath, error) => {
+      const errorMessage = error?.message || String(error || 'unknown_preload_error');
+      log.error('Window', `preload-error path=${preloadPath} message=${errorMessage}`);
+      this.activity.logActivity('error', 'system', 'Renderer preload failed', {
+        preloadPath,
+        error: errorMessage,
+      });
+    });
+
+    window.webContents.on('render-process-gone', (event, details) => {
+      log.error(
+        'Window',
+        `render-process-gone reason=${details?.reason || 'unknown'} exitCode=${details?.exitCode ?? 'unknown'}`
+      );
+      this.activity.logActivity('error', 'system', 'Renderer process terminated', {
+        reason: details?.reason || 'unknown',
+        exitCode: details?.exitCode ?? null,
+      });
+    });
+
+    window.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'Escape' && input.type === 'keyDown') {
+        window.webContents.send('global-escape-pressed');
+      }
+    });
+
+    window.webContents.on('console-message', (event, level, message) => {
+      const levelNames = ['verbose', 'info', 'warning', 'error'];
+      const entry = `[${new Date().toISOString()}] [${levelNames[level] || level}] ${message}\n`;
+      this.consoleLogWriter.write(entry);
+    });
+  }
+
+  async confirmFullShutdown(window = this.ctx.mainWindow) {
+    if (!window || window.isDestroyed()) return true;
+    const result = await dialog.showMessageBox(window, {
+      type: 'warning',
+      buttons: ['Cancel', 'Quit SquidRun'],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      title: 'Quit SquidRun',
+      message: 'Quit SquidRun?',
+      detail: SHUTDOWN_CONFIRM_MESSAGE,
+    });
+    return result.response === 1;
+  }
+
+  getSupervisorRuntimePaths() {
+    return {
+      daemonScriptPath: SUPERVISOR_DAEMON_SCRIPT,
+      pidPath: SUPERVISOR_PID_FILE,
+      statusPath: SUPERVISOR_STATUS_FILE,
+      logPath: SUPERVISOR_LOG_FILE,
+    };
+  }
+
+  readTextFileSafe(filePath, fallback = '') {
+    try {
+      return String(fs.readFileSync(filePath, 'utf8') || '');
+    } catch {
+      return fallback;
+    }
+  }
+
+  readJsonFileSafe(filePath, fallback = null) {
+    try {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      return fallback;
+    }
+  }
+
+  getPendingPaneDeliveryQueuePath() {
+    return this.pendingPaneDeliveryQueuePath;
+  }
+
+  ensurePendingPaneDeliveryQueueDir() {
+    const queuePath = this.getPendingPaneDeliveryQueuePath();
+    try {
+      fs.mkdirSync(path.dirname(queuePath), { recursive: true });
+    } catch (err) {
+      if (err?.code === 'EACCES' || err?.code === 'ENOENT') {
+        log.warn(
+          'PendingPaneDelivery',
+          `Pending delivery queue unavailable at ${queuePath}: ${err.message}`
+        );
+        return null;
+      }
+      throw err;
+    }
+    return queuePath;
+  }
+
+  buildPendingPaneDeliveryKey(entry = {}) {
+    const explicit = toNonEmptyString(entry.messageId)
+      || toNonEmptyString(entry.queueKey);
+    if (explicit) return explicit;
+    const hash = createHash('sha1');
+    hash.update(JSON.stringify({
+      paneId: toNonEmptyString(entry.paneId) || '1',
+      message: toNonEmptyString(entry.message) || '',
+      fromRole: toNonEmptyString(entry.fromRole) || '',
+      channel: toNonEmptyString(entry.channel) || '',
+      sender: toNonEmptyString(entry.sender) || '',
+    }));
+    return `pending-pane-${hash.digest('hex').slice(0, 16)}`;
+  }
+
+  normalizePendingPaneDeliveryEntry(entry = {}) {
+    const message = toNonEmptyString(entry.message);
+    const paneId = toNonEmptyString(entry.paneId) || '1';
+    if (!message || !paneId) return null;
+    const attemptCount = Number.isFinite(Number(entry.attemptCount))
+      ? Math.max(0, Math.floor(Number(entry.attemptCount)))
+      : 0;
+    return {
+      queueKey: this.buildPendingPaneDeliveryKey(entry),
+      paneId,
+      message,
+      messageId: toNonEmptyString(entry.messageId) || null,
+      fromRole: toNonEmptyString(entry.fromRole) || null,
+      channel: toNonEmptyString(entry.channel) || null,
+      sender: toNonEmptyString(entry.sender) || null,
+      createdAt: toNonEmptyString(entry.createdAt) || new Date().toISOString(),
+      lastAttemptAt: toNonEmptyString(entry.lastAttemptAt) || null,
+      lastFailureReason: toNonEmptyString(entry.lastFailureReason) || null,
+      attemptCount,
+      traceContext: (entry.traceContext && typeof entry.traceContext === 'object')
+        ? { ...entry.traceContext }
+        : null,
+      meta: (entry.meta && typeof entry.meta === 'object')
+        ? { ...entry.meta }
+        : null,
+    };
+  }
+
+  isTelegramPendingPaneDelivery(item = {}) {
+    const channel = toNonEmptyString(item.channel).toLowerCase();
+    if (channel === 'telegram') return true;
+    const messageId = toNonEmptyString(item.messageId) || toNonEmptyString(item.queueKey);
+    if (/^telegram-in-/i.test(messageId || '')) return true;
+    return /^\[Telegram from /i.test(toNonEmptyString(item.message));
+  }
+
+  getPendingPaneDeliveryWindowKey(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    return toNonEmptyString(meta.windowKey) || 'main';
+  }
+
+  getPendingPaneDeliverySessionScopeId(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    return toNonEmptyString(meta.sessionScopeId)
+      || toNonEmptyString(meta.session_id)
+      || toNonEmptyString(meta.sessionId)
+      || null;
+  }
+
+  getCurrentAppStartedAtMs() {
+    try {
+      if (!this.settings || typeof this.settings.readAppStatus !== 'function') return null;
+      const status = this.settings.readAppStatus();
+      const started = toNonEmptyString(status?.started);
+      if (!started) return null;
+      const parsed = Date.parse(started);
+      return Number.isFinite(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  getPendingPaneDeliveryTimestampMs(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    const metadataTimestamp = Number(meta.timestampMs);
+    if (Number.isFinite(metadataTimestamp) && metadataTimestamp > 0) return metadataTimestamp;
+    const createdAtMs = Date.parse(toNonEmptyString(item.createdAt));
+    return Number.isFinite(createdAtMs) ? createdAtMs : null;
+  }
+
+  getPendingPaneDeliveryFailureText(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    return [
+      item.lastFailureReason,
+      meta.failureReason,
+      meta.finalOutcome,
+      meta.errorCode,
+      meta.status,
+      meta.reason,
+    ]
+      .map((value) => toNonEmptyString(value))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+  }
+
+  isPendingPaneDeliveryVerificationUncertain(item = {}) {
+    const failureText = this.getPendingPaneDeliveryFailureText(item);
+    if (!failureText) return false;
+    return (
+      failureText.includes('accepted.unverified')
+      || failureText.includes('accepted.daemon_pty_unverified')
+      || failureText.includes('routed_unverified_timeout')
+      || failureText.includes('routed_unverified')
+      || failureText.includes('verification_failed')
+      || failureText.includes('ack_timeout')
+      || failureText.includes('write ack timeout')
+      || failureText.includes('write-ack timeout')
+      || failureText.includes('model write-ack timeout')
+      || failureText.includes('model_write_ack_timeout')
+    );
+  }
+
+  getPendingPaneDeliveryMetadataResolution(item = {}) {
+    const meta = item.meta && typeof item.meta === 'object' ? item.meta : {};
+    const message = toNonEmptyString(item.message) || '';
+    const evidenceText = [
+      message,
+      meta.fullPayloadPath,
+      meta.fullAgentMessagePath,
+      meta.fullMessagePath,
+      meta.materializedFullPayloadPath,
+      meta.handoffPath,
+      meta.handoffFile,
+      meta.reassembledPath,
+      meta.sourceRef,
+      meta.source_ref,
+      meta.via,
+      meta.source,
+      meta.routeKind,
+    ]
+      .map((value) => toNonEmptyString(value))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    const handoffEvidenceText = [
+      meta.handoffPath,
+      meta.handoffFile,
+      meta.sourceRef,
+      meta.source_ref,
+      meta.via,
+      meta.source,
+      meta.routeKind,
+    ]
+      .map((value) => toNonEmptyString(value))
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+
+    if (
+      meta.reassembled === true
+      || meta.reassembledPayload === true
+      || meta.reassembledFromChunks === true
+      || meta.payloadReassembled === true
+    ) {
+      return { reason: 'reassembled_payload_evidence' };
+    }
+    if (
+      evidenceText.includes('full-agent-messages')
+      || /^.*full msg at\s+\.squidrun[\\/]+coord[\\/]+full-agent-messages/i.test(message)
+    ) {
+      return { reason: 'materialized_full_payload_evidence' };
+    }
+    if (
+      meta.handoff === true
+      || meta.handoffMaterialized === true
+      || handoffEvidenceText.includes('auto-handoff')
+      || handoffEvidenceText.includes('.squidrun/handoffs')
+    ) {
+      return { reason: 'handoff_evidence' };
+    }
+    if (
+      meta.recipientFollowUp === true
+      || toNonEmptyString(meta.recipientFollowUpMessageId)
+      || toNonEmptyString(meta.recipientFollowUpAt)
+      || toNonEmptyString(meta.followUpMessageId)
+      || toNonEmptyString(meta.replyMessageId)
+    ) {
+      return { reason: 'recipient_follow_up_metadata' };
+    }
+    return null;
+  }
+
+  getPendingPaneDeliveryCommsJournalResolution(item = {}) {
+    const messageId = toNonEmptyString(item.messageId) || toNonEmptyString(item.queueKey);
+    if (!messageId) return null;
+    try {
+      const rows = queryCommsJournalEntries({
+        messageId,
+        order: 'desc',
+        limit: 1,
+      });
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return null;
+      const status = String(row.status || '').toLowerCase();
+      const ackStatus = String(row.ackStatus || row.ack_status || '').toLowerCase();
+      const metadata = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+      if (
+        status === 'routed'
+        || status === 'acked'
+        || metadata.deliveryAccepted === true
+        || metadata.deliveryVerified === true
+        || isWatchdogAcceptedDeliveryStatus(status)
+        || isWatchdogAcceptedDeliveryStatus(ackStatus)
+        || isWatchdogAcceptedDeliveryStatus(metadata.finalOutcome)
+        || isWatchdogAcceptedDeliveryStatus(metadata.failureReason)
+        || isWatchdogAcceptedDeliveryStatus(metadata.reason)
+        || ackStatus === 'delivered.verified'
+      ) {
+        return {
+          reason: 'comms_journal_delivery_proof',
+          messageId,
+          rowId: row.rowId ?? row.row_id ?? null,
+          status,
+          ackStatus: ackStatus || null,
+        };
+      }
+    } catch (err) {
+      log.warn('PendingPaneDelivery', `Comms journal resolution probe failed for ${messageId}: ${err.message}`);
+    }
+    return null;
+  }
+
+  getPendingPaneDeliveryRecipientFollowUpResolution(item = {}, expectedSessionScopeId = null) {
+    const targetRole = resolveCanonicalRoleForPaneId(item.paneId);
+    const itemTimestampMs = this.getPendingPaneDeliveryTimestampMs(item);
+    if (!targetRole || !Number.isFinite(itemTimestampMs)) return null;
+    try {
+      const filters = {
+        senderRole: targetRole,
+        sinceMs: itemTimestampMs + 1,
+        order: 'asc',
+        limit: 1,
+      };
+      if (expectedSessionScopeId) {
+        filters.sessionId = expectedSessionScopeId;
+      }
+      const rows = queryCommsJournalEntries(filters);
+      const row = Array.isArray(rows) ? rows[0] : null;
+      if (!row) return null;
+      return {
+        reason: 'recipient_follow_up_comms_journal',
+        targetRole,
+        rowId: row.rowId ?? row.row_id ?? null,
+        messageId: row.messageId || row.message_id || null,
+      };
+    } catch (err) {
+      log.warn('PendingPaneDelivery', `Recipient follow-up probe failed for pending delivery ${item.queueKey || item.messageId || 'unknown'}: ${err.message}`);
+    }
+    return null;
+  }
+
+  shouldDropPendingPaneDeliveryForReplay(item = {}) {
+    const isTelegramPending = this.isTelegramPendingPaneDelivery(item);
+    const windowKey = this.getPendingPaneDeliveryWindowKey(item);
+    const expectedSessionScopeId = this.getWindowSessionScopeId(windowKey);
+    const itemSessionScopeId = this.getPendingPaneDeliverySessionScopeId(item);
+    if (
+      itemSessionScopeId
+      && expectedSessionScopeId
+      && itemSessionScopeId !== expectedSessionScopeId
+    ) {
+      return {
+        drop: true,
+        reason: isTelegramPending
+          ? 'stale_telegram_pending_session_scope'
+          : 'stale_pending_session_scope',
+        expectedSessionScopeId,
+        itemSessionScopeId,
+        windowKey,
+      };
+    }
+
+    const appStartedAtMs = this.getCurrentAppStartedAtMs();
+    const itemTimestampMs = this.getPendingPaneDeliveryTimestampMs(item);
+    if (
+      !itemSessionScopeId
+      && Number.isFinite(appStartedAtMs)
+      && Number.isFinite(itemTimestampMs)
+      && itemTimestampMs < appStartedAtMs - TELEGRAM_PENDING_REPLAY_GRACE_MS
+    ) {
+      return {
+        drop: true,
+        reason: isTelegramPending
+          ? 'stale_telegram_pending_before_current_start'
+          : 'stale_pending_before_current_start',
+        appStartedAtMs,
+        itemTimestampMs,
+        windowKey,
+      };
+    }
+
+    const matchesCurrentSession = Boolean(
+      itemSessionScopeId
+      && expectedSessionScopeId
+      && itemSessionScopeId === expectedSessionScopeId
+    );
+    const appearsCurrentWithoutSession = Boolean(
+      !itemSessionScopeId
+      && Number.isFinite(appStartedAtMs)
+      && Number.isFinite(itemTimestampMs)
+      && itemTimestampMs >= appStartedAtMs - TELEGRAM_PENDING_REPLAY_GRACE_MS
+    );
+    const journalResolution = this.getPendingPaneDeliveryCommsJournalResolution(item);
+    if (journalResolution && (matchesCurrentSession || appearsCurrentWithoutSession || !itemSessionScopeId)) {
+      return {
+        drop: true,
+        resolved: true,
+        reason: 'comms_journal_pending_delivery_resolved',
+        resolutionEvidence: journalResolution,
+        windowKey,
+        itemSessionScopeId,
+        expectedSessionScopeId,
+      };
+    }
+
+    const lastFailureReason = (toNonEmptyString(item.lastFailureReason) || '').toLowerCase();
+    const verificationUncertain = this.isPendingPaneDeliveryVerificationUncertain(item);
+    const metadataResolution = this.getPendingPaneDeliveryMetadataResolution(item);
+    const recipientFollowUpResolution = verificationUncertain
+      ? this.getPendingPaneDeliveryRecipientFollowUpResolution(item, expectedSessionScopeId)
+      : null;
+    if (
+      (matchesCurrentSession || appearsCurrentWithoutSession)
+      && verificationUncertain
+      && (isTelegramPending || metadataResolution || recipientFollowUpResolution)
+    ) {
+      return {
+        drop: true,
+        resolved: true,
+        reason: isTelegramPending
+          ? 'accepted_unverified_telegram_delivery_resolved'
+          : 'accepted_unverified_pending_delivery_resolved',
+        lastFailureReason,
+        resolutionEvidence: metadataResolution || recipientFollowUpResolution || { reason: 'accepted_unverified_delivery_state' },
+        windowKey,
+        itemSessionScopeId,
+        expectedSessionScopeId,
+      };
+    }
+
+    return { drop: false };
+  }
+
+  recordPendingPaneDeliveryDrop(item = {}, decision = {}) {
+    try {
+      const quarantinePath = resolveCoordPath('runtime/pending-pane-deliveries-quarantine.jsonl', { forWrite: true });
+      fs.mkdirSync(path.dirname(quarantinePath), { recursive: true });
+      fs.appendFileSync(quarantinePath, `${JSON.stringify({
+        droppedAt: new Date().toISOString(),
+        reason: decision.reason || 'pending_delivery_dropped',
+        queueKey: item.queueKey || null,
+        messageId: item.messageId || null,
+        channel: item.channel || null,
+        paneId: item.paneId || null,
+        sender: item.sender || null,
+        createdAt: item.createdAt || null,
+        lastAttemptAt: item.lastAttemptAt || null,
+        attemptCount: item.attemptCount || 0,
+        meta: item.meta || null,
+        messagePreview: toNonEmptyString(item.message).slice(0, 240),
+      })}\n`, 'utf8');
+    } catch (err) {
+      log.warn('PendingPaneDelivery', `Failed to record dropped pending delivery ${item.queueKey || item.messageId || 'unknown'}: ${err.message}`);
+    }
+  }
+
+  readPendingPaneDeliveries() {
+    const payload = this.readJsonFileSafe(this.getPendingPaneDeliveryQueuePath(), null);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    return items
+      .map((item) => this.normalizePendingPaneDeliveryEntry(item))
+      .filter(Boolean);
+  }
+
+  writePendingPaneDeliveries(items = []) {
+    const queuePath = this.ensurePendingPaneDeliveryQueueDir();
+    if (!queuePath) {
+      return null;
+    }
+    const normalizedItems = Array.isArray(items)
+      ? items.map((item) => this.normalizePendingPaneDeliveryEntry(item)).filter(Boolean)
+      : [];
+    fs.writeFileSync(queuePath, JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      count: normalizedItems.length,
+      items: normalizedItems,
+    }, null, 2));
+    return normalizedItems;
+  }
+
+  queuePendingPaneDelivery(entry = {}) {
+    const normalized = this.normalizePendingPaneDeliveryEntry(entry);
+    if (!normalized) {
+      return { ok: false, reason: 'invalid_pending_delivery_entry' };
+    }
+    const items = this.readPendingPaneDeliveries();
+    const existingIndex = items.findIndex((item) => item.queueKey === normalized.queueKey);
+    if (existingIndex >= 0) {
+      items[existingIndex] = {
+        ...items[existingIndex],
+        ...normalized,
+        attemptCount: Math.max(items[existingIndex].attemptCount || 0, normalized.attemptCount || 0),
+      };
+    } else {
+      items.push(normalized);
+    }
+    const persisted = this.writePendingPaneDeliveries(items);
+    if (!persisted) {
+      return { ok: false, reason: 'pending_delivery_queue_unavailable', queued: false, entry: normalized };
+    }
+    return { ok: true, queued: true, entry: normalized, count: items.length };
+  }
+
+  async deliverPaneMessageReliably({
+    paneId = '1',
+    message = '',
+    fromRole = null,
+    traceContext = null,
+    meta = null,
+    queueOnAcceptedUnverified = false,
+    queueOnHardFailure = true,
+    messageId = null,
+    channel = null,
+    sender = null,
+    logLabel = 'PaneDelivery',
+  } = {}) {
+    const normalizedMessage = toNonEmptyString(message);
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    if (!normalizedMessage) {
+      return { accepted: false, queued: false, verified: false, status: 'invalid_message' };
+    }
+
+    const directPtyResult = await this.deliverPaneMessageViaDaemonPty({
+      paneId: normalizedPaneId,
+      message: normalizedMessage,
+      traceContext,
+      messageId,
+      meta,
+    });
+    const directStatus = toNonEmptyString(directPtyResult?.status).toLowerCase();
+    const directAccepted = (
+      directPtyResult?.accepted === true
+      || directPtyResult?.queued === true
+      || directPtyResult?.ok === true
+    ) && !directStatus.includes('failed')
+      && !directStatus.startsWith('skipped.');
+    if (directPtyResult?.verified === true || directAccepted) {
+      return directPtyResult;
+    }
+
+    const result = await triggers.sendDirectMessage(
+      [String(normalizedPaneId)],
+      normalizedMessage,
+      fromRole,
+      { traceContext, awaitDelivery: true, meta }
+    );
+
+    const accepted = result?.accepted === true || result?.queued === true || result?.ok === true;
+    const verified = result?.verified === true;
+    const shouldQueue = verified
+      ? false
+      : ((queueOnAcceptedUnverified && accepted) || (queueOnHardFailure && !accepted));
+
+    if (!shouldQueue) {
+      return result;
+    }
+
+    const failureReason = toNonEmptyString(result?.status)
+      || toNonEmptyString(result?.error)
+      || toNonEmptyString(result?.reason)
+      || toNonEmptyString(result?.details?.failureReason)
+      || 'delivery_unverified';
+
+    const queued = this.queuePendingPaneDelivery({
+      paneId: normalizedPaneId,
+      message: normalizedMessage,
+      messageId,
+      fromRole,
+      channel,
+      sender,
+      traceContext,
+      meta,
+      lastAttemptAt: new Date().toISOString(),
+      lastFailureReason: failureReason,
+      attemptCount: 1,
+    });
+
+    if (queued?.ok) {
+      log.warn(logLabel, `Queued pane ${normalizedPaneId} delivery for replay (${failureReason})`);
+    }
+
+    return {
+      ...result,
+      pendingQueued: queued?.ok === true,
+      pendingQueueKey: queued?.entry?.queueKey || null,
+      pendingFailureReason: failureReason,
+    };
+  }
+
+  async deliverPaneMessageViaDaemonPty({
+    paneId = '1',
+    message = '',
+    traceContext = null,
+    messageId = null,
+    meta = null,
+  } = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    let text = String(message || '');
+    if (!text.trim()) {
+      return { ok: false, accepted: false, queued: false, verified: false, status: 'invalid_message' };
+    }
+
+    const daemonClient = this.ctx.daemonClient;
+    if (!daemonClient || daemonClient.connected !== true || typeof daemonClient.write !== 'function') {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_not_connected',
+        mode: 'daemon-pty',
+        paneId: normalizedPaneId,
+      };
+    }
+
+    const traceId = toNonEmptyString(traceContext?.traceId)
+      || toNonEmptyString(traceContext?.correlationId)
+      || toNonEmptyString(messageId)
+      || null;
+    text = appendReceiptMarkerToPrompt(text, {
+      deliveryId: traceId || messageId,
+      messageId: messageId || traceId,
+    });
+    const kernelMeta = {
+      eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+      correlationId: traceId || undefined,
+      traceId: traceId || undefined,
+      parentEventId: toNonEmptyString(traceContext?.parentEventId) || undefined,
+      causationId: toNonEmptyString(traceContext?.causationId) || undefined,
+      source: 'squidrun-app.direct-pane-delivery',
+      meta: (meta && typeof meta === 'object' && !Array.isArray(meta)) ? meta : undefined,
+    };
+
+    appendBusTraceEvent({
+      eventType: 'pane_direct_pty_write_scheduled',
+      messageId: messageId || traceId || null,
+      deliveryId: null,
+      paneId: normalizedPaneId,
+      payloadBytes: getUtf8ByteLength(text),
+      payloadFingerprint: createPayloadFingerprint(text),
+      mode: 'daemon-pty',
+    });
+
+    try {
+      const payloadBytes = getUtf8ByteLength(text);
+      if (payloadBytes >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+        // S464 top-priority fix: this refusal used to be a SILENT DROP - it
+        // ate Operator's own Telegram messages twice (telegram-in-700100031,
+        // telegram-msg-700100030). The refusal of the unsafe direct path is
+        // correct; dropping the payload is not. Fall back to the proven
+        // materialize-to-file + short-pane-pointer contract the long
+        // hm-send path already uses: the pointer is always under the chunk
+        // threshold, so the delivery succeeds and nothing is ever eaten.
+        const paneRuntime = this.isCodexPaneCommand(normalizedPaneId) ? 'codex' : 'non-codex';
+        const materialized = materializeOversizedPanePayload(text, {
+          messageId: messageId || traceId || null,
+          paneId: normalizedPaneId,
+        });
+        if (materialized && getUtf8ByteLength(materialized.pointerText) < DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
+          appendBusTraceEvent({
+            eventType: 'pane_direct_pty_write_materialized',
+            messageId: messageId || traceId || null,
+            deliveryId: null,
+            paneId: normalizedPaneId,
+            payloadBytes,
+            payloadFingerprint: createPayloadFingerprint(text),
+            success: true,
+            verified: false,
+            status: 'materialized.pointer_fallback',
+            mode: 'daemon-pty',
+            paneRuntime,
+            reason: 'oversized_payload_materialized_to_file',
+          });
+          // v1.1 (S466, Operator found pointers sitting UNSUBMITTED in all four
+          // panes for 8 hours): v1.0 wrote the pointer and RETURNED, skipping
+          // the write -> settle -> Enter sequence below that every normal
+          // payload gets. The pointer now REPLACES the text and falls through
+          // to the exact same submit path - one submit mechanism, no copies.
+          // v1.2 (nervous-system remodel): the pointer carries its OWN
+          // receipt marker - v1.1's pointer only ever showed receipt
+          // fragments by TAIL-excerpt luck, so the hook could never record
+          // a receipt for it and verification was structurally impossible.
+          text = appendReceiptMarkerToPrompt(materialized.pointerText, {
+            deliveryId: traceId || messageId,
+            messageId: messageId || traceId,
+          });
+          // Pointer and normal payloads share the one verifier scheduled
+          // after the actual Enter below. The retired pointer-only verifier
+          // raced that path, pressed Enter from missing proof alone, and
+          // emitted false stuck-pane alarms for healthy Codex panes.
+        } else {
+        // Materialization itself failed - the old skip, but LOUD: this is a
+        // user-payload loss and must never again pass silently.
+        log.error('PaneDelivery', `OVERSIZED PAYLOAD DROPPED for pane ${normalizedPaneId} (${payloadBytes} bytes, ${messageId || traceId || 'no-id'}) - materialize fallback failed`);
+        appendBusTraceEvent({
+          eventType: 'pane_direct_pty_write_skipped',
+          messageId: messageId || traceId || null,
+          deliveryId: null,
+          paneId: normalizedPaneId,
+          payloadBytes,
+          payloadFingerprint: createPayloadFingerprint(text),
+          success: false,
+          verified: false,
+          status: 'skipped.chunked_payload',
+          mode: 'daemon-pty',
+          paneRuntime,
+          reason: 'chunked_payload_requires_verified_inject_path',
+        });
+        return {
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'skipped.chunked_payload',
+          mode: 'daemon-pty',
+          paneId: normalizedPaneId,
+          paneRuntime,
+        };
+        }
+      }
+
+      const acceptedText = daemonClient.write(normalizedPaneId, text, kernelMeta);
+      if (!acceptedText) {
+        return {
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'daemon_write_failed',
+          mode: 'daemon-pty',
+          paneId: normalizedPaneId,
+        };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      if (this.isCodexPaneCommand(normalizedPaneId)) {
+        const acceptedPasteEnd = daemonClient.write(normalizedPaneId, '\u001b[201~', {
+          ...kernelMeta,
+          eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          parentEventId: kernelMeta.eventId,
+          causationId: kernelMeta.eventId,
+          source: 'squidrun-app.direct-pane-delivery.codex-paste-end',
+        });
+        if (!acceptedPasteEnd) {
+          return {
+            ok: false,
+            accepted: true,
+            queued: false,
+            verified: false,
+            status: 'daemon_paste_end_failed',
+            mode: 'daemon-pty',
+            paneId: normalizedPaneId,
+          };
+        }
+      }
+
+      const acceptedEnter = daemonClient.write(normalizedPaneId, '\r', {
+        ...kernelMeta,
+        eventId: `${normalizedPaneId}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        parentEventId: kernelMeta.eventId,
+        causationId: kernelMeta.eventId,
+      });
+      if (!acceptedEnter) {
+        return {
+          ok: false,
+          accepted: true,
+          queued: false,
+          verified: false,
+          status: 'daemon_enter_failed',
+          mode: 'daemon-pty',
+          paneId: normalizedPaneId,
+        };
+      }
+
+      appendBusTraceEvent({
+        eventType: 'pane_direct_pty_write_completed',
+        messageId: messageId || traceId || null,
+        deliveryId: null,
+        paneId: normalizedPaneId,
+        payloadBytes: getUtf8ByteLength(text),
+        payloadFingerprint: createPayloadFingerprint(text),
+        success: true,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+      });
+
+      // Ask for exact prompt proof when the runtime can produce it. If it
+      // cannot, later pane activity may disprove "stuck" but is never
+      // promoted into an exact-message receipt. Missing proof never presses
+      // Enter or emits a false failure verdict.
+      scheduleReceiptVerifiedSubmit({
+        receiptId: messageId || traceId || null,
+        paneId: normalizedPaneId,
+        paneRuntime: this.isCodexPaneCommand(normalizedPaneId) ? 'codex' : 'non-codex',
+        daemonClient,
+      });
+
+      return {
+        ok: true,
+        accepted: true,
+        queued: false,
+        verified: false,
+        status: 'accepted.daemon_pty_unverified',
+        mode: 'daemon-pty',
+        paneId: normalizedPaneId,
+        receiptPending: Boolean(messageId || traceId),
+      };
+    } catch (err) {
+      appendBusTraceEvent({
+        eventType: 'pane_direct_pty_write_failed',
+        messageId: messageId || traceId || null,
+        deliveryId: null,
+        paneId: normalizedPaneId,
+        success: false,
+        verified: false,
+        status: 'daemon_write_failed',
+        reason: err?.message || String(err || 'daemon_write_failed'),
+        mode: 'daemon-pty',
+      });
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'daemon_write_failed',
+        error: err?.message || String(err || 'daemon_write_failed'),
+        mode: 'daemon-pty',
+        paneId: normalizedPaneId,
+      };
+    }
+  }
+
+  async flushPendingPaneDeliveries({ paneId = null, reason = 'manual-replay' } = {}) {
+    const normalizedPaneId = paneId === null || paneId === undefined ? null : String(paneId).trim();
+    const run = async () => {
+      const items = this.readPendingPaneDeliveries();
+      if (!items.length) {
+        return {
+          ok: true,
+          deliveredCount: 0,
+          droppedCount: 0,
+          resolvedCount: 0,
+          remainingCount: 0,
+          reason,
+        };
+      }
+
+      let deliveredCount = 0;
+      let droppedCount = 0;
+      let resolvedCount = 0;
+      const remaining = [];
+      const MAX_PENDING_DELIVERY_RETRIES = 5;
+      for (const item of items) {
+        if (normalizedPaneId && item.paneId !== normalizedPaneId) {
+          remaining.push(item);
+          continue;
+        }
+        const dropDecision = this.shouldDropPendingPaneDeliveryForReplay(item);
+        if (dropDecision.drop) {
+          if (dropDecision.resolved) {
+            resolvedCount += 1;
+          } else {
+            droppedCount += 1;
+          }
+          this.recordPendingPaneDeliveryDrop(item, dropDecision);
+          const logMethod = dropDecision.resolved ? 'info' : 'warn';
+          const channelLabel = this.isTelegramPendingPaneDelivery(item) ? 'Telegram ' : '';
+          log[logMethod](
+            'PendingPaneDelivery',
+            `${dropDecision.resolved ? 'Resolved' : 'Dropping stale'} pending ${channelLabel}delivery ${item.queueKey || item.messageId || 'unknown'} (${dropDecision.reason || 'stale_pending_delivery'})`
+          );
+          continue;
+        }
+        if ((item.attemptCount || 0) >= MAX_PENDING_DELIVERY_RETRIES) {
+          log.warn('PendingPaneDelivery', `Dropping message after ${MAX_PENDING_DELIVERY_RETRIES} retries (last: ${item.lastFailureReason || 'unknown'})`);
+          continue;
+        }
+        const result = await triggers.sendDirectMessage(
+          [String(item.paneId)],
+          item.message,
+          item.fromRole || null,
+          { traceContext: item.traceContext || null, awaitDelivery: true, meta: item.meta || null }
+        );
+        if (result?.verified === true || isTerminalAcceptedDeliveryResult(result)) {
+          deliveredCount += 1;
+          continue;
+        }
+        remaining.push({
+          ...item,
+          attemptCount: (item.attemptCount || 0) + 1,
+          lastAttemptAt: new Date().toISOString(),
+          lastFailureReason: toNonEmptyString(result?.status)
+            || toNonEmptyString(result?.error)
+            || toNonEmptyString(result?.reason)
+            || toNonEmptyString(result?.details?.failureReason)
+            || 'delivery_unverified',
+        });
+      }
+
+      this.writePendingPaneDeliveries(remaining);
+      if (deliveredCount > 0) {
+        log.info('PendingPaneDelivery', `Replayed ${deliveredCount} queued delivery(s) (${reason})`);
+      }
+      if (droppedCount > 0) {
+        log.warn('PendingPaneDelivery', `Dropped ${droppedCount} stale queued delivery(s) (${reason})`);
+      }
+      if (resolvedCount > 0) {
+        log.info('PendingPaneDelivery', `Resolved ${resolvedCount} accepted/unverified pending delivery state(s) without replay (${reason})`);
+      }
+      return {
+        ok: true,
+        deliveredCount,
+        droppedCount,
+        resolvedCount,
+        remainingCount: remaining.length,
+        reason,
+      };
+    };
+
+    const replayPromise = this.pendingPaneDeliveryReplayPromise.then(run, run);
+    this.pendingPaneDeliveryReplayPromise = replayPromise.then(() => undefined, () => undefined);
+    return replayPromise;
+  }
+
+  parseSupervisorPidPayload(rawValue = '') {
+    const raw = String(rawValue || '').trim();
+    if (!raw) {
+      return { pid: null, payload: null };
+    }
+
+    try {
+      const payload = JSON.parse(raw);
+      return {
+        pid: asPositiveInt(payload?.pid, null),
+        payload,
+      };
+    } catch {
+      return {
+        pid: asPositiveInt(raw, null),
+        payload: null,
+      };
+    }
+  }
+
+  isProcessAlive(pid) {
+    const numeric = asPositiveInt(pid, null);
+    if (!numeric) return false;
+    try {
+      process.kill(numeric, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  getSupervisorStatusFreshnessWindowMs(status = {}) {
+    const pollMs = asPositiveInt(
+      status?.pollMs,
+      Number.parseInt(process.env.SQUIDRUN_SUPERVISOR_POLL_MS || '4000', 10) || 4000
+    );
+    return Math.max(SUPERVISOR_STATUS_STALE_MIN_MS, pollMs * SUPERVISOR_STATUS_STALE_MULTIPLIER);
+  }
+
+  readSupervisorRuntimeSnapshot(options = {}) {
+    const nowMs = Number.isFinite(Number(options.nowMs)) ? Math.floor(Number(options.nowMs)) : Date.now();
+    const runtimePaths = this.getSupervisorRuntimePaths();
+    const daemonScriptExists = fs.existsSync(runtimePaths.daemonScriptPath);
+    const pidFilePresent = fs.existsSync(runtimePaths.pidPath);
+    const statusFilePresent = fs.existsSync(runtimePaths.statusPath);
+    const pidInfo = this.parseSupervisorPidPayload(this.readTextFileSafe(runtimePaths.pidPath, ''));
+    const status = this.readJsonFileSafe(runtimePaths.statusPath, null);
+    const pid = asPositiveInt(pidInfo.pid, null);
+    const pidAlive = this.isProcessAlive(pid);
+    const heartbeatAtMs = Number.isFinite(Number(status?.heartbeatAtMs))
+      ? Math.floor(Number(status.heartbeatAtMs))
+      : null;
+    const freshnessWindowMs = this.getSupervisorStatusFreshnessWindowMs(status || {});
+    const heartbeatAgeMs = heartbeatAtMs !== null ? Math.max(0, nowMs - heartbeatAtMs) : null;
+    const heartbeatFresh = heartbeatAgeMs !== null ? heartbeatAgeMs <= freshnessWindowMs : false;
+    const state = typeof status?.state === 'string' ? status.state.trim().toLowerCase() : null;
+    const staleReasons = [];
+
+    if (pid && !pidAlive) {
+      staleReasons.push('pid_dead');
+    }
+    if (state === 'stopped') {
+      staleReasons.push('status_stopped');
+    }
+    if (statusFilePresent && heartbeatAtMs !== null && !heartbeatFresh) {
+      staleReasons.push('heartbeat_stale');
+    }
+    if (statusFilePresent && heartbeatAtMs === null) {
+      staleReasons.push('missing_heartbeat');
+    }
+
+    const healthy = pidAlive
+      && (state === null || state !== 'stopped')
+      && (!statusFilePresent || heartbeatFresh);
+
+    return {
+      ...runtimePaths,
+      daemonScriptExists,
+      pidFilePresent,
+      statusFilePresent,
+      pid,
+      pidAlive,
+      status,
+      state,
+      heartbeatAtMs,
+      heartbeatAgeMs,
+      freshnessWindowMs,
+      heartbeatFresh,
+      healthy,
+      stale: staleReasons.length > 0,
+      staleReasons,
+    };
+  }
+
+  async getStartupServicesStatus() {
+    const appStatus = (typeof this.settings?.readAppStatus === 'function')
+      ? (this.settings.readAppStatus() || null)
+      : null;
+    const supervisor = this.readSupervisorRuntimeSnapshot();
+    let memory = {
+      ok: false,
+      state: 'unknown',
+      available: false,
+      status: null,
+      error: null,
+    };
+
+    try {
+      const ingestStatus = await teamMemory.executeTeamMemoryOperation('get-memory-ingest-status', {
+        nowMs: Date.now(),
+      }, {
+        source: 'startup-services-status',
+      });
+      const normalizedStatus = ingestStatus && typeof ingestStatus === 'object'
+        ? ingestStatus
+        : null;
+      memory = {
+        ok: Boolean(normalizedStatus && normalizedStatus.ok !== false),
+        state: String(
+          normalizedStatus?.state
+          || normalizedStatus?.status?.state
+          || normalizedStatus?.runtimeState
+          || 'ready'
+        ),
+        available: normalizedStatus?.status?.available !== false,
+        status: normalizedStatus?.status || null,
+        error: normalizedStatus?.error || null,
+      };
+    } catch (err) {
+      memory = {
+        ok: false,
+        state: 'error',
+        available: false,
+        status: null,
+        error: err.message,
+      };
+    }
+
+    return {
+      startedAt: appStatus?.started || null,
+      lastUpdated: appStatus?.lastUpdated || null,
+      daemon: {
+        connected: this.ctx?.daemonClient?.connected === true,
+        startupConnected: this.daemonConnectedForStartup === true,
+        timeoutTriggered: this.daemonTimeoutTriggered === true,
+      },
+      supervisor: {
+        healthy: supervisor.healthy === true,
+        pid: supervisor.pid || null,
+        pidAlive: supervisor.pidAlive === true,
+        staleReasons: supervisor.staleReasons || [],
+        heartbeatAtMs: supervisor.heartbeatAtMs || null,
+        heartbeatAgeMs: supervisor.heartbeatAgeMs || null,
+        state: supervisor.state || null,
+      },
+      websocket: this.buildWebSocketStatusPatch(),
+      paneHost: appStatus?.paneHost || {
+        hiddenModeEnabled: this.isHiddenPaneHostModeEnabled(),
+        degraded: this.paneHostMissingPanes.size > 0,
+        missingPanes: Array.from(this.paneHostMissingPanes).sort(),
+        readyPanes: Array.from(this.paneHostReady).sort(),
+        lastErrorReason: this.paneHostLastErrorReason,
+        lastErrorAt: this.paneHostLastErrorAt,
+      },
+      memory,
+      capabilities: {
+        loaded: Boolean(this.lastSystemCapabilities),
+        selectedModel: this.lastSystemCapabilities?.selectedModel || null,
+      },
+    };
+  }
+
+  removeFileIfPresent(filePath, context = 'runtime file') {
+    if (!filePath || !fs.existsSync(filePath)) return false;
+    try {
+      fs.unlinkSync(filePath);
+      return true;
+    } catch (err) {
+      log.warn('Supervisor', `Failed to remove ${context} ${filePath}: ${err.message}`);
+      return false;
+    }
+  }
+
+  cleanupStaleSupervisorRuntime(snapshot, reason = 'unknown') {
+    const runtimeSnapshot = snapshot || this.readSupervisorRuntimeSnapshot();
+    const cleaned = {
+      pidFileRemoved: false,
+      statusFileRemoved: false,
+      processKilled: false,
+    };
+
+    if (runtimeSnapshot.pidAlive && runtimeSnapshot.pid) {
+      try {
+        process.kill(runtimeSnapshot.pid, 'SIGTERM');
+        cleaned.processKilled = true;
+      } catch (err) {
+        log.warn(
+          'Supervisor',
+          `Failed to terminate stale supervisor pid ${runtimeSnapshot.pid} (${reason}): ${err.message}`
+        );
+      }
+    }
+
+    cleaned.pidFileRemoved = this.removeFileIfPresent(runtimeSnapshot.pidPath, 'supervisor pid file');
+    cleaned.statusFileRemoved = this.removeFileIfPresent(
+      runtimeSnapshot.statusPath,
+      'supervisor status file'
+    );
+    return cleaned;
+  }
+
+  spawnSupervisorDaemon(reason = 'app-init') {
+    const runtimePaths = this.getSupervisorRuntimePaths();
+    if (!fs.existsSync(runtimePaths.daemonScriptPath)) {
+      return { ok: false, reason: 'missing_supervisor_daemon_script' };
+    }
+
+    try {
+      const { executable, env } = resolveSupervisorLaunchExecutable(runtimePaths.daemonScriptPath);
+      const child = spawn(
+        executable,
+        [
+          runtimePaths.daemonScriptPath,
+          '--pid-path',
+          runtimePaths.pidPath,
+          '--status-path',
+          runtimePaths.statusPath,
+          '--log-path',
+          runtimePaths.logPath,
+        ],
+        {
+          cwd: getProjectRoot(),
+          env,
+          detached: true,
+          windowsHide: true,
+          stdio: 'ignore',
+        }
+      );
+      if (child && typeof child.unref === 'function') {
+        child.unref();
+      }
+      log.info(
+        'Supervisor',
+        `Spawned detached supervisor daemon via ${executable} (pid=${child?.pid || 'unknown'}, reason=${reason})`
+      );
+      return {
+        ok: true,
+        spawned: true,
+        pid: asPositiveInt(child?.pid, null),
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'spawn_failed',
+        error: err.message,
+      };
+    }
+  }
+
+  async ensureSupervisorDaemonRunning(reason = 'app-init') {
+    if (this.supervisorBootstrapPromise) {
+      return this.supervisorBootstrapPromise;
+    }
+
+    this.supervisorBootstrapPromise = (async () => {
+      let snapshot = this.readSupervisorRuntimeSnapshot();
+      if (!snapshot.daemonScriptExists) {
+        return { ok: false, reason: 'missing_supervisor_daemon_script', snapshot };
+      }
+
+      if (snapshot.healthy) {
+        return {
+          ok: true,
+          alreadyRunning: true,
+          pid: snapshot.pid,
+          snapshot,
+        };
+      }
+
+      if (snapshot.stale) {
+        log.warn(
+          'Supervisor',
+          `Found stale supervisor runtime (${snapshot.staleReasons.join(', ') || 'unknown'}); cleaning up before restart`
+        );
+        const cleaned = this.cleanupStaleSupervisorRuntime(snapshot, reason);
+        snapshot = this.readSupervisorRuntimeSnapshot();
+        if (snapshot.pidAlive) {
+          return {
+            ok: false,
+            reason: 'stale_supervisor_still_running',
+            snapshot,
+            cleaned,
+          };
+        }
+        return {
+          ...this.spawnSupervisorDaemon(reason),
+          cleaned,
+          snapshot,
+        };
+      }
+
+      if (snapshot.pidAlive) {
+        log.warn(
+          'Supervisor',
+          `Supervisor pid ${snapshot.pid} is alive but status is incomplete; leaving existing process in place`
+        );
+        return {
+          ok: true,
+          alreadyRunning: true,
+          partial: true,
+          pid: snapshot.pid,
+          snapshot,
+        };
+      }
+
+      return this.spawnSupervisorDaemon(reason);
+    })();
+
+    try {
+      return await this.supervisorBootstrapPromise;
+    } finally {
+      this.supervisorBootstrapPromise = null;
+    }
+  }
+
+  forceKillDaemonFromPidFile() {
+    if (!fs.existsSync(DAEMON_PID_FILE)) {
+      return false;
+    }
+
+    const pidRaw = String(fs.readFileSync(DAEMON_PID_FILE, 'utf-8') || '').trim();
+    if (!pidRaw) {
+      return false;
+    }
+
+    try {
+      if (process.platform === 'win32') {
+        const child = spawn('taskkill', ['/pid', pidRaw, '/f', '/t'], {
+          shell: true,
+          detached: true,
+          stdio: 'ignore',
+        });
+        if (child && typeof child.unref === 'function') {
+          child.unref();
+        }
+      } else {
+        const pid = Number.parseInt(pidRaw, 10);
+        if (Number.isInteger(pid) && pid > 0) {
+          process.kill(pid, 'SIGTERM');
+        }
+      }
+    } catch (err) {
+      log.warn('Shutdown', `Failed to kill daemon from pid file: ${err.message}`);
+    }
+
+    try {
+      fs.unlinkSync(DAEMON_PID_FILE);
+    } catch (err) {
+      log.warn('Shutdown', `Failed to remove daemon pid file: ${err.message}`);
+    }
+    return true;
+  }
+
+  async stopSupervisorFromPidFile(options = {}) {
+    const waitMs = Math.max(250, Number(options.waitMs) || 4000);
+    const pollMs = Math.max(50, Number(options.pollMs) || 100);
+    const pidInfo = this.parseSupervisorPidPayload(this.readTextFileSafe(SUPERVISOR_PID_FILE, ''));
+    const pid = asPositiveInt(pidInfo.pid, null);
+    if (!pid) {
+      return { ok: true, skipped: true, reason: 'missing_supervisor_pid' };
+    }
+
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'signal_failed',
+        pid,
+        error: err.message,
+      };
+    }
+
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      const pidAlive = this.isProcessAlive(pid);
+      const pidFilePresent = fs.existsSync(SUPERVISOR_PID_FILE);
+      if (!pidAlive && !pidFilePresent) {
+        return {
+          ok: true,
+          pid,
+          signal: 'SIGTERM',
+          graceful: true,
+        };
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+
+    const runtimeSnapshot = this.readSupervisorRuntimeSnapshot();
+    const cleaned = this.cleanupStaleSupervisorRuntime(runtimeSnapshot, 'full-shutdown');
+    return {
+      ok: true,
+      pid,
+      signal: 'SIGTERM',
+      graceful: false,
+      cleaned,
+    };
+  }
+
+  async performFullShutdown(reason = 'user-request') {
+    if (this.fullShutdownPromise) {
+      return this.fullShutdownPromise;
+    }
+
+    this.fullShutdownPromise = (async () => {
+      log.info('Shutdown', `Initiating full shutdown (${reason})`);
+      this.clearAllAgentResponseWatchdogs();
+
+      // QUIESCE INBOUND DELIVERY FIRST. The daemon shutdown and force-kill below
+      // used to run before `await this.shutdown()`, where drain disposal lived —
+      // so an in-flight pane delivery could have its daemon killed mid-flight.
+      // Dispose is idempotent, so shutdown() re-calling it is harmless.
+      //
+      // FAIL CLOSED on a quiesce failure. Proceeding would kill the daemon and
+      // close journals underneath a delivery we could not settle — the message
+      // ends up neither delivered nor durably held, which is the one state
+      // nothing downstream can reason about. A live process someone can inspect
+      // beats a silent loss during shutdown.
+      const quiesced = await this.quiesceTelegramIngressDrain();
+      if (quiesced && quiesced.ok === false) {
+        log.error(
+          'Shutdown',
+          `Aborting full shutdown: inbound drain did not quiesce (${quiesced.reason || 'unknown'})`
+        );
+        // Do NOT clear fullShutdownPromise here: the outer finally owns that
+        // latch. Clearing it inside would let retry #2 start, then call #1's
+        // finally would erase retry #2's latch and a third shutdown could run
+        // concurrently. Do NOT touch shuttingDown either — this method did not
+        // set it before quiesce, and overwriting pre-existing lifecycle state
+        // is not ours to do.
+        return {
+          ok: false,
+          success: false,
+          aborted: true,
+          stage: 'telegram_drain_quiesce',
+          reason: quiesced.reason || 'quiesce_failed',
+        };
+      }
+
+      // STOP THE WATCH BEFORE THE NOTICE. A tick that fires during teardown
+      // would restart the very poller we are about to tear down, and the
+      // replacement would outlive us. Quiesce failure returns above, so this
+      // only runs when teardown is genuinely proceeding.
+      await this.stopTelegramFreshnessWatch();
+
+      // BEST EFFORT, but AWAITED and ordered: the poller is still alive here,
+      // and it will not be after daemon shutdown. Telling Operator his messages
+      // will wait is only honest while we can still send it.
+      //
+      // A failure or a throw is logged and carried on with — a notice that
+      // cannot be sent must never trap the app open. Quiesce failure aborts
+      // above, so nothing is sent when teardown is not actually happening.
+      try {
+        const notice = await this.sendQuitTelegramNotice(reason);
+        if (notice && notice.ok !== true && !notice.skipped) {
+          log.warn('Shutdown', `Quit Telegram notice not delivered (${notice.reason || 'unknown'})`);
+        }
+      } catch (err) {
+        // Guarded at the CALL SITE too. The method's own catch cannot help if
+        // the method itself fails, and a courtesy message must never trap the
+        // app open.
+        log.warn('Shutdown', `Quit Telegram notice failed: ${err.message}`);
+      }
+
+      if (this.ctx.daemonClient) {
+        try {
+          this.ctx.daemonClient.shutdown();
+          log.info('Shutdown', 'Sent shutdown to daemon');
+        } catch (err) {
+          log.warn('Shutdown', `Failed requesting daemon shutdown: ${err.message}`);
+        }
+      }
+
+      this.forceKillDaemonFromPidFile();
+
+      try {
+        await this.shutdown();
+      } catch (err) {
+        log.warn('Shutdown', `App cleanup reported an error: ${err.message}`);
+      }
+
+      const supervisorStopResult = await this.stopSupervisorFromPidFile();
+      if (supervisorStopResult?.ok === false && supervisorStopResult?.skipped !== true) {
+        log.warn(
+          'Shutdown',
+          `Supervisor stop reported ${supervisorStopResult.reason || 'unknown'}`
+          + `${supervisorStopResult.error ? `: ${supervisorStopResult.error}` : ''}`
+        );
+      }
+
+      app.exit(0);
+      return { success: true, supervisorStopResult };
+    })();
+
+    try {
+      return await this.fullShutdownPromise;
+    } finally {
+      this.fullShutdownPromise = null;
+    }
+  }
+
+  transitionRuntimeLifecycle(nextState, reason = 'unspecified') {
+    const currentState = this.runtimeLifecycleState;
+    if (currentState === nextState) return true;
+    const allowed = ALLOWED_RUNTIME_LIFECYCLE_TRANSITIONS[currentState];
+    if (!allowed || !allowed.has(nextState)) {
+      log.warn(
+        'RuntimeLifecycle',
+        `Illegal transition ${currentState} -> ${nextState} (${reason})`
+      );
+      return false;
+    }
+    this.runtimeLifecycleState = nextState;
+    log.info('RuntimeLifecycle', `Transition ${currentState} -> ${nextState} (${reason})`);
+    return true;
+  }
+
+  queueRuntimeLifecycleTask(taskName, taskFn) {
+    const run = async () => taskFn(taskName);
+    this.runtimeLifecycleQueue = this.runtimeLifecycleQueue.then(run, run);
+    return this.runtimeLifecycleQueue;
+  }
+
+  async startRuntimeServices(reason = 'manual-start') {
+    return this.queueRuntimeLifecycleTask('start', async () => {
+      if (this.runtimeLifecycleState === RUNTIME_LIFECYCLE_STATE.RUNNING) {
+        log.warn('RuntimeLifecycle', `Start ignored while already running (${reason})`);
+        return { ok: true, state: this.runtimeLifecycleState, alreadyRunning: true };
+      }
+      if (!this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STARTING, reason)) {
+        return { ok: false, state: this.runtimeLifecycleState, reason: 'illegal_transition' };
+      }
+
+      try {
+        watcher.startWatcher();
+        watcher.startTriggerWatcher();
+        const messageWatcherStart = await watcher.startMessageWatcher();
+        if (!messageWatcherStart || messageWatcherStart.success !== true) {
+          throw new Error(
+            messageWatcherStart?.error || messageWatcherStart?.reason || 'message_watcher_start_failed'
+          );
+        }
+        await this.teamRoomController.start();
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.RUNNING, reason);
+        return { ok: true, state: this.runtimeLifecycleState };
+      } catch (err) {
+        try {
+          watcher.stopMessageWatcher();
+        } catch (stopErr) {
+          log.warn('RuntimeLifecycle', `Failed stopping message watcher after start error: ${stopErr.message}`);
+        }
+        try {
+          watcher.stopTriggerWatcher();
+        } catch (stopErr) {
+          log.warn('RuntimeLifecycle', `Failed stopping trigger watcher after start error: ${stopErr.message}`);
+        }
+        try {
+          watcher.stopWatcher();
+        } catch (stopErr) {
+          log.warn('RuntimeLifecycle', `Failed stopping workspace watcher after start error: ${stopErr.message}`);
+        }
+        await this.teamRoomController.stopQuietly('start error');
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, `${reason}:start-error`);
+        return { ok: false, state: this.runtimeLifecycleState, error: err.message };
+      }
+    });
+  }
+
+  async stopRuntimeServices(reason = 'manual-stop') {
+    return this.queueRuntimeLifecycleTask('stop', async () => {
+      const forceStop = reason === 'shutdown';
+      if (this.runtimeLifecycleState === RUNTIME_LIFECYCLE_STATE.STOPPED) {
+        if (!forceStop) {
+          log.warn('RuntimeLifecycle', `Stop ignored while already stopped (${reason})`);
+          return { ok: true, state: this.runtimeLifecycleState, alreadyStopped: true };
+        }
+        watcher.stopMessageWatcher();
+        watcher.stopTriggerWatcher();
+        watcher.stopWatcher();
+        await this.teamRoomController.stop();
+        return { ok: true, state: this.runtimeLifecycleState, alreadyStopped: true, forced: true };
+      }
+      if (!this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPING, reason)) {
+        return { ok: false, state: this.runtimeLifecycleState, reason: 'illegal_transition' };
+      }
+
+      try {
+        watcher.stopMessageWatcher();
+        watcher.stopTriggerWatcher();
+        watcher.stopWatcher();
+        await this.teamRoomController.stop();
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, reason);
+        return { ok: true, state: this.runtimeLifecycleState };
+      } catch (err) {
+        this.transitionRuntimeLifecycle(RUNTIME_LIFECYCLE_STATE.STOPPED, `${reason}:stop-error`);
+        return { ok: false, state: this.runtimeLifecycleState, error: err.message };
+      }
+    });
+  }
+
+  async initPostLoad() {
+    const window = this.ctx.mainWindow;
+
+    const initAfterLoad = async (attempt = 1) => {
+      try {
+        const lifecycleResult = await this.startRuntimeServices('post-load-init');
+        if (!lifecycleResult?.ok) {
+          throw new Error(lifecycleResult?.error || lifecycleResult?.reason || 'runtime_start_failed');
+        }
+
+        const state = watcher.readState();
+        if (window && !window.isDestroyed()) {
+          window.webContents.send('state-changed', state);
+        }
+
+        if (this.daemonTimeoutTriggered && !this.daemonConnectedForStartup) {
+          this.notifyRendererDaemonTimeout('daemon_connect_timeout_replay');
+        }
+
+        // Connect if not already connected, or resend state if already connected
+        if (this.ctx.daemonClient) {
+          if (!this.ctx.daemonClient.connected) {
+            await this.ctx.daemonClient.connect();
+          } else {
+            // Daemon already connected before renderer loaded - resend the event
+            log.info('App', 'Resending daemon-connected to renderer (was connected before load)');
+            const terminals = this.ctx.daemonClient.getTerminals?.() || [];
+            const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, { windowKey: 'main' });
+            this.daemonConnectedForStartup = true;
+            this.clearDaemonConnectTimeout();
+            this.sendDaemonConnectedToAppWindows(terminals);
+            this.primePaneHostFromTerminalSnapshot(visibleTerminals);
+            this.kernelBridge.emitBridgeEvent('bridge.connected', {
+              transport: 'daemon-client',
+              terminalCount: visibleTerminals.length,
+              resumed: true,
+            });
+          }
+        }
+        await this.flushPendingPaneDeliveries({ reason: 'renderer_post_load' });
+      } catch (err) {
+        log.error('App', 'Post-load init failed', err);
+        this.activity.logActivity('error', null, 'Post-load init failed', {
+          attempt,
+          error: err.message,
+        });
+
+        if (attempt < 3) {
+          const delay = Math.min(2000 * attempt, 10000);
+          setTimeout(() => initAfterLoad(attempt + 1), delay);
+        }
+      }
+    };
+
+    initAfterLoad();
+  }
+
+  initRecoveryManager() {
+    return createRecoveryManager({
+      getSettings: () => this.ctx.currentSettings,
+      getLastActivity: paneId => this.ctx.daemonClient?.getLastActivity?.(paneId),
+      getAllActivity: () => this.ctx.daemonClient?.getAllActivity?.() || {},
+      getDaemonTerminals: () => this.ctx.daemonClient?.getTerminals?.() || [],
+      isPaneRunning: paneId => this.ctx.agentRunning.get(String(paneId)) === 'running',
+      isCodexPane: paneId => this.isCodexPaneCommand(paneId),
+      requestRestart: (paneId, info = {}) => {
+        return this.requestPaneRestart(paneId, {
+          source: 'recovery',
+          ...info,
+        });
+      },
+      requestUnstick: (paneId, info = {}) => {
+        if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+          this.ctx.mainWindow.webContents.send('unstick-pane', {
+            paneId: String(paneId),
+            source: 'recovery',
+            ...info,
+          });
+        }
+      },
+      beforeRestart: async (paneId, reason) => {
+        if (this.ctx.daemonClient?.connected) {
+          this.ctx.daemonClient.saveSession();
+        }
+        this.activity.logActivity('recovery', String(paneId), `Auto-restart requested (${reason})`, { reason }); 
+      },
+      resendTask: (paneId, message, meta = {}) => {
+        if (triggers && typeof triggers.sendDirectMessage === 'function') {
+          const recoveryMessage = `[RECOVERY] Resuming previous task\n${message}`;
+          const result = triggers.sendDirectMessage([String(paneId)], recoveryMessage, 'Self-Healing');
+          return Boolean(result && result.success);
+        }
+        return this.routeInjectMessage({
+          panes: [String(paneId)],
+          message: `[RECOVERY] Resuming previous task\n${message}\r`,
+          meta,
+        });
+      },
+      notifyEvent: (payload) => {
+        const paneId = payload?.paneId ? String(payload.paneId) : 'system';
+        this.activity.logActivity('recovery', paneId, payload?.message || 'Recovery event', payload);
+        if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+          this.ctx.mainWindow.webContents.send('recovery-event', payload);
+        }
+      },
+    });
+  }
+
+  initPluginManager() {
+    return createPluginManager({
+      workspacePath: WORKSPACE_PATH,
+      getSettings: () => this.ctx.currentSettings,
+      getState: () => watcher?.readState?.() || null,
+      notifyAgents: (targets, message) => triggers.notifyAgents(targets, message),
+      sendDirectMessage: (targets, message, fromRole) => triggers.sendDirectMessage(targets, message, fromRole), 
+
+      broadcastMessage: (message) => triggers.broadcastToAllAgents(message),
+      logActivity: (t, p, m, d) => this.activity.logActivity(t, p, m, d),
+      getMainWindow: () => this.ctx.mainWindow,
+    });
+  }
+
+  initBackupManager() {
+    const manager = createBackupManager({
+      workspacePath: WORKSPACE_PATH,
+      repoRoot: path.join(WORKSPACE_PATH, '..'),
+      logActivity: (t, p, m, d) => this.activity.logActivity(t, p, m, d),
+    });
+    manager.init();
+    return manager;
+  }
+
+  clearDaemonClientListeners(client = this.ctx.daemonClient) {
+    if (!client || this.daemonClientListeners.length === 0) {
+      return;
+    }
+
+    const removeListener = typeof client.off === 'function'
+      ? client.off.bind(client)
+      : (typeof client.removeListener === 'function' ? client.removeListener.bind(client) : null);
+
+    if (typeof removeListener !== 'function') {
+      this.daemonClientListeners = [];
+      return;
+    }
+
+    for (const { eventName, listener } of this.daemonClientListeners) {
+      try {
+        removeListener(eventName, listener);
+      } catch (err) {
+        log.warn('Daemon', `Failed removing listener ${eventName}: ${err.message}`);
+      }
+    }
+
+    this.daemonClientListeners = [];
+  }
+
+  attachDaemonClientListener(eventName, listener) {
+    if (!this.ctx.daemonClient || typeof this.ctx.daemonClient.on !== 'function') {
+      return;
+    }
+    this.ctx.daemonClient.on(eventName, listener);
+    this.daemonClientListeners.push({ eventName, listener });
+  }
+
+  observePaneFailureSignal(methodName, ...args) {
+    try {
+      const result = this.paneFailureMonitor?.[methodName]?.(...args);
+      if (result && typeof result.catch === 'function') {
+        result.catch((err) => {
+          log.warn('PaneFailure', `${methodName} failed: ${err.message}`);
+        });
+      }
+      return result;
+    } catch (err) {
+      log.warn('PaneFailure', `${methodName} failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  async initDaemonClient(options = {}) {
+    const { preserveConnectTimeout = false } = options || {};
+    if (!preserveConnectTimeout) {
+      this.clearDaemonConnectTimeout();
+    }
+    this.daemonConnectedForStartup = false;
+    this.daemonTimeoutTriggered = false;
+    this.daemonTimeoutNotified = false;
+
+    // Re-inits happen on reload; clear previously attached singleton listeners first.
+    this.clearDaemonClientListeners(this.ctx.daemonClient);
+    this.ctx.daemonClient = getDaemonClient();
+
+    // Update IPC handlers with daemon client
+    ipcHandlers.setDaemonClient(this.ctx.daemonClient);
+
+    const handlePaneExit = (paneId, code, metadata = null) => {
+      const cachedTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      if (isCurrentSessionComputerUseVerifierTerminal(paneId, metadata)) {
+        return {
+          ignored: true,
+          reason: 'standalone_computer_use_verifier',
+          cachedTerminal,
+          recoveryResult: null,
+        };
+      }
+      if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
+        return { ignored: true, reason: 'background_pane', cachedTerminal, recoveryResult: null };
+      }
+      this.flushBufferedPtyData(paneId);
+      this.flushVisibleFilteredPtyData(paneId, { force: true });
+      this.visiblePtyOutputFilter.clearPane(paneId);
+      const recoveryResult = this.ctx.recoveryManager?.handleExit(paneId, code) || null;
+      this.usage.recordSessionEnd(paneId);
+      this.recordSessionLifecyclePattern({
+        paneId,
+        status: 'ended',
+        exitCode: code,
+        reason: 'pty_exit',
+      }).catch((err) => {
+        log.warn('TeamMemory', `Failed session end event for pane ${paneId}: ${err.message}`);
+      });
+      this.ctx.agentRunning.set(paneId, 'idle');
+      organicUI.agentOffline(paneId);
+      this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: String(paneId), state: 'idle', exitCode: code })
+        .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
+      this.broadcastClaudeState();
+      this.activity.logActivity('state', paneId, `Session ended (exit code: ${code})`, { exitCode: code });
+      this.sendToVisibleWindowsForPane(`pty-exit-${paneId}`, code, paneId);
+      if (this.isHiddenPaneHostModeEnabled()) {
+        this.paneHostWindowManager.sendToPaneWindow(String(paneId), `pty-exit-${paneId}`, code);
+      }
+      return { ignored: false, cachedTerminal, recoveryResult };
+    };
+
+    this.attachDaemonClientListener('data', (paneId, data) => {
+      this.lastDaemonOutputAtMs = Date.now();
+      const terminalMetadata = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      const isBackgroundPane = this.backgroundAgentManager.isBackgroundPaneId(paneId);
+      this.backgroundAgentManager.handleDaemonData(paneId, data);
+      if (isBackgroundPane) {
+        return;
+      }
+
+      this.observePaneFailureSignal('handlePtyData', paneId, data, terminalMetadata);
+
+      this.ctx.recoveryManager?.recordActivity(paneId);
+      this.ctx.recoveryManager?.recordPtyOutput?.(paneId, data);
+
+      // Organic UI: Mark agent as active when outputting
+      if (organicUI.getAgentState(paneId) !== 'offline') {
+        organicUI.agentActive(paneId);
+      }
+
+      if (this.ctx.pluginManager?.hasHook('daemon:data')) {
+        this.ctx.pluginManager.dispatch('daemon:data', { paneId: String(paneId), data })
+          .catch(err => log.error('Plugins', `Error in daemon:data hook: ${err.message}`));
+      }
+
+      this.queuePtyDataForUi(paneId, data);
+
+      if (data.includes('Error') || data.includes('error:') || data.includes('FAILED')) {
+        this.activity.logActivity('error', paneId, 'Terminal error detected', { snippet: data.substring(0, 200) }
+);
+      } else if (data.includes('✅') || data.includes('DONE') || data.includes('Complete')) {
+        this.activity.logActivity('terminal', paneId, 'Completion indicator detected', { snippet: data.substring(
+0, 100) });
+      }
+
+      const currentState = this.ctx.agentRunning.get(paneId);
+      if (currentState === 'starting' || currentState === 'idle') {
+        const runningPaneId = String(paneId);
+        const nextBuffer = `${this.startupReadyBuffers.get(runningPaneId) || ''}${stripAnsiForStartupReady(data)}`.slice(-STARTUP_READY_BUFFER_MAX);
+        this.startupReadyBuffers.set(runningPaneId, nextBuffer);
+        if (hasCliStartupReadySignal(nextBuffer)) {
+          this.startupReadyBuffers.delete(runningPaneId);
+          this.ctx.agentRunning.set(paneId, 'running');
+          organicUI.agentOnline(paneId);
+          this.ctx.pluginManager?.dispatch('agent:stateChanged', { paneId: runningPaneId, state: 'running' })
+            .catch(err => log.error('Plugins', `Error in agent:stateChanged hook: ${err.message}`));
+          this.broadcastClaudeState();
+          this.activity.logActivity('state', paneId, 'Agent started', { status: 'running' });
+          log.info('Agent', `Pane ${paneId} now running`);
+          this.triggerProactiveMemoryInjection({
+            paneId: runningPaneId,
+            triggerType: 'session_rollover',
+            payload: {
+              session_id: this.commsSessionScopeId || null,
+              session_ordinal: this.getCurrentAppStatusSessionNumber(),
+              trigger_event_id: `session-rollover:${runningPaneId}:${this.commsSessionScopeId || 'app'}`,
+              nowMs: Date.now(),
+            },
+          }).catch((err) => {
+            log.warn('TeamMemory', `Failed session rollover memory injection for pane ${runningPaneId}: ${err.message}`);
+          });
+        }
+      }
+    });
+
+    this.attachDaemonClientListener('exit', (paneId, code, metadata) => {
+      const currentTerminal = this.ctx.daemonClient?.getTerminal?.(paneId) || null;
+      if (isStalePtyGeneration(metadata, currentTerminal)) {
+        log.warn('PaneFailure', `Ignored stale exit for pane ${paneId} (event pid=${metadata?.pid}, current pid=${currentTerminal?.pid})`);
+        return;
+      }
+      if (isCurrentSessionComputerUseVerifierTerminal(paneId, metadata)) {
+        handlePaneExit(paneId, code, metadata);
+        return;
+      }
+      this.startupReadyBuffers.delete(String(paneId));
+      this.backgroundAgentManager.handleDaemonExit(paneId, code);
+      const paneExit = handlePaneExit(paneId, code, metadata);
+      const recoveryStatus = paneExit?.recoveryResult?.status || null;
+      const expectedRecovery = recoveryStatus === 'expected' || recoveryStatus === 'codex_completed';
+      if (!this.shuttingDown && !this.fullShutdownPromise && !expectedRecovery) {
+        this.observePaneFailureSignal('handlePtyExit', paneId, code, metadata, currentTerminal);
+      }
+    });
+
+    this.attachDaemonClientListener('killed', (paneId) => {
+      this.startupReadyBuffers.delete(String(paneId));
+      this.backgroundAgentManager.handleDaemonKilled(paneId);
+      if (String(paneId) === BACKGROUND_BUILDER_OWNER_PANE_ID) {
+        this.ctx.agentRunning.set(String(paneId), 'idle');
+      }
+    });
+
+    this.attachDaemonClientListener('spawned', (paneId, pid, dryRun, metadata) => {
+      log.info('Daemon', `Terminal spawned for pane ${paneId}, PID: ${pid}`);
+      this.observePaneFailureSignal('handlePtySpawn', paneId, metadata);
+      if (this.backgroundAgentManager.isBackgroundPaneId(paneId)) {
+        return;
+      }
+      const command = this.cliIdentity.getPaneCommandForIdentity(String(paneId));
+      this.cliIdentity.inferAndEmitCliIdentity(paneId, command);
+      this.ctx.recoveryManager?.recordActivity(paneId);
+      const paneLaunchId = String(metadata?.paneLaunchId || '').trim();
+      const appGeneration = String(metadata?.appGeneration || '').trim();
+      const spawnRequestId = String(metadata?.spawnRequestId || metadata?.requestId || '').trim();
+      if (paneLaunchId
+        && spawnRequestId
+        && appGeneration === String(this.commsSessionScopeId || '')) {
+        const refreshed = this.teamRoomController?.refreshCliBindings?.();
+        if (refreshed?.ok && Array.isArray(refreshed.changedRoles) && refreshed.changedRoles.length > 0) {
+          log.info('TeamRoom', `Refreshed CLI binding after pane ${paneId} restart (${refreshed.changedRoles.join(',')})`);
+        } else if (refreshed?.ok === false
+          && refreshed.reason !== 'team_room_cli_binding_refresh_unavailable') {
+          log.warn('TeamRoom', `CLI binding refresh after pane ${paneId} restart refused (${refreshed.reason || 'unknown'})`);
+        }
+      }
+    });
+
+    this.attachDaemonClientListener('connected', (terminals) => {
+      log.info('Daemon', `Connected. Existing terminals: ${terminals.length}`);
+      this.daemonConnectedForStartup = true;
+      this.clearDaemonConnectTimeout();
+      this.backgroundAgentManager.syncWithDaemonTerminals(terminals);
+
+      if (terminals && terminals.length > 0) {
+        for (const term of terminals) {
+          if (this.backgroundAgentManager.isBackgroundPaneId(term?.paneId)) {
+            continue;
+          }
+          if (term.alive) {
+            // Refine: Check if terminal actually has CLI content
+            // Simple check here as we don't want to duplicate all regexes from daemon-handlers
+            const scrollback = String(term.scrollback || '').toLowerCase();
+            const hasCli = scrollback.includes('claude code') || 
+                           scrollback.includes('codex>') || 
+                           scrollback.includes('gemini cli') ||
+                           scrollback.includes('cursor>') ||
+                           (scrollback.includes('>') && scrollback.length > 200);
+
+            if (hasCli) {
+              this.ctx.agentRunning.set(String(term.paneId), 'running');
+              organicUI.agentOnline(String(term.paneId));
+            } else {
+              this.ctx.agentRunning.set(String(term.paneId), 'idle');
+              organicUI.agentOffline(String(term.paneId));
+            }
+            
+            const command = this.cliIdentity.getPaneCommandForIdentity(String(term.paneId));   
+            this.cliIdentity.inferAndEmitCliIdentity(term.paneId, command);
+          }
+        }
+        this.broadcastClaudeState();
+      }
+      if (terminals && terminals.length > 0) {
+        const deadTerminals = terminals.filter(term => term.alive === false);
+        for (const term of deadTerminals) {
+          const paneId = String(term.paneId);
+          if (isCurrentSessionComputerUseVerifierTerminal(paneId, term)) {
+            handlePaneExit(paneId, -1, term);
+            continue;
+          }
+          log.warn('Daemon', `Detected dead terminal for pane ${paneId} on connect - scheduling recovery`);
+          handlePaneExit(paneId, -1, term);
+        }
+      }
+      const visibleTerminals = this.filterTerminalsForVisibleShell(terminals, { windowKey: 'main' });
+      this.sendDaemonConnectedToAppWindows(terminals);
+      this.primePaneHostFromTerminalSnapshot(visibleTerminals);
+
+      this.kernelBridge.emitBridgeEvent('bridge.connected', {
+        transport: 'daemon-client',
+        terminalCount: visibleTerminals?.length || 0,
+      });
+    });
+
+    this.attachDaemonClientListener('disconnected', () => {
+      log.warn('Daemon', 'Disconnected');
+      void this.backgroundAgentManager.killAll({ reason: 'daemon_disconnected' });
+      this.sendToAllWindows('daemon-disconnected');
+      this.kernelBridge.emitBridgeEvent('bridge.disconnected', {
+        transport: 'daemon-client',
+      });
+    });
+
+    this.attachDaemonClientListener('reconnected', () => {
+      this.sendToAllWindows('daemon-reconnected');
+      this.kernelBridge.emitBridgeEvent('bridge.connected', {
+        transport: 'daemon-client',
+        resumed: true,
+      });
+    });
+
+    this.attachDaemonClientListener('kernel-event', (eventData) => {
+      this.handlePtyDataKernelEvent(eventData);
+      this.handleArmSpawnLifecycleEvent(eventData);
+      this.kernelBridge.forwardDaemonEvent(eventData);
+    });
+
+    this.attachDaemonClientListener('kernel-stats', (stats) => {
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        try {
+          this.ctx.mainWindow.webContents.send('kernel:bridge-stats', {
+            source: 'daemon',
+            ...stats,
+          });
+        } catch (err) {
+          log.warn('KernelBridge', `Failed forwarding daemon kernel stats: ${err.message}`);
+        }
+      }
+    });
+
+    this.attachDaemonClientListener('heartbeat-state-changed', (state, interval) => {
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send('heartbeat-state-changed', { state, interval });
+      }
+    });
+
+    this.attachDaemonClientListener('watchdog-alert', (message, timestamp) => {
+      log.warn('Watchdog', `Alert: ${message}`);
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send('watchdog-alert', { message, timestamp });
+      }
+    });
+
+    this.attachDaemonClientListener('codex-activity', (paneId, state, detail) => {
+      if (this.ctx.pluginManager?.hasHook('agent:activity')) {
+        this.ctx.pluginManager.dispatch('agent:activity', { paneId: String(paneId), state, detail })
+          .catch(err => log.error('Plugins', `Error in agent:activity hook: ${err.message}`));
+      }
+    });
+
+    this.attachDaemonClientListener('agent-stuck-detected', (payload) => {
+      const paneId = payload?.paneId;
+      if (!paneId) return;
+      const idleTime = payload?.idleMs || 0;
+      this.ctx.recoveryManager?.handleStuck(paneId, idleTime, 'daemon-auto-nudge');
+
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send('agent-stuck-detected', {
+          paneId,
+          idleTime,
+          message: payload?.message || `Agent in pane ${paneId} appears stuck.`,
+        });
+      }
+    });
+
+    this.attachDaemonClientListener('error', (paneId, message) => {
+      log.error('Daemon', `Error in pane ${paneId}:`, message);
+      if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+        this.ctx.mainWindow.webContents.send(`pty-error-${paneId}`, message);
+      }
+    });
+
+    const connected = await this.ctx.daemonClient.connect();
+    if (connected) {
+      this.daemonConnectedForStartup = true;
+      this.clearDaemonConnectTimeout();
+    }
+    return connected;
+  }
+
+  broadcastClaudeState() {
+    if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      this.ctx.mainWindow.webContents.send('claude-state-changed', Object.fromEntries(this.ctx.agentRunning));  
+    }
+  }
+
+  ensureCliIdentityForwarder() {
+    if (this.cliIdentityForwarderRegistered) return;
+    this.cliIdentityForwarderRegistered = true;
+    ipcMain.on('pane-cli-identity', (event, data) => this.cliIdentity.emitPaneCliIdentity(data));
+  }
+
+  ensureTriggerDeliveryAckForwarder() {
+    if (this.triggerAckForwarderRegistered) return;
+    this.triggerAckForwarderRegistered = true;
+    ipcMain.on('trigger-delivery-ack', (event, data) => {
+      this.handleTriggerDeliveryAck(data);
+    });
+    ipcMain.on('trigger-delivery-outcome', (event, data) => {
+      this.handleTriggerDeliveryOutcome(data);
+    });
+  }
+
+  ensureDeferredTeamMemoryStartup() {
+    if (this.teamMemoryDeferredStartupStarted) return;
+    this.teamMemoryDeferredStartupStarted = true;
+    this._deferredTeamMemoryStartup().catch((err) => {
+      log.warn('TeamMemory', `Deferred startup failed: ${err.message}`);
+    });
+  }
+
+  async ensureTeamMemoryInitialized(reason = 'first-use') {
+    if (this.teamMemoryInitialized) {
+      this.ensureDeferredTeamMemoryStartup();
+      return true;
+    }
+    if (this.teamMemoryInitFailed) {
+      return false;
+    }
+    if (this.teamMemoryInitPromise) {
+      return this.teamMemoryInitPromise;
+    }
+
+    this.teamMemoryInitPromise = (async () => {
+      try {
+        const result = await teamMemory.initializeTeamMemoryRuntime({
+          runtimeOptions: {},
+          recreateUnavailable: true,
+        });
+        this.teamMemoryInitialized = result?.ok === true;
+        this.teamMemoryInitFailed = !this.teamMemoryInitialized;
+        if (this.teamMemoryInitialized) {
+          this.ensureDeferredTeamMemoryStartup();
+          log.info('TeamMemory', `Lazy initialization ready (trigger=${reason})`);
+          return true;
+        }
+        log.warn(
+          'TeamMemory',
+          `Lazy initialization degraded (trigger=${reason}): ${result?.status?.degradedReason || result?.initResult?.reason || 'unavailable'}`
+        );
+        return false;
+      } catch (err) {
+        this.teamMemoryInitialized = false;
+        this.teamMemoryInitFailed = true;
+        log.warn('TeamMemory', `Lazy initialization failed (trigger=${reason}): ${err.message}`);
+        return false;
+      } finally {
+        this.teamMemoryInitPromise = null;
+      }
+    })();
+
+    return this.teamMemoryInitPromise;
+  }
+
+  async ensureExperimentInitialized(reason = 'first-use') {
+    if (this.experimentInitialized) {
+      return true;
+    }
+    if (this.experimentInitFailed) {
+      return false;
+    }
+    if (this.experimentInitPromise) {
+      return this.experimentInitPromise;
+    }
+
+    this.experimentInitPromise = (async () => {
+      try {
+        const result = await experiment.initializeExperimentRuntime({
+          runtimeOptions: {},
+          recreateUnavailable: true,
+        });
+        this.experimentInitialized = result?.ok === true;
+        this.experimentInitFailed = !this.experimentInitialized;
+        if (this.experimentInitialized) {
+          log.info('Experiment', `Lazy initialization ready (trigger=${reason})`);
+          return true;
+        }
+        log.warn(
+          'Experiment',
+          `Lazy initialization degraded (trigger=${reason}): ${result?.status?.degradedReason || result?.initResult?.reason || 'unavailable'}`
+        );
+        return false;
+      } catch (err) {
+        this.experimentInitialized = false;
+        this.experimentInitFailed = true;
+        log.warn('Experiment', `Lazy initialization failed (trigger=${reason}): ${err.message}`);
+        return false;
+      } finally {
+        this.experimentInitPromise = null;
+      }
+    })();
+
+    return this.experimentInitPromise;
+  }
+
+  async appendTeamMemoryPatternEvent(event, label = 'pattern-event') {
+    if (!event) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    const ready = await this.ensureTeamMemoryInitialized(`append:${label}`);
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    try {
+      const result = await teamMemory.appendPatternHookEvent(event);
+      if (result?.ok === false) {
+        log.warn('TeamMemory', `Failed to append ${label}: ${result.reason || 'unknown'}`);
+      }
+      return result;
+    } catch (err) {
+      log.warn('TeamMemory', `Failed to append ${label}: ${err.message}`);
+      return { ok: false, reason: 'pattern_append_failed', error: err.message };
+    }
+  }
+
+  async evaluateTeamMemoryGuardPreflight({ target, content, fromRole, traceContext } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('guard-preflight');
+    if (!ready) {
+      return { blocked: false, actions: [] };
+    }
+
+    const nowMs = Date.now();
+    const event = buildGuardPreflightEvent({
+      target,
+      content,
+      fromRole,
+      traceContext,
+      nowMs,
+    });
+
+    let evaluation = null;
+    try {
+      evaluation = await teamMemory.executeTeamMemoryOperation('evaluate-guards', {
+        events: [event],
+        nowMs,
+      });
+    } catch (err) {
+      log.warn('TeamMemoryGuard', `Preflight evaluation failed: ${err.message}`);
+      return { blocked: false, actions: [] };
+    }
+
+    if (!evaluation?.ok) {
+      return { blocked: false, actions: [] };
+    }
+
+    const actions = Array.isArray(evaluation.actions) ? evaluation.actions : [];
+    for (const action of actions) {
+      const actionEvent = {
+        ...action,
+        event: {
+          ...(action?.event && typeof action.event === 'object' ? action.event : {}),
+          target: target || null,
+          status: 'preflight',
+        },
+      };
+      await this.appendTeamMemoryPatternEvent(
+        buildGuardFiringPatternEvent(actionEvent, nowMs),
+        'guard-preflight'
+      );
+    }
+
+    return {
+      blocked: Boolean(evaluation.blocked),
+      actions,
+    };
+  }
+
+  async recordSessionLifecyclePattern({ paneId, status, exitCode = null, reason = '' } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('session-lifecycle');
+    if (!ready) return;
+    const nowMs = Date.now();
+    const event = buildSessionLifecyclePatternEvent({
+      paneId,
+      status,
+      exitCode,
+      reason,
+      nowMs,
+    });
+    if (!event) return;
+    await this.appendTeamMemoryPatternEvent(event, 'session-lifecycle');
+  }
+
+  async triggerProactiveMemoryInjection({ paneId, triggerType, payload = {}, explicit = false } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized(`memory-injection:${triggerType || 'unknown'}`);
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const targetPane = String(paneId || payload?.pane_id || payload?.paneId || '1');
+    const nowMs = Date.now();
+    const sessionOrdinal = payload?.session_ordinal || payload?.sessionOrdinal || this.getCurrentAppStatusSessionNumber();
+    let lifecycleAdvance = null;
+    let staleReview = null;
+    if (triggerType === 'session_rollover') {
+      lifecycleAdvance = await teamMemory.executeTeamMemoryOperation('advance-memory-lifecycle', {
+        session_ordinal: sessionOrdinal,
+        nowMs,
+      });
+      staleReview = await teamMemory.executeTeamMemoryOperation('review-stale-memories', {
+        limit: 10,
+        nowMs,
+      });
+    }
+    const result = await teamMemory.executeTeamMemoryOperation('trigger-memory-injection', {
+      ...payload,
+      pane_id: targetPane,
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      session_ordinal: sessionOrdinal,
+      trigger_type: triggerType,
+      explicit,
+      nowMs,
+    });
+    if (!result?.ok || result.injected !== true || !result.injection?.message) {
+      return {
+        ...result,
+        lifecycleAdvance,
+        staleReview,
+      };
+    }
+
+    const routed = this.routeInjectMessage({
+      panes: [targetPane],
+      message: `${result.injection.message}\r`,
+      deliveryId: result.injection.injection_id || null,
+      meta: {
+        memoryInjection: true,
+        triggerType,
+        sourceTier: result.injection.source_tier || null,
+        injectionReason: result.injection.injection_reason || null,
+        authoritative: result.injection.authoritative === true,
+      },
+    });
+
+    return {
+      ...result,
+      lifecycleAdvance,
+      staleReview,
+      delivered: routed === true,
+    };
+  }
+
+  async recordMemoryInjectionFeedback(payload = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('memory-injection-feedback');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    return teamMemory.executeTeamMemoryOperation('record-memory-injection-feedback', {
+      ...payload,
+      nowMs: payload?.nowMs || Date.now(),
+    });
+  }
+
+  async sendCrossDeviceHandoffPacket({ targetDevice, paneId = '1', payload = {} } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('cross-device-handoff-send');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const buildResult = await teamMemory.executeTeamMemoryOperation('build-cross-device-handoff', {
+      ...payload,
+      pane_id: String(paneId),
+      target_device: targetDevice,
+      source_device: this.bridgeDeviceId || getLocalDeviceId(process.env) || 'LOCAL',
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      session_ordinal: payload?.session_ordinal || payload?.sessionOrdinal || this.getCurrentAppStatusSessionNumber(),
+      nowMs: payload?.nowMs || Date.now(),
+    });
+    if (!buildResult?.ok) {
+      return buildResult;
+    }
+
+    const outboundText = [
+      `Cross-device handoff from ${buildResult.packet?.source_device || this.bridgeDeviceId || 'LOCAL'}`,
+      Array.isArray(buildResult.packet?.active_workstreams) && buildResult.packet.active_workstreams.length > 0
+        ? `Workstreams: ${buildResult.packet.active_workstreams.join(' | ')}`
+        : 'Workstreams: none listed',
+    ].join('\n');
+    const relayResult = await this.routeBridgeMessage({
+      targetDevice,
+      content: outboundText,
+      fromRole: 'architect',
+      messageId: `handoff-${buildResult.packet_id}`,
+      structuredMessage: {
+        type: 'handoffpacket',
+        payload: {
+          packet: buildResult.packet,
+        },
+      },
+    });
+    if (relayResult?.ok) {
+      await teamMemory.executeTeamMemoryOperation('mark-cross-device-handoff-sent', {
+        packet_id: buildResult.packet_id,
+        sent_at: Date.now(),
+        packet_json: buildResult.packet,
+      });
+    }
+    return {
+      ...relayResult,
+      packet_id: buildResult.packet_id,
+      packet: buildResult.packet,
+      result_refs: buildResult.result_refs || [],
+    };
+  }
+
+  async handleInboundHandoffPacket(packet = {}, options = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('cross-device-handoff-receive');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    return teamMemory.executeTeamMemoryOperation('receive-cross-device-handoff', {
+      packet,
+      pane_id: options?.paneId || '1',
+      nowMs: options?.nowMs || Date.now(),
+    });
+  }
+
+  async prepareCompactionSurvivalForPane({ paneId = '1', payload = {} } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('compaction-survival-prepare');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+    return teamMemory.executeTeamMemoryOperation('prepare-compaction-survival', {
+      ...payload,
+      pane_id: String(paneId),
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      project_root: typeof getProjectRoot === 'function' ? (getProjectRoot() || undefined) : undefined,
+      nowMs: payload?.nowMs || Date.now(),
+    });
+  }
+
+  async resumeCompactionSurvivalForPane({ paneId = '1', payload = {} } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('compaction-survival-resume');
+    if (!ready) {
+      return { ok: false, reason: 'team_memory_unavailable' };
+    }
+
+    const result = await teamMemory.executeTeamMemoryOperation('resume-compaction-survival', {
+      ...payload,
+      pane_id: String(paneId),
+      session_id: payload?.session_id || payload?.sessionId || this.commsSessionScopeId || null,
+      project_root: typeof getProjectRoot === 'function' ? (getProjectRoot() || undefined) : undefined,
+      nowMs: payload?.nowMs || Date.now(),
+    });
+    if (result?.ok && result?.resumed === true && result?.injection?.message) {
+      this.routeInjectMessage({
+        panes: [String(paneId)],
+        message: `${result.injection.message}\r`,
+        meta: {
+          memoryInjection: true,
+          triggerType: 'compaction_survival_resume',
+          sourceTier: 'tier4',
+          injectionReason: 'compaction_resume',
+          authoritative: true,
+        },
+      });
+    }
+    return result;
+  }
+
+  async recordDeliveryOutcomePattern({ channel, target, fromRole, result, traceContext } = {}) {
+    const ready = await this.ensureTeamMemoryInitialized('delivery-outcome');
+    if (!ready) return;
+    const nowMs = Date.now();
+
+    await this.appendTeamMemoryPatternEvent(
+      buildDeliveryOutcomePatternEvent({
+        channel,
+        target,
+        fromRole,
+        result,
+        traceContext,
+        nowMs,
+      }),
+      'delivery-outcome'
+    );
+
+    if (!isDeliveryFailureResult(result)) return;
+    await this.appendTeamMemoryPatternEvent(
+      buildDeliveryFailurePatternEvent({
+        channel,
+        target,
+        fromRole,
+        result,
+        traceContext,
+        nowMs,
+      }),
+      'delivery-failure'
+    );
+  }
+
+  getCommsJournalFinalDeliveryState(result = {}) {
+    const accepted = result?.accepted === true
+      || result?.verified === true
+      || isWatchdogAcceptedDeliveryStatus(result?.status);
+    const verified = result?.verified === true;
+    const ackStatus = toNonEmptyString(result?.status)
+      || (verified ? 'delivered.verified' : (accepted ? 'accepted.unverified' : 'delivery_failed'));
+    const errorCode = accepted
+      ? null
+      : (
+        toNonEmptyString(result?.error)
+        || toNonEmptyString(result?.reason)
+        || toNonEmptyString(result?.status)
+        || toNonEmptyString(result?.details?.error)
+        || toNonEmptyString(result?.details?.failureReason)
+        || 'delivery_failed'
+      );
+
+    return {
+      status: verified ? 'acked' : (accepted ? 'routed' : 'failed'),
+      ackStatus,
+      errorCode,
+      accepted,
+      verified,
+    };
+  }
+
+  async finalizeLocalTriggerDeliveryJournal({
+    messageId = null,
+    result = null,
+    paneId = null,
+    target = null,
+    senderRole = null,
+    rawBody = null,
+    sessionId = null,
+    sentAtMs = null,
+    traceContext = null,
+    routeKind = 'local',
+  } = {}) {
+    const normalizedMessageId = toNonEmptyString(messageId);
+    if (!normalizedMessageId || !result) return null;
+
+    const finalState = this.getCommsJournalFinalDeliveryState(result);
+    const deliveryMetadata = {
+      source: 'websocket-local-trigger-delivery',
+      routeKind,
+      paneId: paneId ? String(paneId) : null,
+      targetRaw: target || null,
+      traceId: traceContext?.traceId || traceContext?.correlationId || null,
+      deliveryId: result?.deliveryId || null,
+      deliveryMode: result?.mode || null,
+      deliveryAccepted: finalState.accepted,
+      deliveryVerified: finalState.verified,
+      finalOutcome: finalState.ackStatus,
+      failureReason: toNonEmptyString(result?.reason) || toNonEmptyString(result?.details?.failureReason),
+      notified: Array.isArray(result?.notified) ? result.notified : [],
+    };
+
+    const journalResult = await executeEvidenceLedgerOperation(
+      'upsert-comms-journal',
+      {
+        messageId: normalizedMessageId,
+        sessionId: sessionId || null,
+        senderRole: senderRole || null,
+        targetRole: target || null,
+        channel: 'ws',
+        direction: 'outbound',
+        rawBody: rawBody || null,
+        sentAtMs: sentAtMs || null,
+        status: finalState.status,
+        ackStatus: finalState.ackStatus,
+        errorCode: finalState.errorCode,
+        metadata: deliveryMetadata,
+      },
+      {
+        source: {
+          via: 'websocket',
+          role: senderRole || 'system',
+          paneId: paneId ? String(paneId) : null,
+        },
+      }
+    );
+
+    if (journalResult?.ok === false) {
+      log.warn('EvidenceLedger', `Comms journal delivery finalization failed: ${journalResult.reason || 'unknown'}`);
+    }
+
+    const pendingVerdict = buildPendingOracleVerdictPayload({
+      messageId: normalizedMessageId,
+      sessionId: sessionId || null,
+      senderRole: senderRole || null,
+      targetRole: target || null,
+      channel: 'ws',
+      direction: 'outbound',
+      rawBody: rawBody || null,
+      sentAtMs: sentAtMs || null,
+      status: finalState.status,
+      ackStatus: finalState.ackStatus,
+      metadata: deliveryMetadata,
+    });
+    if (pendingVerdict) {
+      this.emitCommsBridgeEvent('comms.verdict.pending', pendingVerdict);
+    }
+
+    return journalResult;
+  }
+
+  clearAgentResponseWatchdog(senderRole = null, targetRole = null) {
+    if (targetRole === null) {
+      const normalizedRole = normalizeWatchdogAgentRole(senderRole);
+      if (!normalizedRole) return false;
+      let cleared = false;
+      for (const [key, entry] of this.pendingAgentResponseWatchdogs.entries()) {
+        if (entry?.targetRole !== normalizedRole) continue;
+        clearTimeout(entry.timerId);
+        this.pendingAgentResponseWatchdogs.delete(key);
+        cleared = true;
+      }
+      return cleared;
+    }
+
+    const key = createAgentResponseWatchdogKey(senderRole, targetRole);
+    if (!key) return false;
+    const entry = this.pendingAgentResponseWatchdogs.get(key);
+    if (!entry) return false;
+    clearTimeout(entry.timerId);
+    this.pendingAgentResponseWatchdogs.delete(key);
+    return true;
+  }
+
+  clearAllAgentResponseWatchdogs() {
+    for (const entry of this.pendingAgentResponseWatchdogs.values()) {
+      clearTimeout(entry?.timerId);
+    }
+    this.pendingAgentResponseWatchdogs.clear();
+  }
+
+  sendInternalHmMessage(targetRoles, message, options = {}) {
+    const text = toNonEmptyString(message);
+    if (!text) return false;
+    if (!fs.existsSync(HM_SEND_SCRIPT_PATH)) {
+      log.warn('ArchitectComms', `hm-send script unavailable for internal message: ${HM_SEND_SCRIPT_PATH}`);
+      return false;
+    }
+    const role = toNonEmptyString(options.role) || 'system';
+    const payload = text.startsWith(AGENT_MESSAGE_PREFIX)
+      ? text
+      : `${AGENT_MESSAGE_PREFIX}${text}`;
+    const normalizedTargets = Array.from(new Set(
+      (Array.isArray(targetRoles) ? targetRoles : [targetRoles])
+        .map((target) => toNonEmptyString(target)?.toLowerCase())
+        .filter(Boolean)
+    ));
+    if (normalizedTargets.length === 0) return false;
+
+    let delivered = false;
+    for (const target of normalizedTargets) {
+      try {
+        const child = spawn('node', [HM_SEND_SCRIPT_PATH, target, payload, '--role', role], {
+          cwd: getProjectRoot() || WORKSPACE_PATH || process.cwd(),
+          env: process.env,
+          windowsHide: true,
+        });
+        if (typeof child?.unref === 'function') {
+          child.unref();
+        }
+        delivered = true;
+      } catch (error) {
+        log.warn('ArchitectComms', `Failed sending internal ${target} message via hm-send: ${error.message}`);
+      }
+    }
+
+    return delivered;
+  }
+
+  sendArchitectInternalHmMessage(message, options = {}) {
+    return this.sendInternalHmMessage('architect', message, options);
+  }
+
+  scheduleAgentResponseWatchdog({
+    senderRole = null,
+    targetRole = null,
+    content = '',
+    sentAtMs = Date.now(),
+    sourceMessageId = null,
+    responseWatchdogState = null,
+  } = {}) {
+    const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (normalizedSenderRole === normalizedTargetRole) return false;
+    if (!shouldWatchdogAgentTask(content)) return false;
+
+    const watchdogMs = resolveRuntimeInt(
+      'agentResponseWatchdogMs',
+      DEFAULT_AGENT_RESPONSE_WATCHDOG_MS
+    );
+    const key = createAgentResponseWatchdogKey(normalizedSenderRole, normalizedTargetRole);
+    if (!key) return false;
+    this.clearAgentResponseWatchdog(normalizedSenderRole, normalizedTargetRole);
+
+    const sentAtLabel = formatLocalClockTime(sentAtMs);
+    const timerId = setTimeout(() => {
+      const pendingEntry = this.pendingAgentResponseWatchdogs.get(key);
+      const evidence = this.evaluateAgentResponseWatchdogEvidence(pendingEntry);
+      if (evidence.resolved) {
+        this.pendingAgentResponseWatchdogs.delete(key);
+        return;
+      }
+      this.pendingAgentResponseWatchdogs.delete(key);
+      const warning = normalizedSenderRole === 'architect'
+        ? `[WATCHDOG] No response from ${normalizedTargetRole} for task sent at ${sentAtLabel}. Check if task was received.`
+        : `[WATCHDOG] No response from ${normalizedTargetRole} to ${normalizedSenderRole} for task sent at ${sentAtLabel}. Check if task was received.`;
+      const warningWithEvidence = normalizedSenderRole === 'architect' && normalizedTargetRole === 'oracle'
+        ? `${warning}${formatWatchdogCorrelationBlockers(evidence.blockers)}`
+        : warning;
+      const alertTargets = normalizedSenderRole === 'architect'
+        ? ['architect']
+        : [normalizedSenderRole, 'architect'];
+      try {
+        this.sendInternalHmMessage(alertTargets, `(SYSTEM WATCHDOG): ${warningWithEvidence}`, {
+          role: 'system',
+        });
+      } catch (error) {
+        log.warn('Watchdog', `Failed routing response watchdog alert for ${key}: ${error.message}`);
+      }
+    }, watchdogMs);
+
+    if (typeof timerId?.unref === 'function') {
+      timerId.unref();
+    }
+
+    this.pendingAgentResponseWatchdogs.set(key, {
+      key,
+      timerId,
+      watchdogMs,
+      sentAtMs,
+      sourceMessageId: toNonEmptyString(sourceMessageId) || null,
+      responseWatchdogState: normalizeIntentionalAutonomyState(responseWatchdogState),
+      senderRole: normalizedSenderRole,
+      targetRole: normalizedTargetRole,
+      content,
+    });
+    return true;
+  }
+
+  hasLaterAgentResponseProofForWatchdog(entry = {}) {
+    return this.evaluateAgentResponseWatchdogEvidence(entry).resolved === true;
+  }
+
+  evaluateAgentResponseWatchdogEvidence(entry = {}) {
+    const emptyResult = {
+      resolved: false,
+      reason: 'missing_watchdog_entry',
+      evidence: [],
+      blockers: ['watchdog:missing_entry'],
+    };
+    if (!entry) return emptyResult;
+    const normalizedSenderRole = normalizeWatchdogAgentRole(entry.senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(entry.targetRole);
+    if (!normalizedSenderRole || !normalizedTargetRole) {
+      return {
+        ...emptyResult,
+        reason: 'invalid_watchdog_roles',
+        blockers: ['watchdog:invalid_roles'],
+      };
+    }
+    const correlation = buildWatchdogCorrelation(entry);
+    const evidence = [];
+    const blockers = [];
+    const pendingWatchdogState = findRecordIntentionalAutonomyState(entry);
+    if (pendingWatchdogState) {
+      return {
+        resolved: true,
+        reason: `watchdog_${pendingWatchdogState}`,
+        evidence: [{
+          source: 'pending_watchdog',
+          status: pendingWatchdogState,
+        }],
+        blockers: [],
+      };
+    }
+
+    let rows = [];
+    try {
+      rows = queryCommsJournalEntries({
+        sessionId: this.commsSessionScopeId || undefined,
+        sinceMs: Math.max(0, Number(entry.sentAtMs) || 0),
+        order: 'asc',
+        limit: 500,
+      });
+    } catch (error) {
+      log.warn('Watchdog', `Failed querying comms journal for response proof: ${error.message}`);
+      blockers.push(`comms_journal:query_failed:${error.message}`);
+      rows = [];
+    }
+
+    const ledgerIntentional = findLedgerIntentionalAutonomyResolution(rows, normalizedSenderRole, normalizedTargetRole);
+    if (ledgerIntentional) {
+      return {
+        resolved: true,
+        reason: `comms_journal_${ledgerIntentional.state}`,
+        evidence: [{
+          source: 'comms_journal',
+          rowId: ledgerIntentional.row.rowId || null,
+          messageId: ledgerIntentional.row.messageId || null,
+          status: ledgerIntentional.state,
+        }],
+        blockers: [],
+      };
+    }
+
+    const redirectedResponse = Array.isArray(rows)
+      ? rows.find((row) => isWatchdogRedirectedResponseProof(entry, row))
+      : null;
+    if (redirectedResponse) {
+      return {
+        resolved: true,
+        reason: 'comms_journal_redirected_response',
+        evidence: [{
+          source: 'comms_journal',
+          rowId: redirectedResponse.rowId || null,
+          messageId: redirectedResponse.messageId || null,
+          status: redirectedResponse.status || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    const taskRow = {
+      senderRole: normalizedSenderRole,
+      targetRole: normalizedTargetRole,
+      rawBody: entry.content || '',
+      sentAtMs: entry.sentAtMs || 0,
+      brokeredAtMs: entry.sentAtMs || 0,
+    };
+    if (Array.isArray(rows) && rows.length > 0 && isAgentTaskResolvedByLaterSignal(taskRow, rows, -1, {
+      acceptAcceptedDeliveryStatus: true,
+    })) {
+      return {
+        resolved: true,
+        reason: 'comms_journal_later_resolution',
+        evidence: [{
+          source: 'comms_journal',
+          rowsScanned: rows.length,
+          sinceMs: Math.max(0, Number(entry.sentAtMs) || 0),
+        }],
+        blockers: [],
+      };
+    }
+    // The target may have acted on the task by messaging someone other than the
+    // sender -- relaying to the user, answering a third agent. That is receipt,
+    // and it only counts because the inbound delivery is separately confirmed.
+    const targetActivity = findTargetActivityAfterConfirmedDelivery(taskRow, rows, {
+      sourceMessageId: entry.sourceMessageId,
+    });
+    if (targetActivity) {
+      return {
+        resolved: true,
+        reason: 'comms_journal_target_active_after_confirmed_delivery',
+        evidence: [{
+          source: 'comms_journal',
+          deliveryRowId: targetActivity.deliveryRow?.rowId || null,
+          deliveryAck: targetActivity.deliveryRow?.ackStatus
+            || targetActivity.deliveryRow?.status
+            || null,
+          activityRowId: targetActivity.activityRow?.rowId || null,
+          activityTargetRole: targetActivity.activityRow?.targetRole || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    evidence.push({
+      source: 'comms_journal',
+      status: 'no_later_resolution',
+      rowsScanned: Array.isArray(rows) ? rows.length : 0,
+    });
+    blockers.push('comms_journal:no_later_resolution');
+
+    const workItemEvidence = this.findWorkItemWatchdogResolution(correlation, normalizedTargetRole);
+    if (workItemEvidence.resolved) return workItemEvidence;
+    evidence.push(...workItemEvidence.evidence);
+    blockers.push(...workItemEvidence.blockers);
+
+    const currentLaneEvidence = this.findCurrentLaneWatchdogResolution(correlation);
+    if (currentLaneEvidence.resolved) return currentLaneEvidence;
+    evidence.push(...currentLaneEvidence.evidence);
+    blockers.push(...currentLaneEvidence.blockers);
+
+    return {
+      resolved: false,
+      reason: 'no_terminal_or_acknowledged_evidence',
+      evidence,
+      blockers,
+    };
+  }
+
+  findWorkItemWatchdogResolution(correlation = {}, targetRole = null) {
+    let listed;
+    try {
+      listed = listWorkItems({
+        workItemRoot: this.agentResponseWatchdogWorkItemRoot || this.watchdogWorkItemRoot || null,
+        sessionId: this.commsSessionScopeId || null,
+        profileName: 'main',
+        windowKey: 'main',
+      });
+    } catch (error) {
+      return {
+        resolved: false,
+        reason: 'work_item_query_failed',
+        evidence: [],
+        blockers: [`work_items:query_failed:${error.message}`],
+      };
+    }
+
+    const items = Array.isArray(listed?.items) ? listed.items : [];
+    const matches = items.filter((item) => workItemMatchesWatchdogCorrelation(item, correlation));
+    if (matches.length === 0) {
+      return {
+        resolved: false,
+        reason: 'work_item_not_correlated',
+        evidence: [{
+          source: 'work_items',
+          status: 'no_correlating_work_item',
+          workItemRoot: listed?.workItemRoot || null,
+          itemCount: items.length,
+        }],
+        blockers: ['work_items:no_correlating_work_item'],
+      };
+    }
+
+    const terminal = matches.find((item) => isWorkItemTerminal(item));
+    if (terminal) {
+      return {
+        resolved: true,
+        reason: 'work_item_terminal',
+        evidence: [{
+          source: 'work_items',
+          workItemId: terminal.id,
+          state: terminal.state,
+          verdict: terminal.verdict || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    const acknowledged = matches.find((item) => workItemHasTargetAcknowledgement(item, targetRole));
+    if (acknowledged) {
+      return {
+        resolved: true,
+        reason: 'work_item_target_proof_attached',
+        evidence: [{
+          source: 'work_items',
+          workItemId: acknowledged.id,
+          proofRole: proofRoleForWatchdogTarget(targetRole),
+        }],
+        blockers: [],
+      };
+    }
+
+    const intentional = matches
+      .map((item) => ({ item, state: findRecordIntentionalAutonomyState(item) }))
+      .find((candidate) => candidate.state);
+    if (intentional) {
+      return {
+        resolved: true,
+        reason: `work_item_${intentional.state}`,
+        evidence: [{
+          source: 'work_items',
+          workItemId: intentional.item.id,
+          status: intentional.state,
+        }],
+        blockers: [],
+      };
+    }
+
+    return {
+      resolved: false,
+      reason: 'work_item_still_active',
+      evidence: matches.map((item) => ({
+        source: 'work_items',
+        status: 'correlated_but_not_terminal_or_acknowledged',
+        workItemId: item.id,
+        state: item.state,
+      })),
+      blockers: matches.map((item) => `work_items:${item.id}:not_terminal_or_acknowledged`),
+    };
+  }
+
+  findCurrentLaneWatchdogResolution(correlation = {}) {
+    const currentLanePath = this.agentResponseWatchdogCurrentLanePath
+      || this.watchdogCurrentLanePath
+      || resolveCoordPath(path.join('handoffs', 'current-lane.json'), { forWrite: true });
+    let parsed = null;
+    try {
+      if (!fs.existsSync(currentLanePath)) {
+        return {
+          resolved: false,
+          reason: 'current_lane_missing',
+          evidence: [{
+            source: 'current_lane',
+            status: 'missing',
+            currentLanePath,
+          }],
+          blockers: ['current_lane:missing'],
+        };
+      }
+      parsed = JSON.parse(fs.readFileSync(currentLanePath, 'utf8'));
+    } catch (error) {
+      return {
+        resolved: false,
+        reason: 'current_lane_read_failed',
+        evidence: [],
+        blockers: [`current_lane:read_failed:${error.message}`],
+      };
+    }
+
+    const activeLane = parsed?.activeLane && typeof parsed.activeLane === 'object' ? parsed.activeLane : null;
+    if (!activeLane || !activeLaneMatchesWatchdogCorrelation(activeLane, correlation)) {
+      return {
+        resolved: false,
+        reason: 'current_lane_not_correlated',
+        evidence: [{
+          source: 'current_lane',
+          status: activeLane ? 'different_active_lane' : 'no_active_lane',
+          currentLanePath,
+          activeLaneId: activeLane?.workItemId || activeLane?.laneId || activeLane?.sourceRef || null,
+        }],
+        blockers: ['current_lane:no_correlating_lane'],
+      };
+    }
+
+    if (isCurrentLaneTerminal(activeLane, parsed)) {
+      return {
+        resolved: true,
+        reason: 'current_lane_terminal',
+        evidence: [{
+          source: 'current_lane',
+          currentLanePath,
+          laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
+          status: activeLane.status || parsed.status || null,
+        }],
+        blockers: [],
+      };
+    }
+
+    const intentionalState = findRecordIntentionalAutonomyState(activeLane)
+      || findRecordIntentionalAutonomyState(parsed);
+    if (intentionalState) {
+      return {
+        resolved: true,
+        reason: `current_lane_${intentionalState}`,
+        evidence: [{
+          source: 'current_lane',
+          currentLanePath,
+          laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
+          status: intentionalState,
+        }],
+        blockers: [],
+      };
+    }
+
+    return {
+      resolved: false,
+      reason: 'current_lane_still_active',
+      evidence: [{
+        source: 'current_lane',
+        status: 'correlated_but_active',
+        currentLanePath,
+        laneId: activeLane.workItemId || activeLane.laneId || activeLane.sourceRef || null,
+      }],
+      blockers: ['current_lane:correlated_but_active'],
+    };
+  }
+
+  maybeResolveAgentResponseWatchdog({
+    senderRole = null,
+    targetRole = null,
+    deliveryAccepted = false,
+    deliveryStatus = null,
+    status = null,
+  } = {}) {
+    const normalizedSenderRole = normalizeWatchdogAgentRole(senderRole);
+    const normalizedTargetRole = normalizeWatchdogAgentRole(targetRole);
+    if (!deliveryAccepted && !isWatchdogAcceptedDeliveryStatus(deliveryStatus || status)) return false;
+    if (!normalizedSenderRole || !normalizedTargetRole) return false;
+    if (normalizedSenderRole === normalizedTargetRole) return false;
+    return this.clearAgentResponseWatchdog(normalizedTargetRole, normalizedSenderRole);
+  }
+
+  async recordDeliveryFailurePattern(args = {}) {
+    return this.recordDeliveryOutcomePattern(args);
+  }
+
+  async updateIntentStateAtomic(payload = {}) {
+    const paneId = String(payload?.paneId ?? payload?.pane ?? '').trim();
+    if (!paneId) {
+      return { ok: false, reason: 'invalid_pane_id' };
+    }
+
+    const nowMs = Date.now();
+    const nextIntent = typeof payload?.intent === 'string' ? payload.intent.trim() : '';
+    const source = typeof payload?.source === 'string' ? payload.source : 'renderer';
+    const current = this.intentStateByPane.get(paneId) || {};
+    const role = payload?.role || current?.role || null;
+    const session = payload?.session ?? current?.session ?? null;
+    const previousIntent = typeof payload?.previousIntent === 'string'
+      ? payload.previousIntent
+      : (typeof current?.intent === 'string' ? current.intent : null);
+
+    this.intentStateByPane.set(paneId, {
+      pane: paneId,
+      role,
+      session,
+      intent: nextIntent,
+      last_update: new Date(nowMs).toISOString(),
+    });
+
+    const ready = await this.ensureTeamMemoryInitialized('intent-update');
+    if (!ready) {
+      return {
+        ok: false,
+        reason: 'team_memory_unavailable',
+        paneId,
+        intent: nextIntent,
+        session,
+      };
+    }
+
+    try {
+      const patternEvent = buildIntentUpdatePatternEvent({
+        paneId,
+        role,
+        session,
+        intent: nextIntent,
+        previousIntent,
+        source,
+        nowMs,
+      });
+      await this.appendTeamMemoryPatternEvent(patternEvent, 'intent-update');
+      return {
+        ok: true,
+        paneId,
+        intent: nextIntent,
+        session,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: 'team_memory_write_failed',
+        error: err.message,
+        paneId,
+        intent: nextIntent,
+        session,
+      };
+    }
+  }
+
+  /**
+   * Resolve target (role name, canonical paneId, or background alias) to paneId.
+   * @param {string} target - e.g. architect, 1, builder-bg-1, bg-2-1
+   * @returns {string|null} paneId or null if not found
+   */
+  resolveTargetToPane(target) {
+    if (!target) return null;
+
+    const targetRaw = String(target).trim();
+    if (!targetRaw) return null;
+    const targetLower = targetRaw.toLowerCase();
+
+    // Background builder aliases/synthetic pane IDs
+    const backgroundPaneId = resolveBackgroundBuilderPaneId(targetLower);
+    if (backgroundPaneId) {
+      return backgroundPaneId;
+    }
+
+    // Direct paneId
+    if (PANE_IDS.includes(targetRaw)) {
+      return targetRaw;
+    }
+
+    if (armSpawnAppService.isSquidRoomArmPaneId(targetLower)) {
+      return targetLower;
+    }
+
+    // Role name lookup
+    if (ROLE_ID_MAP[targetLower]) {
+      return ROLE_ID_MAP[targetLower];
+    }
+
+    // Backward-compatible aliases
+    const canonicalRole = BACKWARD_COMPAT_ROLE_ALIASES?.[targetLower];
+    if (canonicalRole && ROLE_ID_MAP[canonicalRole]) {
+      return ROLE_ID_MAP[canonicalRole];
+    }
+
+    return null;
+  }
+
+  normalizeOutboundTarget(target) {
+    if (typeof target !== 'string') return '';
+    return target.trim().toLowerCase();
+  }
+
+  isTelegramReplyTarget(target) {
+    const normalized = this.normalizeOutboundTarget(target);
+    return normalized === 'user' || normalized === 'telegram';
+  }
+
+  getTelegramReplyContextPath() {
+    try {
+      return resolveCoordPath(path.join('runtime', 'telegram-reply-context.json'), { forWrite: true });
+    } catch (_) {
+      return null;
+    }
+  }
+
+  persistTelegramReplyContext(context = {}) {
+    const contextPath = this.getTelegramReplyContextPath();
+    const chatId = normalizeChatId(context?.chatId);
+    if (!contextPath || !chatId) return false;
+
+    const payload = {
+      chatId,
+      defaultChatId: normalizeChatId(process.env.TELEGRAM_CHAT_ID || '') || null,
+      sender: typeof context?.sender === 'string' && context.sender.trim() ? context.sender.trim() : null,
+      messageId: toNonEmptyString(context?.messageId || context?.inboundMessageId) || null,
+      inboundMessageId: toNonEmptyString(context?.inboundMessageId || context?.messageId) || null,
+      updateId: Number.isFinite(Number(context?.updateId)) ? Math.floor(Number(context.updateId)) : null,
+      telegramMessageId: Number.isFinite(Number(context?.telegramMessageId))
+        ? Math.floor(Number(context.telegramMessageId))
+        : null,
+      windowKey: 'main',
+      profile: 'main',
+      sessionScopeId: toNonEmptyString(context?.sessionScopeId) || this.getWindowSessionScopeId('main'),
+      lastInboundAtMs: Number.isFinite(Number(context?.lastInboundAtMs))
+        ? Math.floor(Number(context.lastInboundAtMs))
+        : Date.now(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      fs.mkdirSync(path.dirname(contextPath), { recursive: true });
+      fs.writeFileSync(contextPath, JSON.stringify(payload, null, 2));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  markTelegramInboundContext(sender = 'unknown', metadata = {}) {
+    const chatId = normalizeChatId(metadata?.chatId);
+    const route = this.resolveTelegramInboundRoute(chatId);
+    const windowKey = toNonEmptyString(metadata?.windowKey) || route?.windowKey || 'main';
+    const profile = toNonEmptyString(metadata?.profile) || route?.profile || windowKey;
+    if (!route?.ok || windowKey !== 'main' || profile !== 'main') {
+      return this.telegramInboundContext;
+    }
+    const previousContext = this.telegramInboundContext || {};
+    const previousChatId = normalizeChatId(previousContext.chatId);
+    const sameChatContext = Boolean(previousContext.lastInboundAtMs)
+      && (!chatId || !previousChatId || previousChatId === chatId);
+    const body = toNonEmptyString(metadata?.body || metadata?.text || metadata?.rawBody);
+    this.telegramInboundContext = {
+      lastInboundAtMs: Date.now(),
+      sender: typeof sender === 'string' && sender.trim() ? sender.trim() : 'unknown',
+      chatId,
+      messageId: toNonEmptyString(metadata?.messageId || metadata?.inboundMessageId) || null,
+      inboundMessageId: toNonEmptyString(metadata?.inboundMessageId || metadata?.messageId) || null,
+      updateId: Number.isFinite(Number(metadata?.updateId)) ? Math.floor(Number(metadata.updateId)) : null,
+      telegramMessageId: Number.isFinite(Number(metadata?.telegramMessageId))
+        ? Math.floor(Number(metadata.telegramMessageId))
+        : null,
+      windowKey: 'main',
+      profile: 'main',
+      sessionScopeId: toNonEmptyString(metadata?.sessionScopeId) || this.getWindowSessionScopeId('main'),
+      lastInboundBody: body || null,
+      previousInboundBody: sameChatContext ? (toNonEmptyString(previousContext.lastInboundBody) || null) : null,
+      previousInboundAtMs: sameChatContext ? Number(previousContext.lastInboundAtMs || 0) : 0,
+    };
+    this.persistTelegramReplyContext(this.telegramInboundContext);
+    return this.telegramInboundContext;
+  }
+
+  resolveTelegramInboundWindowKey(chatId = null) {
+    const route = this.resolveTelegramInboundRoute(chatId);
+    if (route?.ok) return route.windowKey || 'main';
+    return null;
+  }
+
+  resolveTelegramInboundRoute(chatId = null) {
+    if (!isMainProfile(this.activeProfileName)) {
+      return {
+        ok: true,
+        chatId: normalizeChatId(chatId),
+        windowKey: 'main',
+        profile: 'main',
+        reason: 'secondary_profile_local_main',
+      };
+    }
+    return resolveTelegramInboundRouteConfig({
+      chatId,
+      env: {
+        ...buildProfileTelegramEnv(process.env, 'main'),
+        SQUIDRUN_TELEGRAM_ACCEPT_SCOPED_CHATS: '1',
+      },
+    });
+  }
+
+  getScopedTelegramTriggerPaths(windowKey = '') {
+    const normalizedWindowKey = toNonEmptyString(windowKey);
+    if (!normalizedWindowKey || normalizedWindowKey === 'main') return [];
+
+    // EXACT profile root or nothing. The getProjectRoot() fallback meant a
+    // scoped message whose profile root could not be resolved was written into
+    // MAIN's tree instead — a cross-profile leak that looks like delivery.
+    const profileRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env);
+    if (!profileRoot) return [];
+
+    return [path.join(
+      path.resolve(profileRoot),
+      '.squidrun',
+      `triggers-${normalizedWindowKey}`,
+      'architect.txt'
+    )];
+  }
+
+  // Busy-pane inbound hardening (Operator-approved 2026-06-02). Defaults ON; set
+  // SQUIDRUN_INJECT_BUSY_PANE_HARDENING=0 (or false/off) to roll back to the
+  // legacy clobber-write + single-attempt behaviour without a code revert.
+  isScopedInboundHardeningEnabled() {
+    const raw = String(process.env.SQUIDRUN_INJECT_BUSY_PANE_HARDENING || '').trim().toLowerCase();
+    return raw !== '0' && raw !== 'false' && raw !== 'off';
+  }
+
+  forwardScopedTelegramInboundToProfileWindow(windowKey, message) {
+    const normalizedWindowKey = toNonEmptyString(windowKey);
+    const normalizedMessage = toNonEmptyString(message);
+    if (!normalizedWindowKey || normalizedWindowKey === 'main' || !normalizedMessage) return false;
+
+    const appendMode = this.isScopedInboundHardeningEnabled();
+    let wrote = false;
+    for (const triggerPath of this.getScopedTelegramTriggerPaths(normalizedWindowKey)) {
+      try {
+        fs.mkdirSync(path.dirname(triggerPath), { recursive: true });
+        if (appendMode) {
+          // Append per-message so concurrent inbound waves to a busy pane are
+          // not clobbered into a single overwritten file (the silent-loss bug).
+          // A drained pane leaves an empty file; we re-create it on next inbound.
+          let separator = '';
+          try {
+            const existing = fs.existsSync(triggerPath) ? fs.readFileSync(triggerPath, 'utf8') : '';
+            if (existing && !existing.endsWith('\n')) separator = '\n';
+          } catch (_) { /* best-effort: fall through to plain append */ }
+          const chunk = normalizedMessage.endsWith('\n') ? normalizedMessage : `${normalizedMessage}\n`;
+          fs.appendFileSync(triggerPath, `${separator}${chunk}`, 'utf8');
+        } else {
+          fs.writeFileSync(triggerPath, normalizedMessage, 'utf8');
+        }
+        wrote = true;
+        log.info('Telegram', `Forwarded scoped Telegram inbound to ${normalizedWindowKey} trigger lane (${appendMode ? 'append' : 'overwrite'}): ${triggerPath}`);
+      } catch (err) {
+        log.warn('Telegram', `Failed to forward scoped Telegram inbound to ${triggerPath}: ${err.message}`);
+      }
+    }
+    return wrote;
+  }
+
+  async deliverScopedTelegramInboundToProfileWindow(windowKey, message, options = {}) {
+    const normalizedWindowKey = normalizeProfileName(toNonEmptyString(windowKey));
+    const normalizedMessage = toNonEmptyString(message);
+    if (!normalizedWindowKey || normalizedWindowKey === 'main' || !normalizedMessage) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'invalid_scoped_telegram_route',
+      };
+    }
+
+    const port = getProfileWebSocketPort(normalizedWindowKey);
+    const timeoutMs = Math.max(
+      1000,
+      Number.parseInt(String(options.timeoutMs || process.env.SQUIDRUN_SCOPED_TELEGRAM_ACK_TIMEOUT_MS || '7000'), 10) || 7000
+    );
+    const messageId = toNonEmptyString(options.messageId)
+      || `telegram-scoped-${normalizedWindowKey}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sessionScopeId = toNonEmptyString(options.sessionScopeId)
+      || this.getWindowSessionScopeId(normalizedWindowKey);
+    // Resolve the exact profile root BEFORE anything is constructed or opened.
+    // Falling back to getProjectRoot() addressed the scoped delivery at main's
+    // tree, which is a leak, not a fallback.
+    const projectRoot = getProfileProjectRootOverride(normalizedWindowKey, process.env);
+    if (!projectRoot) {
+      log.warn(
+        'Telegram',
+        `Scoped delivery refused for ${normalizedWindowKey}: profile root unresolved`
+      );
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        definiteNoSend: true,
+        status: 'scoped_profile_root_unresolved',
+        windowKey: normalizedWindowKey,
+      };
+    }
+    const targetRole = toNonEmptyString(options.targetRole) || 'architect';
+    const targetRaw = toNonEmptyString(options.target) || targetRole;
+    const targetPaneId = toNonEmptyString(options.targetPaneId) || ROLE_ID_MAP[targetRole] || null;
+    const envelope = buildOutboundMessageEnvelope({
+      message_id: messageId,
+      session_id: sessionScopeId,
+      priority: 'urgent',
+      content: normalizedMessage,
+      sender: { role: 'telegram' },
+      target: {
+        raw: targetRaw,
+        role: targetRole,
+        pane_id: targetPaneId,
+      },
+      project: {
+        name: path.basename(projectRoot),
+        path: projectRoot,
+        session_id: sessionScopeId,
+        source: 'telegram-poller',
+      },
+      timestamp_ms: Date.now(),
+    });
+    const dispatchMessage = buildWebSocketDispatchMessage(envelope, {
+      target: targetRaw,
+      priority: 'urgent',
+      ackRequired: true,
+      attempt: options.attempt || 1,
+      maxAttempts: options.maxAttempts || 1,
+    });
+    dispatchMessage.metadata = {
+      ...(dispatchMessage.metadata && typeof dispatchMessage.metadata === 'object' ? dispatchMessage.metadata : {}),
+      source: 'telegram-poller',
+      channel: 'telegram',
+      profileName: normalizedWindowKey,
+      windowKey: normalizedWindowKey,
+      sessionScopeId,
+      chatId: options.chatId ?? null,
+      telegramChatId: options.chatId ?? null,
+      updateId: options.updateId ?? null,
+      telegramMessageId: options.telegramMessageId ?? null,
+      sender: toNonEmptyString(options.sender),
+    };
+    dispatchMessage.traceContext = {
+      traceId: messageId,
+      correlationId: messageId,
+      messageId,
+      source: 'telegram-poller',
+      profileName: normalizedWindowKey,
+      windowKey: normalizedWindowKey,
+    };
+
+    // Injection seam: the module-load `require('ws')` capture cannot be spied
+    // on afterwards, so a test asserting "no socket was constructed" against
+    // the module object proves nothing. Construction goes through here.
+    const createWebSocket = typeof options.createWebSocket === 'function'
+      ? options.createWebSocket
+      : (url) => new WebSocket(url);
+    const ws = createWebSocket(`ws://127.0.0.1:${port}`);
+    try {
+      await waitForSocketMessage(ws, (msg) => msg.type === 'welcome', timeoutMs, 'Scoped runtime connection timeout');
+      ws.send(JSON.stringify({
+        type: 'register',
+        role: 'telegram',
+        profileName: normalizedWindowKey,
+        windowKey: normalizedWindowKey,
+        sessionScopeId,
+      }));
+      await waitForSocketMessage(ws, (msg) => msg.type === 'registered', timeoutMs, 'Scoped runtime registration timeout');
+      ws.send(JSON.stringify(dispatchMessage));
+      const ack = await waitForSocketMessage(
+        ws,
+        (msg) => msg.type === 'send-ack' && msg.messageId === messageId,
+        timeoutMs,
+        'Scoped runtime pane delivery timeout'
+      );
+      return {
+        ok: ack?.ok === true,
+        accepted: ack?.accepted === true,
+        queued: ack?.queued === true,
+        verified: ack?.verified === true,
+        userVisible: ack?.userVisible === true,
+        status: ack?.status || (ack?.verified === true ? 'delivered.verified' : 'accepted.unverified'),
+        ack,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        userVisible: false,
+        status: 'scoped_runtime_unavailable',
+        error: err.message,
+      };
+    } finally {
+      await closeSocketBestEffort(ws);
+    }
+  }
+
+  // Retry-until-final wrapper around the single-shot delivery. Each attempt
+  // opens a fresh socket and re-dispatches, with exponential backoff, so a pane
+  // that is busy mid-turn on the first attempt can still be reached once it
+  // settles. Accepted-but-unverified results are terminal: the runtime has taken
+  // ownership and re-dispatching the same inbound creates duplicate pane turns.
+  async deliverScopedTelegramInboundWithRetry(windowKey, message, options = {}) {
+    const hardening = this.isScopedInboundHardeningEnabled();
+    const maxAttempts = hardening
+      ? Math.max(1, Number.parseInt(String(process.env.SQUIDRUN_SCOPED_TELEGRAM_MAX_ATTEMPTS || '4'), 10) || 4)
+      : 1;
+    const baseBackoffMs = Math.max(
+      250,
+      Number.parseInt(String(process.env.SQUIDRUN_SCOPED_TELEGRAM_RETRY_BASE_MS || '1000'), 10) || 1000
+    );
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    let lastResult = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        lastResult = await this.deliverScopedTelegramInboundToProfileWindow(windowKey, message, { ...options, attempt, maxAttempts });
+      } catch (err) {
+        lastResult = {
+          ok: false, accepted: false, queued: false, verified: false, userVisible: false,
+          status: 'scoped_runtime_error', error: err.message,
+        };
+      }
+      if (lastResult?.verified === true && lastResult?.userVisible === true) {
+        return lastResult;
+      }
+      if (
+        lastResult?.accepted === true
+        && isScopedTelegramTerminalAcceptedStatus(lastResult?.status)
+      ) {
+        log.info(
+          'Telegram',
+          `Scoped Telegram inbound to ${windowKey} accepted without PTY verification `
+            + `(attempt ${attempt}/${maxAttempts}, status=${lastResult.status}); not retrying`
+        );
+        return lastResult;
+      }
+      if (attempt < maxAttempts) {
+        const delayMs = Math.min(8000, baseBackoffMs * (2 ** (attempt - 1)));
+        log.warn(
+          'Telegram',
+          `Scoped Telegram inbound to ${windowKey} not verified (attempt ${attempt}/${maxAttempts}, status=${lastResult?.status || 'unknown'}); retrying in ${delayMs}ms`
+        );
+        await sleep(delayMs);
+      }
+    }
+    return lastResult || {
+      ok: false, accepted: false, queued: false, verified: false, userVisible: false,
+      status: 'scoped_runtime_unavailable',
+    };
+  }
+
+  handleScopedTelegramInboundFallback(windowKey, message, deliveryResult = null) {
+    const normalizedWindowKey = toNonEmptyString(windowKey);
+    const status = toNonEmptyString(deliveryResult?.status) || 'unknown';
+    log.warn(
+      'Telegram',
+      `Scoped Telegram pane injection for ${normalizedWindowKey || 'unknown'} did not verify (${status}); writing trigger fallback`
+    );
+    const forwarded = this.forwardScopedTelegramInboundToProfileWindow(normalizedWindowKey, message);
+    if (!forwarded) {
+      log.error('Telegram', `Scoped Telegram fallback failed for ${normalizedWindowKey || 'unknown'}; message was not pane-visible`);
+    }
+    return forwarded;
+  }
+
+  shouldRouteMainTelegramInboundToMira({ body, inboundWindowKey = 'main', archivePath = null, media = null, photo = null, document = null } = {}) {
+    const text = toNonEmptyString(body);
+    if (!text || inboundWindowKey !== 'main') return false;
+    if (archivePath || media || photo || document) return false;
+    if (isTelegramAgentOpsOrCommandText(text)) return false;
+    if (String(process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED || '').trim() !== '1') return false;
+    return true;
+  }
+
+  getMiraTelegramChannelStatePath() {
+    return resolveCoordPath(path.join('runtime', 'mira-telegram-channel-state.json'), { forWrite: true });
+  }
+
+  readMiraTelegramChannelState() {
+    const statePath = this.getMiraTelegramChannelStatePath();
+    try {
+      if (!fs.existsSync(statePath)) {
+        return { version: 1, chats: {} };
+      }
+      const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        return { version: 1, chats: {} };
+      }
+      return {
+        version: 1,
+        chats: (parsed.chats && typeof parsed.chats === 'object' && !Array.isArray(parsed.chats))
+          ? parsed.chats
+          : {},
+      };
+    } catch (_) {
+      return { version: 1, chats: {} };
+    }
+  }
+
+  writeMiraTelegramChannelState(state = {}) {
+    const statePath = this.getMiraTelegramChannelStatePath();
+    try {
+      fs.mkdirSync(path.dirname(statePath), { recursive: true });
+      fs.writeFileSync(statePath, `${JSON.stringify({
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        chats: state.chats || {},
+      }, null, 2)}\n`, 'utf8');
+      return true;
+    } catch (error) {
+      log.warn('Telegram', `Failed writing Mira Telegram channel state: ${error.message}`);
+      return false;
+    }
+  }
+
+  getMiraTelegramChannelKey(chatId = null) {
+    return normalizeChatId(chatId) || 'default';
+  }
+
+  shouldOrientMiraTelegramChannel(chatId = null) {
+    const key = this.getMiraTelegramChannelKey(chatId);
+    const state = this.readMiraTelegramChannelState();
+    return !state.chats?.[key]?.firstContactAt;
+  }
+
+  markMiraTelegramChannelOriented(chatId = null, metadata = {}) {
+    const key = this.getMiraTelegramChannelKey(chatId);
+    const state = this.readMiraTelegramChannelState();
+    state.chats = state.chats || {};
+    state.chats[key] = {
+      ...(state.chats[key] || {}),
+      firstContactAt: new Date().toISOString(),
+      chatId: normalizeChatId(chatId) || null,
+      messageId: toNonEmptyString(metadata.messageId) || null,
+      mode: 'mira-telegram',
+    };
+    return this.writeMiraTelegramChannelState(state);
+  }
+
+  buildMiraTelegramUserFacingReply(replyText, { chatId = null } = {}) {
+    const text = toNonEmptyString(replyText);
+    if (!text) return { text: '', oriented: false };
+    if (!this.shouldOrientMiraTelegramChannel(chatId)) {
+      return { text, oriented: false };
+    }
+    return {
+      text: `${MIRA_TELEGRAM_FIRST_CONTACT_TEXT}\n\n${text}`,
+      oriented: true,
+    };
+  }
+
+  buildMiraDirectChannelStatusReply(body, options = {}) {
+    const metadata = options.metadata && typeof options.metadata === 'object' ? options.metadata : {};
+    const chatId = metadata.chatId ?? options.chatId ?? null;
+    const inboundRoute = options.inboundRoute || this.resolveTelegramInboundRoute(chatId);
+    return buildMiraDirectChannelStatusAnswerV0({
+      promptText: body,
+      metadata: {
+        ...metadata,
+        channel: 'telegram',
+        sessionId: options.inboundSessionScopeId || options.sessionId || this.getWindowSessionScopeId('main'),
+        windowKey: inboundRoute?.windowKey || metadata.windowKey || 'main',
+        profile: inboundRoute?.profile || metadata.profile || 'main',
+      },
+      inboundRoute,
+    }, {
+      projectRoot: getProjectRoot(),
+      nowMs: options.nowMs,
+      currentLaneSnapshot: options.currentLaneSnapshot,
+      commsRows: options.commsRows,
+      commsReader: options.commsReader || queryCommsJournalEntries,
+      evidenceLedgerDbPath: options.evidenceLedgerDbPath,
+      commsLimit: options.commsLimit,
+      progressReport: options.progressReport,
+      progressProofPath: options.progressProofPath,
+      head: options.head,
+      worktreeState: options.worktreeState,
+      sessionId: options.inboundSessionScopeId || options.sessionId || this.getWindowSessionScopeId('main'),
+    });
+  }
+
+  containMiraTelegramVisibleReply(replyText, { prompt = '' } = {}) {
+    const text = toNonEmptyString(replyText);
+    if (!text) {
+      return { text: '', contained: false, reason: null };
+    }
+    const frustrated = MIRA_TELEGRAM_FRUSTRATION_INPUT_PATTERN.test(toNonEmptyString(prompt));
+    const metaRepair = MIRA_TELEGRAM_META_REPAIR_REPLY_PATTERN.test(text);
+    if (!frustrated || !metaRepair) {
+      return { text, contained: false, reason: null };
+    }
+    return {
+      text: MIRA_TELEGRAM_META_REPAIR_CONTAINMENT_TEXT,
+      contained: true,
+      reason: 'meta_repair_loop',
+    };
+  }
+
+  getTelegramReplyDedupeKey({ message, chatId = null, target = null, fromRole = null } = {}) {
+    const text = toNonEmptyString(message);
+    if (!text) return null;
+    const normalizedChatId = normalizeChatId(chatId) || 'default';
+    return createHash('sha256')
+      .update(JSON.stringify({
+        chatId: normalizedChatId,
+        target: toNonEmptyString(target) || '',
+        fromRole: toNonEmptyString(fromRole) || '',
+        message: text,
+      }))
+      .digest('hex');
+  }
+
+  pruneTelegramReplyDedupe(nowMs = Date.now()) {
+    for (const [key, entry] of this.telegramReplyDedupe.entries()) {
+      if (!entry || (nowMs - Number(entry.atMs || 0)) > TELEGRAM_REPLY_DEDUPE_WINDOW_MS) {
+        this.telegramReplyDedupe.delete(key);
+      }
+    }
+  }
+
+  hasSentTelegramReply({ message, chatId = null, target = null, fromRole = null } = {}, nowMs = Date.now()) {
+    const key = this.getTelegramReplyDedupeKey({ message, chatId, target, fromRole });
+    if (!key) return { duplicate: false, key: null };
+    this.pruneTelegramReplyDedupe(nowMs);
+    const previous = this.telegramReplyDedupe.get(key);
+    if (previous && (nowMs - Number(previous.atMs || 0)) <= TELEGRAM_REPLY_DEDUPE_WINDOW_MS) {
+      return { duplicate: true, key, previous };
+    }
+    return { duplicate: false, key };
+  }
+
+  markTelegramReplySent({ message, chatId = null, target = null, fromRole = null, messageId = null } = {}, nowMs = Date.now()) {
+    const key = this.getTelegramReplyDedupeKey({ message, chatId, target, fromRole });
+    if (!key) return { ok: false, key: null };
+    this.pruneTelegramReplyDedupe(nowMs);
+    this.telegramReplyDedupe.set(key, {
+      atMs: nowMs,
+      chatId: normalizeChatId(chatId) || 'default',
+      target: toNonEmptyString(target) || null,
+      fromRole: toNonEmptyString(fromRole) || null,
+      messageId: toNonEmptyString(messageId) || null,
+      status: 'sent',
+    });
+    return { ok: true, key };
+  }
+
+  normalizeTelegramCoalesceText(value = '') {
+    return toNonEmptyString(value)
+      .toLowerCase()
+      .replace(/[’']/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  isShortTelegramStrayText(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text || text.startsWith('/') || text.includes('?') || text.includes('\n')) return false;
+    if (text.length > 64) return false;
+    const words = text.match(/[a-z0-9]+/g) || [];
+    if (!words.length || words.length > 6) return false;
+    if (/https?:\/\/|www\.|@/.test(text)) return false;
+    return !/\b(urgent|emergency|compromised|unauthorized|password|credential|token|payment|charge|wire|bank|trade|buy|sell|order|position|capital|deploy|delete|shutdown|restart|stop|call|help)\b/.test(text);
+  }
+
+  isTelegramStrayNegation(latestText = '', previousText = '') {
+    const latest = this.normalizeTelegramCoalesceText(latestText);
+    const previous = this.normalizeTelegramCoalesceText(previousText);
+    if (!latest || !previous) return false;
+    const negates = /\b(wtf|what the fuck|ignore|stray|accident|accidental|accidentally|mistake|wrong|didnt mean|did not mean|dont know why|do not know why|idk why|not sure why|not an instruction|not a request|not a task|no action|wasnt me|was not me)\b/.test(latest);
+    const requestsResult = this.telegramStrayNegationRequestsVisibleResult(latest);
+    const flagsRisk = this.telegramReplyHasActionableRisk(latest);
+    if (!negates && !requestsResult && !flagsRisk) return false;
+    return latest.includes(previous)
+      || /\b(that|this|it|message|text|name|word|thing)\b/.test(latest)
+      || requestsResult
+      || flagsRisk;
+  }
+
+  telegramStrayNegationRequestsVisibleResult(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text) return false;
+    return /\b(can|could|would) you (check|look|investigate|tell|find|figure|debug|report)\b/.test(text)
+      || /\bplease (check|look|investigate|tell|find|figure|debug|report)\b/.test(text)
+      || /\bi need you to (check|look|investigate|tell|find|figure|debug|report)\b/.test(text)
+      || /\b(find out|figure out|look into|check) (what happened|why|what caused|what sent|why it sent|why did it send)\b/.test(text)
+      || /\bwhy did (it|that|this|telegram|the phone|my phone|squidrun) (send|say|route|happen)\b/.test(text)
+      || /\bwhat caused (that|this|it|the send|the message|the telegram|telegram to send)\b/.test(text)
+      || /\b(tell me|let me know|report back|send me|keep me posted)\b/.test(text);
+  }
+
+  telegramReplyHasActionableRisk(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text) return false;
+    return /\b(urgent|emergency|compromised|unauthorized|security|password|credential|token|payment|charge|wire|bank|trade|buy|sell|order|position|capital|production|outage|data loss|requires action|need you to|you need to|must act|act now|right now)\b/.test(text);
+  }
+
+  isTelegramStrayCorrectionReplyCandidate(value = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    if (!text || this.telegramReplyHasActionableRisk(text)) return false;
+    if (/^(got it|ok|okay|copy|understood|heard|yep|yeah)\b/.test(text) && text.length <= 180) {
+      return true;
+    }
+    return /\b(stray|accidental|accidentally|not an instruction|not a request|not a task|taking no action|no action|ghost action|inbound route|wrong-window|wrong window|stale replay|fresh real telegram|telegram text|telegram input|phone input|voice weirdness|upstream of squidrun)\b/.test(text);
+  }
+
+  isTelegramStrayClarificationReplyCandidate(value = '', previousStrayText = '') {
+    const text = this.normalizeTelegramCoalesceText(value);
+    const previous = this.normalizeTelegramCoalesceText(previousStrayText);
+    if (!text || !previous || this.telegramReplyHasActionableRisk(text)) return false;
+    if (!text.includes(previous)) return false;
+    return /\b(send|give|tell)\b.*\b(action|context|instruction|task|request|what|who|why)\b/.test(text)
+      || /\b(what should i do|what do you want|need the action|need context|need an action|need a task)\b/.test(text);
+  }
+
+  getTelegramShortStrayNegationContext({ chatId = null } = {}, nowMs = Date.now()) {
+    const context = this.telegramInboundContext || {};
+    const latestBody = toNonEmptyString(context.lastInboundBody);
+    const previousBody = toNonEmptyString(context.previousInboundBody);
+    const lastInboundAtMs = Number(context.lastInboundAtMs || 0);
+    const previousInboundAtMs = Number(context.previousInboundAtMs || 0);
+    if (!latestBody || !previousBody || !lastInboundAtMs || !previousInboundAtMs) return null;
+    if ((lastInboundAtMs - previousInboundAtMs) < 0) return null;
+    if ((lastInboundAtMs - previousInboundAtMs) > TELEGRAM_STRAY_NEGATION_WINDOW_MS) return null;
+    if ((nowMs - lastInboundAtMs) > TELEGRAM_REPLY_WINDOW_MS) return null;
+    if (!this.isShortTelegramStrayText(previousBody)) return null;
+    if (!this.isTelegramStrayNegation(latestBody, previousBody)) return null;
+
+    const contextChatId = normalizeChatId(context.chatId);
+    const replyChatId = normalizeChatId(chatId);
+    if (contextChatId && replyChatId && contextChatId !== replyChatId) return null;
+
+    const key = createHash('sha256')
+      .update(JSON.stringify({
+        chatId: replyChatId || contextChatId || 'default',
+        previous: this.normalizeTelegramCoalesceText(previousBody),
+        latest: this.normalizeTelegramCoalesceText(latestBody),
+      }))
+      .digest('hex');
+    return {
+      key,
+      chatId: replyChatId || contextChatId || null,
+      previousBody,
+      latestBody,
+      previousInboundAtMs,
+      lastInboundAtMs,
+    };
+  }
+
+  getTelegramStrayClarificationSuppression({ message, chatId = null } = {}, nowMs = Date.now()) {
+    const context = this.getTelegramShortStrayNegationContext({ chatId }, nowMs);
+    if (!context?.key) return { suppress: false, key: null, context: null };
+    if (!this.isTelegramStrayClarificationReplyCandidate(message, context.previousBody)) {
+      return { suppress: false, key: context.key, context };
+    }
+    return { suppress: true, key: context.key, context };
+  }
+
+  getTelegramStrayCorrectionCoalesceContext({ message, chatId = null } = {}, nowMs = Date.now()) {
+    if (!this.isTelegramStrayCorrectionReplyCandidate(message)) return null;
+    const context = this.getTelegramShortStrayNegationContext({ chatId }, nowMs);
+    if (!context) return null;
+    if (
+      this.telegramStrayNegationRequestsVisibleResult(context.latestBody)
+      || this.telegramReplyHasActionableRisk(context.latestBody)
+    ) {
+      return null;
+    }
+    return context;
+  }
+
+  pruneTelegramStrayCorrectionReplies(nowMs = Date.now()) {
+    for (const [key, entry] of this.telegramStrayCorrectionReplies.entries()) {
+      if (!entry || (nowMs - Number(entry.atMs || 0)) > TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS) {
+        this.telegramStrayCorrectionReplies.delete(key);
+      }
+    }
+  }
+
+  hasSentTelegramStrayCorrectionReply({ message, chatId = null } = {}, nowMs = Date.now()) {
+    const context = this.getTelegramStrayCorrectionCoalesceContext({ message, chatId }, nowMs);
+    if (!context?.key) return { duplicate: false, key: null, context: null };
+    this.pruneTelegramStrayCorrectionReplies(nowMs);
+    const previous = this.telegramStrayCorrectionReplies.get(context.key);
+    if (previous && (nowMs - Number(previous.atMs || 0)) <= TELEGRAM_STRAY_REPLY_COALESCE_WINDOW_MS) {
+      return { duplicate: true, key: context.key, context, previous };
+    }
+    return { duplicate: false, key: context.key, context };
+  }
+
+  markTelegramStrayCorrectionReplySent({ coalesceContext = null, message = null, messageId = null } = {}, nowMs = Date.now()) {
+    const key = toNonEmptyString(coalesceContext?.key);
+    if (!key) return { ok: false, key: null };
+    this.pruneTelegramStrayCorrectionReplies(nowMs);
+    this.telegramStrayCorrectionReplies.set(key, {
+      atMs: nowMs,
+      chatId: normalizeChatId(coalesceContext.chatId) || null,
+      messageId: toNonEmptyString(messageId) || null,
+      message: toNonEmptyString(message) || null,
+      status: 'sent',
+    });
+    return { ok: true, key };
+  }
+
+  async buildTelegramMiraLiveReply(body, options = {}) {
+    const prompt = toNonEmptyString(body);
+    if (!prompt) {
+      return {
+        ok: false,
+        state: 'empty',
+        message: '',
+      };
+    }
+
+    return sendMiraLivePrompt(
+      {
+        prompt,
+        sessionId: options.sessionId || options.session_id || this.commsSessionScopeId || this.getWindowSessionScopeId('main'),
+        source: 'telegram-mira-live',
+      },
+      {
+        invoke: (channel, payload) => {
+          if (channel !== MIRA_LIVE_PROMPT_REPLY_CHANNEL) {
+            throw new Error(`unsupported_mira_live_channel:${channel}`);
+          }
+          return miraConversationHandlersModule.buildMiraConversationReplyResponse(payload, {
+            projectRoot: getProjectRoot(),
+          });
+        },
+      }
+    );
+  }
+
+  async routeMainTelegramInboundToMira({
+    body,
+    sender = 'unknown',
+    metadata = {},
+    inboundMessageId = null,
+    inboundSessionScopeId = null,
+    nowMs = null,
+    currentLaneSnapshot = null,
+    commsRows = null,
+    commsReader = null,
+    evidenceLedgerDbPath = null,
+    progressReport = null,
+    progressProofPath = null,
+    head = null,
+    worktreeState = null,
+  } = {}) {
+    if (isMiraDirectChannelStatusPrompt(body)) {
+      const directChannelStatusAnswer = this.buildMiraDirectChannelStatusReply(body, {
+        metadata,
+        inboundSessionScopeId,
+        nowMs,
+        currentLaneSnapshot,
+        commsRows,
+        commsReader,
+        evidenceLedgerDbPath,
+        progressReport,
+        progressProofPath,
+        head,
+        worktreeState,
+      });
+      if (directChannelStatusAnswer?.ok === true) {
+        const userFacingReply = this.buildMiraTelegramUserFacingReply(directChannelStatusAnswer.answer_text, {
+          chatId: metadata?.chatId,
+        });
+        const telegramResult = await this.routeTelegramReply({
+          target: 'telegram',
+          content: userFacingReply.text,
+          fromRole: 'mira',
+          messageId: inboundMessageId ? `${inboundMessageId}-mira-direct-status-reply` : null,
+          chatId: metadata?.chatId,
+          requireDurableJournal: true,
+          inboundMessageId,
+        });
+        if (telegramResult?.ok && userFacingReply.oriented) {
+          this.markMiraTelegramChannelOriented(metadata?.chatId, {
+            messageId: telegramResult.messageId || (inboundMessageId ? `${inboundMessageId}-mira-direct-status-reply` : null),
+          });
+        }
+        return {
+          ok: Boolean(telegramResult?.ok),
+          handled: true,
+          status: telegramResult?.status || (telegramResult?.ok ? 'telegram_delivered' : 'telegram_send_failed'),
+          reply: {
+            ok: true,
+            state: 'ready',
+            source: 'mira_direct_channel_status_v0',
+            message: directChannelStatusAnswer.answer_text,
+          },
+          // PROMOTED here too. This return was missed the first time: I
+          // asserted the patch matched ">= 1" return and then described it as
+          // both. A direct-status throw therefore still fell through to the
+          // Architect pane and could duplicate the reply.
+          accepted: telegramResult?.accepted === true,
+          ambiguous: telegramResult?.ambiguous === true,
+          definiteNoSend: telegramResult?.definiteNoSend === true,
+          directChannelStatusAnswer,
+          telegramResult,
+        };
+      }
+    }
+
+    const reply = await this.buildTelegramMiraLiveReply(body, {
+      sessionId: inboundSessionScopeId || this.getWindowSessionScopeId('main'),
+      sender,
+      metadata,
+      inboundMessageId,
+    });
+    const visibleReply = toNonEmptyString(reply?.message || reply?.replyText);
+    if (!visibleReply) {
+      return {
+        ok: false,
+        handled: true,
+        status: 'mira_empty_reply',
+        reply,
+      };
+    }
+
+    const containedReply = this.containMiraTelegramVisibleReply(visibleReply, {
+      prompt: body,
+    });
+    const userFacingReply = this.buildMiraTelegramUserFacingReply(containedReply.text, {
+      chatId: metadata?.chatId,
+    });
+    const telegramResult = await this.routeTelegramReply({
+      target: 'telegram',
+      content: userFacingReply.text,
+      fromRole: 'mira',
+      messageId: inboundMessageId ? `${inboundMessageId}-mira-reply` : null,
+      chatId: metadata?.chatId,
+      // routeTelegramReply derives window/profile/chat from the route it
+      // resolves; we only supply what it cannot know.
+      requireDurableJournal: true,
+      inboundMessageId,
+    });
+    if (telegramResult?.ok && userFacingReply.oriented) {
+      this.markMiraTelegramChannelOriented(metadata?.chatId, {
+        messageId: telegramResult.messageId || (inboundMessageId ? `${inboundMessageId}-mira-reply` : null),
+      });
+    }
+
+    return {
+      ok: Boolean(telegramResult?.ok),
+      handled: true,
+      status: telegramResult?.status || (telegramResult?.ok ? 'telegram_delivered' : 'telegram_send_failed'),
+      // PROMOTED. The adapter inspects these at the top level, so leaving them
+      // nested meant a correctly-classified ambiguous send still fell through
+      // to the Architect pane and duplicated the reply.
+      accepted: telegramResult?.accepted === true,
+      ambiguous: telegramResult?.ambiguous === true,
+      definiteNoSend: telegramResult?.definiteNoSend === true,
+      reply,
+      telegramResult,
+    };
+  }
+
+  hasRecentTelegramInbound(nowMs = Date.now()) {
+    const lastInboundAtMs = Number(this.telegramInboundContext?.lastInboundAtMs || 0);
+    if (!Number.isFinite(lastInboundAtMs) || lastInboundAtMs <= 0) return false;
+    return (nowMs - lastInboundAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
+  }
+
+  async routeTelegramReply({
+    target,
+    content,
+    fromRole = 'system',
+    messageId = null,
+    chatId = null,
+    requireDurableJournal = false,
+    inboundMessageId = null,
+  } = {}) {
+    const normalizedTarget = this.normalizeOutboundTarget(target);
+    if (!this.isTelegramReplyTarget(normalizedTarget)) {
+      return {
+        handled: false,
+      };
+    }
+
+    const requiresRecentInbound = normalizedTarget !== 'telegram';
+    if (requiresRecentInbound && !this.hasRecentTelegramInbound()) {
+      return {
+        handled: true,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'telegram_context_stale',
+      };
+    }
+
+    const message = typeof content === 'string' ? content.trim() : '';
+    if (!message) {
+      return {
+        handled: true,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'telegram_empty_content',
+      };
+    }
+
+    try {
+      const replyChatId = normalizeChatId(chatId)
+        || (requiresRecentInbound ? normalizeChatId(this.telegramInboundContext?.chatId) : null);
+      const contextWindowKey = toNonEmptyString(this.telegramInboundContext?.windowKey) || 'main';
+      const contextProfile = toNonEmptyString(this.telegramInboundContext?.profile)
+        || (contextWindowKey === 'main' ? 'main' : contextWindowKey);
+      if (requiresRecentInbound && (contextWindowKey !== 'main' || contextProfile !== 'main')) {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_privacy_route_cross_profile_context',
+          error: 'inherited_telegram_context_not_main',
+          windowKey: contextWindowKey,
+          profile: contextProfile,
+          chatId: replyChatId || null,
+          sessionScopeId: toNonEmptyString(this.telegramInboundContext?.sessionScopeId)
+            || this.getWindowSessionScopeId(contextWindowKey),
+        };
+      }
+      let routeWindowKey = 'main';
+      let routeProfile = 'main';
+      let routeSessionScopeId = this.commsSessionScopeId || this.getWindowSessionScopeId('main');
+      if (requiresRecentInbound && replyChatId) {
+        const replyRoute = this.resolveTelegramInboundRoute(replyChatId);
+        if (!replyRoute?.ok) {
+          return {
+            handled: true,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'telegram_privacy_route_blocked',
+            error: replyRoute?.reason || 'telegram_inbound_route_blocked',
+          };
+        }
+        routeWindowKey = toNonEmptyString(replyRoute.windowKey) || 'main';
+        routeProfile = toNonEmptyString(replyRoute.profile) || routeWindowKey;
+        routeSessionScopeId = this.getWindowSessionScopeId(routeWindowKey);
+        if (routeWindowKey !== 'main' || routeProfile !== 'main') {
+          return {
+            handled: true,
+            ok: false,
+            accepted: false,
+            queued: false,
+            verified: false,
+            status: 'telegram_privacy_route_cross_profile_context',
+            error: replyRoute?.reason || 'telegram_inbound_route_non_main',
+            windowKey: routeWindowKey,
+            profile: routeProfile,
+            chatId: replyChatId,
+            sessionScopeId: routeSessionScopeId,
+          };
+        }
+      } else if (!requiresRecentInbound && replyChatId) {
+        const explicitRoute = this.resolveTelegramInboundRoute(replyChatId);
+        if (explicitRoute?.ok) {
+          routeWindowKey = toNonEmptyString(explicitRoute.windowKey) || 'main';
+          routeProfile = toNonEmptyString(explicitRoute.profile) || routeWindowKey;
+          routeSessionScopeId = this.getWindowSessionScopeId(routeWindowKey);
+        }
+      }
+      if (requiresRecentInbound && !replyChatId && toNonEmptyString(this.telegramInboundContext?.windowKey) !== 'main') {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_privacy_route_missing_chat',
+        };
+      }
+      const dedupe = this.hasSentTelegramReply({
+        message,
+        chatId: replyChatId,
+        target: normalizedTarget,
+        fromRole,
+      });
+      if (dedupe.duplicate) {
+        return {
+          handled: true,
+          ok: true,
+          accepted: true,
+          queued: false,
+          verified: true,
+          status: 'telegram_duplicate_suppressed',
+          chatId: replyChatId || null,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          sessionScopeId: routeSessionScopeId,
+        };
+      }
+      const staleStrayClarification = this.getTelegramStrayClarificationSuppression({
+        message,
+        chatId: replyChatId,
+      });
+      if (staleStrayClarification.suppress) {
+        return {
+          handled: true,
+          ok: true,
+          accepted: true,
+          queued: false,
+          verified: true,
+          status: 'telegram_stray_clarification_suppressed',
+          chatId: replyChatId || null,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          sessionScopeId: routeSessionScopeId,
+        };
+      }
+      const strayCorrectionCoalesce = this.hasSentTelegramStrayCorrectionReply({
+        message,
+        chatId: replyChatId,
+      });
+      if (strayCorrectionCoalesce.duplicate) {
+        return {
+          handled: true,
+          ok: true,
+          accepted: true,
+          queued: false,
+          verified: true,
+          status: 'telegram_stray_correction_coalesced',
+          chatId: replyChatId || null,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          sessionScopeId: routeSessionScopeId,
+        };
+      }
+      // Strict mode needs something to correlate against. Refusing BEFORE the
+      // HTTP call is the point: a send with no correlatable id can never be
+      // proven later, so replay would treat it as never-delivered and re-send.
+      if (requireDurableJournal === true && !toNonEmptyString(inboundMessageId)) {
+        return {
+          handled: true,
+          ok: false,
+          accepted: false,
+          queued: false,
+          verified: false,
+          status: 'telegram_missing_inbound_correlation',
+          error: 'require_durable_journal_without_inbound_message_id',
+        };
+      }
+
+      const result = await sendRoutedTelegramMessage(message, process.env, {
+        messageId,
+        senderRole: fromRole,
+        sessionId: this.commsSessionScopeId || null,
+        chatId: replyChatId || null,
+        requireDurableJournal: requireDurableJournal === true,
+        metadata: {
+          routeKind: 'telegram',
+          targetRaw: normalizedTarget,
+          // Identity comes from the route THIS function resolved, not from
+          // caller-supplied metadata: a caller could otherwise stamp a row with
+          // a window/profile the message never went to, and the replay check
+          // would accept it as proof.
+          inboundMessageId: toNonEmptyString(inboundMessageId),
+          routeKey: routeProfile,
+          windowKey: routeWindowKey,
+          profile: routeProfile,
+          chatId: replyChatId || null,
+          telegramChatId: replyChatId || null,
+          sessionScopeId: routeSessionScopeId,
+        },
+      });
+      if (!result?.ok) {
+        // AMBIGUITY MUST SURVIVE THIS BOUNDARY. Collapsing every failure to
+        // telegram_send_failed told the Mira adapter "nothing was sent", and it
+        // then fell back to the Architect pane — a SECOND visible reply for one
+        // inbound message, inside a single delivery attempt. Only a proven
+        // pre-HTTP no-send, or a definite rejection from Telegram itself, is
+        // safe to treat that way.
+        // SCOPED to the strict path. Marking every failure ambiguous changed
+        // unrelated senders whose retry logic depends on a plain
+        // telegram_send_failed — the reply-dedup guard would have started
+        // suppressing legitimate retries after an ECONNRESET. Only the callers
+        // that opted into durable claims get ambiguity semantics.
+        const provenNoSend = requireDurableJournal !== true
+          || result?.definiteNoSend === true
+          || result?.error === 'empty_message';
+        return {
+          handled: true,
+          ok: false,
+          accepted: !provenNoSend,
+          ambiguous: !provenNoSend,
+          definiteNoSend: provenNoSend,
+          queued: false,
+          verified: false,
+          status: provenNoSend ? 'telegram_send_failed' : 'telegram_send_ambiguous',
+          error: result?.error || 'unknown_error',
+        };
+      }
+      const guardPaneId = ROLE_ID_MAP.architect || '1';
+      const pendingGuard = this.pendingTelegramReplyGuards.get(String(guardPaneId));
+      const sentMessageId = result.journalMessageId || messageId || result.messageId;
+      const durableSatisfaction = pendingGuard
+        ? this.satisfyDurableTelegramReplyObligationForGuard(pendingGuard, {
+          source: 'squidrun-app.route-telegram-reply',
+          reason: 'telegram_delivery_confirmed',
+          egressMessageId: sentMessageId || null,
+          chatId: result.chatId || replyChatId || null,
+          sessionId: routeSessionScopeId || this.commsSessionScopeId || null,
+          satisfiedAtMs: Date.now(),
+        })
+        : this.satisfyLatestDurableTelegramReplyObligationForTelegramEgress({
+          source: 'squidrun-app.route-telegram-reply',
+          reason: 'same_chat_telegram_delivery_confirmed',
+          egressMessageId: sentMessageId || null,
+          chatId: result.chatId || replyChatId || null,
+          sessionId: routeSessionScopeId || this.commsSessionScopeId || null,
+          satisfiedAtMs: Date.now(),
+        });
+      this.clearPendingTelegramReplyGuard({
+        paneId: guardPaneId,
+        chatId: replyChatId || null,
+      });
+      this.markTelegramReplySent({
+        message,
+        chatId: replyChatId,
+        target: normalizedTarget,
+        fromRole,
+        messageId: sentMessageId,
+      });
+      this.markTelegramStrayCorrectionReplySent({
+        coalesceContext: strayCorrectionCoalesce.context,
+        message,
+        messageId: sentMessageId,
+      });
+
+      return {
+        handled: true,
+        ok: true,
+        accepted: true,
+        queued: true,
+        verified: true,
+        status: 'telegram_delivered',
+        messageId: sentMessageId || null,
+        chatId: result.chatId || null,
+        windowKey: routeWindowKey,
+        profile: routeProfile,
+        sessionScopeId: routeSessionScopeId,
+        routeMethod: result.method || null,
+        durableSatisfaction,
+      };
+    } catch (err) {
+      return {
+        handled: true,
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'telegram_send_failed',
+        error: err.message,
+      };
+    }
+  }
+
+  resolveAutonomousSmokeProjectPath(projectMetadata = null) {
+    const fallback = getProjectRoot()
+      || path.resolve(path.join(WORKSPACE_PATH, '..'));
+    if (!projectMetadata || typeof projectMetadata !== 'object') {
+      return fallback;
+    }
+
+    const directPath = typeof projectMetadata.path === 'string'
+      ? projectMetadata.path.trim()
+      : '';
+    if (directPath) return path.resolve(directPath);
+
+    const envelopeProjectPath = typeof projectMetadata?.envelope?.project?.path === 'string'
+      ? projectMetadata.envelope.project.path.trim()
+      : '';
+    if (envelopeProjectPath) return path.resolve(envelopeProjectPath);
+
+    return fallback;
+  }
+
+  buildAutonomousSmokeRunId() {
+    this.autonomousSmoke.sequence += 1;
+    const sequenceId = String(this.autonomousSmoke.sequence).padStart(4, '0');
+    return `auto-smoke-${Date.now()}-${sequenceId}`;
+  }
+
+  async runAutonomousSmokeSidecar(args = [], { projectPath = null, timeoutMs = AUTONOMOUS_SMOKE_TIMEOUT_MS } = {}) {
+    if (!fs.existsSync(AUTONOMOUS_SMOKE_RUNNER_PATH)) {
+      return {
+        ok: false,
+        status: 'runner_missing',
+        code: null,
+        signal: null,
+        timedOut: false,
+        stdout: '',
+        stderr: `Runner not found: ${AUTONOMOUS_SMOKE_RUNNER_PATH}`,
+      };
+    }
+
+    const cwd = projectPath && fs.existsSync(projectPath)
+      ? projectPath
+      : getProjectRoot();
+    const env = {
+      ...process.env,
+      SQUIDRUN_PROJECT_ROOT: projectPath || getProjectRoot() || process.env.SQUIDRUN_PROJECT_ROOT || process.cwd(),
+    };
+
+    return await new Promise((resolve) => {
+      const child = spawn('node', [AUTONOMOUS_SMOKE_RUNNER_PATH, 'run', ...args], {
+        cwd: cwd || undefined,
+        env,
+        windowsHide: true,
+      });
+
+      let stdout = '';
+      let stderr = '';
+      let settled = false;
+      let timedOut = false;
+      const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill();
+        } catch (_) {
+          // Best effort.
+        }
+      }, Math.max(1000, timeoutMs));
+
+      const finalize = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        resolve(result);
+      };
+
+      if (child.stdout) {
+        child.stdout.on('data', (chunk) => {
+          stdout += String(chunk || '');
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on('data', (chunk) => {
+          stderr += String(chunk || '');
+        });
+      }
+
+      child.on('error', (err) => {
+        finalize({
+          ok: false,
+          status: 'spawn_failed',
+          code: null,
+          signal: null,
+          timedOut,
+          stdout,
+          stderr: `${stderr}\n${err.message}`.trim(),
+        });
+      });
+
+      child.on('close', (code, signal) => {
+        finalize({
+          ok: Number(code) === 0 && !timedOut,
+          status: Number(code) === 0 ? 'ok' : 'runner_failed',
+          code,
+          signal: signal || null,
+          timedOut,
+          stdout,
+          stderr,
+        });
+      });
+    });
+  }
+
+  buildAutonomousSmokeSummary(summary = {}, context = {}) {
+    const safeSummary = (summary && typeof summary === 'object' && !Array.isArray(summary))
+      ? summary
+      : {};
+    const safeContext = (context && typeof context === 'object' && !Array.isArray(context))
+      ? context
+      : {};
+    const status = formatSmokeResultMessage(safeSummary, {
+      senderRole: safeContext.senderRole || 'builder',
+      triggerReason: safeContext.triggerReason || null,
+      runId: safeContext.runId || safeSummary.runId || null,
+    });
+    const lines = [
+      status,
+      `url=${safeSummary.url || 'unresolved'}`,
+      `artifact_dir=${safeSummary.runDir || 'n/a'}`,
+      `console_errors=${Number(safeSummary.consoleErrorCount || 0)}`,
+      `page_errors=${Number(safeSummary.pageErrorCount || 0)}`,
+      `request_failures=${Number(safeSummary.requestFailureCount || 0)}`,
+      `http_errors=${Number(safeSummary.httpErrorCount || 0)}`,
+      `axe_violations=${Number(safeSummary.axeViolationCount || 0)}`,
+      `broken_links=${Number(safeSummary.brokenLinkCount || 0)}`,
+      `diff_pixels=${Number(safeSummary.diffPixelCount || 0)}`,
+      `diff_ratio=${typeof safeSummary.diffRatio === 'number' ? safeSummary.diffRatio : 'n/a'}`,
+      `web_vitals=${safeSummary.webVitalsStatus || 'n/a'}`,
+      `lighthouse=${safeSummary.lighthouseStatus || 'n/a'}`,
+      `lighthouse_avg=${safeSummary.lighthouseAveragePerformanceScore ?? 'n/a'}`,
+      `lighthouse_below_threshold=${Number(safeSummary.lighthouseBelowThresholdCount || 0)}`,
+      `gate_profile=${safeSummary.gateProfile || 'per-cycle'}`,
+      `firefox_gate=${safeSummary.firefoxGateStatus || 'n/a'}`,
+      `missing_text=${Number(safeSummary.missingTextCount || 0)}`,
+      `missing_selectors=${Number(safeSummary.missingSelectorCount || 0)}`,
+      `hard_failures=${Number(safeSummary.hardFailureCount || 0)}`,
+      `debug_package=${safeSummary.debugPackagePath || 'n/a'}`,
+      `generated_spec=${safeSummary.generatedSpecPath || 'n/a'}`,
+      `spec_generation=${safeSummary.specGenerationStatus || 'n/a'}`,
+    ];
+    const hardFailures = Array.isArray(safeSummary.hardFailures) ? safeSummary.hardFailures : [];
+    for (const failure of hardFailures.slice(0, 3)) {
+      const code = typeof failure?.code === 'string' ? failure.code : 'hard_failure';
+      const message = typeof failure?.message === 'string' ? failure.message : 'Smoke failure';
+      lines.push(`failure:${code}:${message}`);
+    }
+    return lines.join('\n');
+  }
+
+  async reportAutonomousSmokeSummary(summary = {}, context = {}) {
+    const text = this.buildAutonomousSmokeSummary(summary, context);
+    const architectPayload = `${AGENT_MESSAGE_PREFIX}(BUILDER AUTOSMOKE): ${text}`;
+    let architectResult = null;
+
+    try {
+      architectResult = await triggers.sendDirectMessage(
+        ['1'],
+        architectPayload,
+        'builder',
+        { awaitDelivery: true }
+      );
+    } catch (err) {
+      architectResult = {
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'architect_report_failed',
+        error: err.message,
+      };
+    }
+
+    const architectDelivered = Boolean(architectResult?.verified || architectResult?.accepted);
+    if (architectDelivered) {
+      return {
+        ok: true,
+        architectDelivered: true,
+        architectResult,
+      };
+    }
+
+    const telegramMessage = [
+      '[AUTONOMOUS_SMOKE_FALLBACK]',
+      text,
+      `architect_status=${architectResult?.status || 'delivery_failed'}`,
+      architectResult?.error ? `architect_error=${architectResult.error}` : null,
+    ].filter(Boolean).join('\n');
+
+    const telegramResult = await sendTelegram(telegramMessage, process.env, {
+      senderRole: 'builder',
+      targetRole: 'user',
+      sessionId: this.commsSessionScopeId || null,
+    }).catch((err) => ({ ok: false, error: err.message }));
+
+    return {
+      ok: Boolean(telegramResult?.ok),
+      architectDelivered: false,
+      architectResult,
+      telegramResult,
+    };
+  }
+
+  runAutonomousSmokeInBackground(runContext = {}) {
+    this.autonomousSmoke.inFlight = true;
+    this.autonomousSmoke.lastStartedAtMs = Date.now();
+
+    const context = {
+      ...(runContext && typeof runContext === 'object' ? runContext : {}),
+      runId: (runContext && runContext.runId) || this.buildAutonomousSmokeRunId(),
+    };
+
+    void (async () => {
+      const projectPath = this.resolveAutonomousSmokeProjectPath(context.projectMetadata);
+      const runnerArgs = buildSmokeRunnerArgs({
+        senderRole: context.senderRole || 'builder',
+        triggerReason: context.triggerReason || 'workflow_signal',
+        messageContent: context.messageContent || '',
+        runId: context.runId,
+        sessionId: this.commsSessionScopeId || null,
+        projectPath,
+        headless: true,
+      });
+
+      const runnerResult = await this.runAutonomousSmokeSidecar(runnerArgs, { projectPath });
+      const structuredOutput = [
+        runnerResult.stdout,
+        runnerResult.stderr,
+        [runnerResult.stdout, runnerResult.stderr].filter(Boolean).join('\n'),
+      ]
+        .map((value) => parseStructuredJsonOutput(value))
+        .find((value) => value && typeof value === 'object' && !Array.isArray(value));
+
+      if (!structuredOutput) {
+        log.warn(
+          'AutonomousSmoke',
+          `Skipping summary injection because smoke runner returned no structured JSON (status=${runnerResult.status || 'unknown'}, code=${runnerResult.code ?? 'null'})`,
+        );
+        return;
+      }
+
+      const summary = { ...structuredOutput };
+
+      if (summary.runId == null) summary.runId = context.runId;
+      if (summary.projectPath == null) summary.projectPath = projectPath;
+      if (runnerResult.timedOut === true) {
+        summary.ok = false;
+        const hardFailures = Array.isArray(summary.hardFailures) ? summary.hardFailures : [];
+        hardFailures.push({
+          code: 'runner_timeout',
+          message: `Smoke runner timed out after ${AUTONOMOUS_SMOKE_TIMEOUT_MS}ms`,
+        });
+        summary.hardFailures = hardFailures;
+        summary.hardFailureCount = hardFailures.length;
+      } else if (runnerResult.ok === false && summary.ok !== false) {
+        summary.ok = false;
+      }
+
+      summary.runner = {
+        status: runnerResult.status,
+        exitCode: runnerResult.code,
+        signal: runnerResult.signal,
+        timedOut: runnerResult.timedOut,
+        stderr: runnerResult.stderr || '',
+      };
+
+      await this.reportAutonomousSmokeSummary(summary, context);
+    })()
+      .catch((err) => {
+        log.warn('AutonomousSmoke', `Smoke run failed: ${err.message}`);
+      })
+      .finally(() => {
+        this.autonomousSmoke.inFlight = false;
+        const queued = this.autonomousSmoke.queuedRun;
+        this.autonomousSmoke.queuedRun = null;
+        if (queued) {
+          this.runAutonomousSmokeInBackground(queued);
+        }
+      });
+  }
+
+  maybeTriggerAutonomousSmokeFromSend({
+    senderRole,
+    messageContent,
+    projectMetadata = null,
+    deliveryResult = null,
+  } = {}) {
+    const triggerDecision = shouldTriggerAutonomousSmoke({
+      senderRole,
+      messageContent,
+    });
+    if (!triggerDecision.trigger) {
+      return {
+        ok: false,
+        status: 'autonomous_smoke_not_triggered',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    const delivered = Boolean(
+      deliveryResult?.verified
+      || deliveryResult?.accepted
+      || deliveryResult?.queued
+      || deliveryResult?.ok
+    );
+    if (!delivered) {
+      return {
+        ok: false,
+        status: 'autonomous_smoke_skipped_undelivered',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    if (this.autonomousSmoke.inFlight) {
+      this.autonomousSmoke.queuedRun = {
+        senderRole,
+        messageContent,
+        projectMetadata,
+        triggerReason: triggerDecision.reason,
+      };
+      return {
+        ok: true,
+        status: 'autonomous_smoke_queued',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    const nowMs = Date.now();
+    if (
+      AUTONOMOUS_SMOKE_COOLDOWN_MS > 0
+      && this.autonomousSmoke.lastStartedAtMs > 0
+      && (nowMs - this.autonomousSmoke.lastStartedAtMs) < AUTONOMOUS_SMOKE_COOLDOWN_MS
+    ) {
+      return {
+        ok: false,
+        status: 'autonomous_smoke_cooldown',
+        reason: triggerDecision.reason,
+      };
+    }
+
+    this.runAutonomousSmokeInBackground({
+      senderRole,
+      messageContent,
+      projectMetadata,
+      triggerReason: triggerDecision.reason,
+    });
+    return {
+      ok: true,
+      status: 'autonomous_smoke_started',
+      reason: triggerDecision.reason,
+    };
+  }
+
+  resolveEnvBridgeRuntimeConfig() {
+    if (isBridgeRelayModeOff(process.env)) return null;
+    if (!isCrossDeviceEnabled(process.env)) return null;
+    const profileName = getActiveProfileName();
+    const relayUrl = String(process.env.SQUIDRUN_RELAY_URL || '').trim() || DEFAULT_BRIDGE_RELAY_URL;
+    const sharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
+    const baseDeviceId = getLocalDeviceId(process.env)
+      || normalizeDeviceId(os.hostname())
+      || normalizeDeviceId(`DEVICE-${process.pid}`);
+    const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId });
+    if (!relayUrl || !deviceId) return null;
+    return {
+      source: 'env',
+      relayUrl,
+      sharedSecret,
+      deviceId,
+      pairedDeviceId: null,
+      pairedAt: null,
+    };
+  }
+
+  resolveBridgeRuntimeConfig() {
+    if (isBridgeRelayModeOff(process.env)) return null;
+    const profileName = getActiveProfileName();
+    const pairedResult = readPairedConfig();
+    if (pairedResult?.ok && pairedResult.config) {
+      const baseDeviceId = normalizeDeviceId(pairedResult.config.device_id);
+      const deviceId = getProfileDeviceId(process.env, profileName, { baseDeviceId }) || baseDeviceId;
+      const envSharedSecret = String(process.env.SQUIDRUN_RELAY_SECRET || '').trim();
+      return {
+        source: 'devices.json',
+        relayUrl: pairedResult.config.relay_url,
+        sharedSecret: envSharedSecret || pairedResult.config.shared_secret,
+        deviceId,
+        pairedDeviceId: pairedResult.config.paired_device_id || null,
+        pairedAt: pairedResult.config.paired_at || null,
+      };
+    }
+    if (pairedResult?.ok === false) {
+      log.warn('Bridge', `Failed to read devices.json: ${pairedResult.error || pairedResult.reason || 'unknown'}`);
+    }
+    return this.resolveEnvBridgeRuntimeConfig();
+  }
+
+  refreshBridgeRuntimeConfig() {
+    this.bridgeRuntimeConfig = this.resolveBridgeRuntimeConfig();
+    this.bridgeEnabled = !isBridgeRelayModeOff(process.env)
+      && (Boolean(this.bridgeRuntimeConfig) || isCrossDeviceEnabled(process.env));
+    this.bridgeDeviceId = this.bridgeRuntimeConfig?.deviceId || getProfileDeviceId(process.env, getActiveProfileName()) || null;
+    this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
+    this.bridgeRelayStatus.configured = Boolean(this.bridgeRuntimeConfig?.relayUrl && this.bridgeDeviceId);
+    this.bridgeRelayStatus.relayUrl = this.bridgeRuntimeConfig?.relayUrl || null;
+    this.bridgeRelayStatus.deviceId = this.bridgeDeviceId;
+    this.bridgeRelayStatus.running = Boolean(this.bridgeClient);
+    return this.bridgeRuntimeConfig;
+  }
+
+  getBridgeStatus() {
+    const snapshot = {
+      ...this.bridgeRelayStatus,
+      running: Boolean(this.bridgeClient),
+      enabled: this.bridgeEnabled === true,
+      configured: Boolean((this.bridgeRuntimeConfig?.relayUrl || null) && this.bridgeDeviceId),
+      relayUrl: this.bridgeRuntimeConfig?.relayUrl || null,
+      deviceId: this.bridgeDeviceId,
+    };
+    snapshot.mode = snapshot.enabled !== true
+      ? 'disabled'
+      : ((snapshot.state === 'connected' || snapshot.status === 'relay_connected')
+        ? 'connected'
+        : 'connecting');
+    if (Number.isFinite(snapshot.connectedSinceAt)) {
+      snapshot.connectedForMs = Math.max(0, Date.now() - snapshot.connectedSinceAt);
+    } else {
+      snapshot.connectedForMs = null;
+    }
+    return snapshot;
+  }
+
+  emitBridgeStatusSnapshot() {
+    const snapshot = this.getBridgeStatus();
+    this.kernelBridge.emitBridgeEvent('bridge.relay.status', snapshot);
+    return snapshot;
+  }
+
+  persistBridgePairingConfig(paired = {}) {
+    const writeResult = writePairedConfig({
+      device_id: paired.device_id,
+      shared_secret: paired.shared_secret,
+      relay_url: paired.relay_url,
+      paired_device_id: paired.paired_device_id,
+      paired_at: paired.paired_at || new Date().toISOString(),
+    });
+    if (!writeResult?.ok) {
+      return {
+        ok: false,
+        reason: writeResult?.reason || 'devices_write_failed',
+        error: writeResult?.error || 'Failed writing devices.json',
+      };
+    }
+    this.refreshBridgeRuntimeConfig();
+    return {
+      ok: true,
+      config: this.bridgeRuntimeConfig,
+      path: writeResult.path,
+    };
+  }
+
+  handleBridgePairingUpdate(update = {}) {
+    if (!update || typeof update !== 'object') return;
+    if (update.type === 'pairing-complete' && update.ok === true && update.paired) {
+      const persistResult = this.persistBridgePairingConfig(update.paired);
+      if (!persistResult.ok) {
+        log.warn('Bridge', `Failed persisting pairing config: ${persistResult.error || persistResult.reason || 'unknown'}`);
+      }
+    }
+    const shouldClearActiveCode = update.type === 'pairing-complete' || update.type === 'pairing-failed';
+    const nextCode = shouldClearActiveCode
+      ? null
+      : ((Object.prototype.hasOwnProperty.call(update, 'code')
+        ? String(update.code || '').trim()
+        : this.bridgePairingState.code) || null);
+    const nextExpiresAt = shouldClearActiveCode
+      ? null
+      : (Number.isFinite(update.expiresAt) ? update.expiresAt : this.bridgePairingState.expiresAt);
+    this.emitBridgePairingStateUpdate({
+      mode: update.type === 'pairing-init-ack' ? 'generate' : (update.type === 'pairing-complete' ? 'join' : this.bridgePairingState.mode),
+      code: nextCode,
+      expiresAt: nextExpiresAt,
+      status: update.status || this.bridgePairingState.status,
+      error: update.error || null,
+      reason: update.reason || null,
+      paired: update.paired || this.bridgePairingState.paired,
+    });
+  }
+
+  getBridgePairingState() {
+    return {
+      ...this.bridgePairingState,
+    };
+  }
+
+  emitBridgePairingStateUpdate(patch = {}) {
+    const next = {
+      ...this.bridgePairingState,
+      ...(patch && typeof patch === 'object' ? patch : {}),
+      updatedAt: Date.now(),
+    };
+    this.bridgePairingState = next;
+    if (this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      this.ctx.mainWindow.webContents.send('bridge:pairing-state', next);
+    }
+    return next;
+  }
+
+  isBridgeConfigured() {
+    if (this.bridgeEnabled !== true) return false;
+    const config = this.bridgeRuntimeConfig || this.refreshBridgeRuntimeConfig();
+    return Boolean(config?.relayUrl && config?.deviceId);
+  }
+
+  async waitForBridgeReady(timeoutMs = BRIDGE_READY_WAIT_TIMEOUT_MS) {
+    if (!this.bridgeClient) return false;
+    const parsedTimeoutMs = Number.parseInt(String(timeoutMs), 10);
+    const waitTimeoutMs = Number.isFinite(parsedTimeoutMs) && parsedTimeoutMs > 0
+      ? parsedTimeoutMs
+      : BRIDGE_READY_WAIT_TIMEOUT_MS;
+    const readyDeadline = Date.now() + Math.max(500, waitTimeoutMs);
+    while (Date.now() < readyDeadline) {
+      if (this.bridgeClient && this.bridgeClient.isReady()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return Boolean(this.bridgeClient && this.bridgeClient.isReady());
+  }
+
+  handleBridgeClientStatusUpdate(status = {}) {
+    if (!status || typeof status !== 'object') return;
+
+    const nextState = typeof status.state === 'string' ? status.state.trim().toLowerCase() : null;
+    const nextStatus = typeof status.status === 'string' ? status.status.trim() : null;
+    const nextError = typeof status.error === 'string' && status.error.trim()
+      ? status.error.trim()
+      : null;
+    const nowMs = Date.now();
+    const previousState = this.bridgeRelayStatus.state;
+    const previousStatus = this.bridgeRelayStatus.status;
+    const previousError = this.bridgeRelayStatus.error;
+
+    this.bridgeRelayStatus.enabled = this.bridgeEnabled === true;
+    this.bridgeRelayStatus.configured = Boolean((this.bridgeRuntimeConfig?.relayUrl || null) && this.bridgeDeviceId);
+    this.bridgeRelayStatus.running = Boolean(this.bridgeClient);
+    this.bridgeRelayStatus.relayUrl = this.bridgeRuntimeConfig?.relayUrl || null;
+    this.bridgeRelayStatus.deviceId = this.bridgeDeviceId;
+    if (nextState) this.bridgeRelayStatus.state = nextState;
+    if (nextStatus) this.bridgeRelayStatus.status = nextStatus;
+    this.bridgeRelayStatus.error = nextError;
+    this.bridgeRelayStatus.lastUpdateAt = nowMs;
+    if (
+      this.bridgeRelayStatus.state !== previousState
+      || this.bridgeRelayStatus.status !== previousStatus
+      || this.bridgeRelayStatus.error !== previousError
+    ) {
+      this.bridgeRelayStatus.lastStatusChangeAt = nowMs;
+    }
+
+    if (status.type === 'relay.dispatch') {
+      this.bridgeRelayStatus.lastDispatchAt = nowMs;
+      this.bridgeRelayStatus.lastDispatchStatus = nextStatus || null;
+      this.bridgeRelayStatus.lastDispatchTarget = typeof status.toDevice === 'string'
+        ? status.toDevice
+        : null;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.dispatch', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || null,
+        ok: status.ok === true,
+        accepted: status.accepted === true,
+        queued: status.queued === true,
+        verified: status.verified === true,
+        messageId: status.messageId || null,
+        fromDevice: status.fromDevice || null,
+        toDevice: status.toDevice || null,
+        error: nextError,
+        lastDispatchAt: this.bridgeRelayStatus.lastDispatchAt,
+      });
+      this.emitBridgeStatusSnapshot();
+      return;
+    }
+
+    if (status.type === 'relay.connected') {
+      this.bridgeRelayStatus.lastConnectedAt = nowMs;
+      this.bridgeRelayStatus.connectedSinceAt = nowMs;
+      this.bridgeRelayStatus.lastReconnectScheduledAt = null;
+      this.bridgeRelayStatus.nextReconnectDelayMs = null;
+      this.bridgeRelayStatus.nextReconnectAt = null;
+      this.bridgeRelayStatus.reconnectAttempt = 0;
+      this.bridgeRelayStatus.replacedConflictCount = Number.isFinite(Number(status.replacedConflictCount))
+        ? Math.max(0, Math.floor(Number(status.replacedConflictCount)))
+        : 0;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.connected', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_connected',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+      });
+      this.emitBridgeStatusSnapshot();
+      return;
+    }
+
+    if (status.type === 'relay.disconnected') {
+      const previousConnectedAt = Number.isFinite(this.bridgeRelayStatus.connectedSinceAt)
+        ? this.bridgeRelayStatus.connectedSinceAt
+        : this.bridgeRelayStatus.lastConnectedAt;
+      this.bridgeRelayStatus.lastDisconnectedAt = nowMs;
+      this.bridgeRelayStatus.lastDisconnectReason = status.reason || nextError || null;
+      this.bridgeRelayStatus.lastDisconnectCode = Number.isFinite(Number(status.code))
+        ? Math.floor(Number(status.code))
+        : null;
+      this.bridgeRelayStatus.disconnectCount += 1;
+      if (
+        Number.isFinite(previousConnectedAt)
+        && (nowMs - previousConnectedAt) <= BRIDGE_FLAP_WINDOW_MS
+      ) {
+        this.bridgeRelayStatus.flapCount += 1;
+      }
+      this.bridgeRelayStatus.connectedSinceAt = null;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.disconnected', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_disconnected',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+        reason: status.reason || null,
+        error: nextError,
+      });
+      this.emitBridgeStatusSnapshot();
+      return;
+    }
+
+    if (status.type === 'relay.reconnecting') {
+      this.bridgeRelayStatus.lastReconnectScheduledAt = nowMs;
+      this.bridgeRelayStatus.nextReconnectDelayMs = Number.isFinite(Number(status.reconnectDelayMs))
+        ? Math.max(0, Math.floor(Number(status.reconnectDelayMs)))
+        : null;
+      this.bridgeRelayStatus.nextReconnectAt = Number.isFinite(Number(status.reconnectAt))
+        ? Math.floor(Number(status.reconnectAt))
+        : null;
+      this.bridgeRelayStatus.reconnectAttempt = Number.isFinite(Number(status.reconnectAttempt))
+        ? Math.max(0, Math.floor(Number(status.reconnectAttempt)))
+        : this.bridgeRelayStatus.reconnectAttempt;
+      this.bridgeRelayStatus.replacedConflictCount = Number.isFinite(Number(status.replacedConflictCount))
+        ? Math.max(0, Math.floor(Number(status.replacedConflictCount)))
+        : this.bridgeRelayStatus.replacedConflictCount;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.reconnecting', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_reconnecting',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+        reconnectAttempt: this.bridgeRelayStatus.reconnectAttempt,
+        replacedConflictCount: this.bridgeRelayStatus.replacedConflictCount,
+        reconnectDelayMs: this.bridgeRelayStatus.nextReconnectDelayMs,
+        reconnectAt: this.bridgeRelayStatus.nextReconnectAt,
+        reason: status.reason || null,
+      });
+      this.emitBridgeStatusSnapshot();
+      return;
+    }
+
+    if (status.type === 'relay.error') {
+      this.bridgeRelayStatus.lastErrorAt = nowMs;
+      this.kernelBridge.emitBridgeEvent('bridge.relay.error', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_error',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+        error: nextError,
+      });
+      this.emitBridgeStatusSnapshot();
+      return;
+    }
+
+    if (status.type === 'relay.connecting') {
+      this.kernelBridge.emitBridgeEvent('bridge.relay.connecting', {
+        state: this.bridgeRelayStatus.state,
+        status: nextStatus || 'relay_connecting',
+        deviceId: status.deviceId || this.bridgeDeviceId || null,
+      });
+      this.emitBridgeStatusSnapshot();
+    }
+  }
+
+  startBridgeClient() {
+    if (!isMainProfile(this.activeProfileName)) {
+      log.info('Bridge', `Cross-device relay bridge skipped for profile ${this.activeProfileName}; main profile owns bridge connectivity`);
+      this.bridgeRelayStatus.running = false;
+      this.bridgeRelayStatus.state = 'skipped';
+      this.bridgeRelayStatus.status = 'profile_scope_skipped';
+      this.emitBridgeStatusSnapshot();
+      return false;
+    }
+    this.refreshBridgeRuntimeConfig();
+    if (!this.bridgeEnabled) return false;
+    if (!this.isBridgeConfigured()) {
+      log.warn('Bridge', 'Cross-device bridge enabled but missing usable runtime bridge config (requires relay URL + device ID).');
+      return false;
+    }
+    if (this.bridgeClient) return true;
+
+    const relayUrl = String(this.bridgeRuntimeConfig?.relayUrl || '').trim();
+    const relaySecret = String(this.bridgeRuntimeConfig?.sharedSecret || '').trim();
+    const deviceId = String(this.bridgeRuntimeConfig?.deviceId || '').trim();
+    this.bridgeDeviceId = deviceId || null;
+    this.bridgeClient = createBridgeClient({
+      relayUrl,
+      deviceId,
+      sharedSecret: relaySecret,
+      availableRoles: ['architect'],
+      onMessage: (payload = {}) => this.handleBridgeInboundMessage(payload),
+      onStatus: (status = {}) => this.handleBridgeClientStatusUpdate(status),
+      onPairing: (update = {}) => this.handleBridgePairingUpdate(update),
+    });
+    const started = this.bridgeClient.start();
+    this.bridgeRelayStatus.running = Boolean(started);
+    this.emitBridgeStatusSnapshot();
+    if (started) {
+      log.info('Bridge', `Cross-device relay bridge enabled (device=${deviceId})`);
+    }
+    return started;
+  }
+
+  async discoverBridgeDevices({ timeoutMs = 5000 } = {}) {
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        status: 'bridge_disabled',
+        error: 'Cross-device bridge is disabled',
+        devices: [],
+        fetchedAt: Date.now(),
+      };
+    }
+
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+
+    const discoveryTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 5000;
+    await this.waitForBridgeReady(discoveryTimeoutMs);
+
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      this.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'bridge_unavailable',
+      });
+      return {
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+        devices: [],
+        fetchedAt: Date.now(),
+      };
+    }
+
+    const result = await this.bridgeClient.discoverDevices({ timeoutMs: discoveryTimeoutMs });
+    return {
+      ok: result?.ok === true,
+      status: result?.status || (result?.ok === true ? 'bridge_discovery_ok' : 'bridge_discovery_failed'),
+      error: result?.error || null,
+      devices: Array.isArray(result?.devices) ? result.devices : [],
+      fetchedAt: Number.isFinite(result?.fetchedAt) ? result.fetchedAt : Date.now(),
+    };
+  }
+
+  async initiateBridgePairing({ timeoutMs = 12000 } = {}) {
+    this.emitBridgePairingStateUpdate({
+      mode: 'generate',
+      status: 'pairing_init_pending',
+      error: null,
+      reason: null,
+    });
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        status: 'bridge_disabled',
+        error: 'Cross-device bridge is disabled',
+      };
+    }
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+    const pairingTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 12000;
+    await this.waitForBridgeReady(pairingTimeoutMs);
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      return {
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+      };
+    }
+    const result = await this.bridgeClient.initiatePairing({ timeoutMs: pairingTimeoutMs });
+    if (result?.ok !== true) {
+      this.emitBridgePairingStateUpdate({
+        mode: 'generate',
+        status: result?.status || 'pairing_init_failed',
+        error: result?.error || 'pairing_init_failed',
+        reason: result?.reason || null,
+      });
+    }
+    return result;
+  }
+
+  async joinBridgePairing({ code, timeoutMs = 12000 } = {}) {
+    this.emitBridgePairingStateUpdate({
+      mode: 'join',
+      status: 'pairing_join_pending',
+      error: null,
+      reason: null,
+    });
+    if (!this.bridgeEnabled) {
+      return {
+        ok: false,
+        status: 'bridge_disabled',
+        error: 'Cross-device bridge is disabled',
+      };
+    }
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+    const pairingTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 12000;
+    await this.waitForBridgeReady(pairingTimeoutMs);
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      return {
+        ok: false,
+        status: 'bridge_unavailable',
+        error: 'Relay unavailable',
+      };
+    }
+    const result = await this.bridgeClient.joinPairingCode(code, { timeoutMs: pairingTimeoutMs });
+    if (!(result?.ok === true && result?.paired)) {
+      this.emitBridgePairingStateUpdate({
+        mode: 'join',
+        status: result?.status || 'pairing_join_failed',
+        error: result?.error || 'pairing_join_failed',
+        reason: result?.reason || null,
+      });
+    }
+    return result;
+  }
+
+  async getBridgeDevices({ refresh = true, timeoutMs = 5000 } = {}) {
+    const devices = [];
+    const byId = new Map();
+
+    if (refresh) {
+      const discovery = await this.discoverBridgeDevices({ timeoutMs });
+      for (const entry of (Array.isArray(discovery?.devices) ? discovery.devices : [])) {
+        const deviceId = String(entry?.device_id || '').trim().toUpperCase();
+        if (!deviceId) continue;
+        const normalized = {
+          device_id: deviceId,
+          name: deviceId,
+          online: true,
+          paired_at: null,
+          connected_since: entry?.connected_since || null,
+          roles: Array.isArray(entry?.roles) ? entry.roles : [],
+        };
+        byId.set(deviceId, normalized);
+      }
+    }
+
+    const runtimeConfig = this.bridgeRuntimeConfig || this.refreshBridgeRuntimeConfig();
+    if (runtimeConfig?.pairedDeviceId) {
+      const pairedId = String(runtimeConfig.pairedDeviceId).trim().toUpperCase();
+      const existing = byId.get(pairedId);
+      if (existing) {
+        existing.paired_at = runtimeConfig.pairedAt || null;
+      } else {
+        byId.set(pairedId, {
+          device_id: pairedId,
+          name: pairedId,
+          online: false,
+          paired_at: runtimeConfig.pairedAt || null,
+          connected_since: null,
+          roles: [],
+        });
+      }
+    }
+
+    for (const value of byId.values()) {
+      devices.push(value);
+    }
+    devices.sort((a, b) => String(a.device_id || '').localeCompare(String(b.device_id || '')));
+    return {
+      ok: true,
+      devices,
+      fetchedAt: Date.now(),
+    };
+  }
+
+  async routeBridgeMessage({
+    targetDevice,
+    content,
+    fromRole = 'architect',
+    messageId = null,
+    traceContext = null,
+    structuredMessage = null,
+  } = {}) {
+    const toDevice = String(targetDevice || '').trim().toUpperCase();
+    const body = typeof content === 'string' ? content.trim() : '';
+    if (!toDevice) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_invalid_target',
+        error: 'targetDevice is required',
+        routeKind: 'bridge',
+      };
+    }
+    if (!body) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_empty_content',
+        routeKind: 'bridge',
+      };
+    }
+    if (!this.bridgeEnabled) {
+      this.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: 'disconnected',
+        status: 'bridge_disabled',
+      });
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_disabled',
+        routeKind: 'bridge',
+      };
+    }
+    if (!this.bridgeClient) {
+      this.startBridgeClient();
+    }
+    await this.waitForBridgeReady();
+    if (!this.bridgeClient || !this.bridgeClient.isReady()) {
+      const relayState = String(this.bridgeRelayStatus?.state || 'unknown').trim().toLowerCase() || 'unknown';
+      const relayStatus = String(this.bridgeRelayStatus?.status || '').trim() || 'relay_unavailable';
+      const relayError = String(this.bridgeRelayStatus?.error || '').trim() || null;
+      log.warn(
+        'Bridge',
+        `routeBridgeMessage unavailable after waiting for relay readiness (state=${relayState}, status=${relayStatus}${relayError ? `, error=${relayError}` : ''})`
+      );
+      this.handleBridgeClientStatusUpdate({
+        type: 'relay.disconnected',
+        state: relayState,
+        status: 'bridge_unavailable',
+        error: relayError,
+      });
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_unavailable',
+        error: relayError || 'Relay unavailable',
+        routeKind: 'bridge',
+        relayState,
+        relayStatus,
+      };
+    }
+
+    const normalizedBridgeMetadata = normalizeBridgeMetadata(
+      {
+        traceId: traceContext?.traceId || traceContext?.correlationId || null,
+        sessionId: this.commsSessionScopeId || null,
+        structured: structuredMessage,
+      },
+      body
+    );
+    const bridgeResult = await this.bridgeClient.sendToDevice({
+      messageId: messageId || `bridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      toDevice,
+      targetRole: 'architect',
+      content: body,
+      fromRole,
+      metadata: normalizedBridgeMetadata,
+    });
+    return {
+      ...bridgeResult,
+      routeKind: 'bridge',
+    };
+  }
+
+  async handleBridgeInboundMessage(payload = {}) {
+    const fromDevice = String(payload?.fromDevice || 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
+    const messageId = String(payload?.messageId || '').trim();
+    const body = typeof payload?.content === 'string' ? payload.content.trim() : '';
+    const bridgeMetadata = normalizeBridgeMetadata(payload?.metadata, body, {
+      ensureStructured: true,
+    });
+    const structuredType = bridgeMetadata?.structured?.type || null;
+    if (!body) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_empty_content',
+        error: 'Inbound bridge message was empty',
+      };
+    }
+
+    const inboundMessageId = messageId || `bridge-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sentAtMs = Date.now();
+    void Promise.resolve(executeEvidenceLedgerOperation(
+      'upsert-comms-journal',
+      {
+        messageId: inboundMessageId,
+        sessionId: this.commsSessionScopeId || null,
+        senderRole: 'architect',
+        targetRole: 'architect',
+        channel: 'ws',
+        direction: 'inbound',
+        sentAtMs,
+        brokeredAtMs: sentAtMs,
+        rawBody: body,
+        status: 'brokered',
+        attempt: 1,
+        metadata: {
+          source: 'bridge-client',
+          routeKind: 'bridge',
+          fromDevice,
+          bridgeMessageId: messageId || null,
+          bridgeMetadata,
+          structured: bridgeMetadata?.structured || null,
+          structuredType,
+        },
+      },
+      {
+        source: {
+          via: 'bridge-client',
+          role: 'system',
+          paneId: 'system',
+        },
+      }
+    )).then((result) => {
+      if (result?.ok === false) {
+        log.warn('EvidenceLedger', `Bridge inbound journal upsert failed: ${result.reason || 'unknown'}`);
+      }
+    }).catch((err) => {
+      log.warn('EvidenceLedger', `Bridge inbound journal upsert error: ${err.message}`);
+    });
+
+    let formatted = structuredType
+      ? `[Bridge ${structuredType} from ${fromDevice}]: ${body}`
+      : `[Bridge from ${fromDevice}]: ${body}`;
+    if (structuredType === 'HandoffPacket') {
+      const handoffPacket = bridgeMetadata?.structured?.payload?.packet || bridgeMetadata?.structured?.payload || null;
+      const handoffResult = await this.handleInboundHandoffPacket(handoffPacket, {
+        paneId: '1',
+      });
+      if (handoffResult?.ok === true && handoffResult?.injection?.message) {
+        formatted = `[Bridge HandoffPacket from ${fromDevice}]\n${handoffResult.injection.message}`;
+      }
+    }
+    const injection = triggers.sendDirectMessage(['1'], formatted, null);
+    if (!injection?.success) {
+      return {
+        ok: false,
+        accepted: false,
+        queued: false,
+        verified: false,
+        status: 'bridge_inject_failed',
+        error: injection?.error || 'Failed to inject bridge message into Architect pane',
+      };
+    }
+
+    return {
+      ok: true,
+      accepted: true,
+      queued: true,
+      verified: true,
+      status: 'bridge_delivered',
+    };
+  }
+
+  async buildHumanMessageWithUnifiedRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const originalMessage = String(message || '');
+    if (!originalMessage.trim()) return originalMessage;
+    if (recallContext?.disableUnifiedRecall === true || recallContext?.unifiedRecall === false) {
+      return originalMessage;
+    }
+    if (!this.memoryBroker || typeof this.memoryBroker.recall !== 'function') {
+      return originalMessage;
+    }
+    // Skip recall entirely for trivial one-liners that reference no past work —
+    // avoids both the provider hits and stapling stale summaries onto "what up bro".
+    if (!messageReferencesPastWork(originalMessage)) {
+      return originalMessage;
+    }
+
+    try {
+      const query = toNonEmptyString(recallContext.recallQuery) || originalMessage;
+      const recall = await this.memoryBroker.recall(query, {
+        ...((recallContext && typeof recallContext === 'object') ? recallContext : {}),
+        logLabel,
+        paneId: String(recallContext.paneId || '1'),
+        windowKey: toNonEmptyString(recallContext.windowKey) || 'main',
+        profileName: toNonEmptyString(recallContext.profileName || recallContext.profile) || 'main',
+        sessionScopeId: toNonEmptyString(recallContext.sessionScopeId) || null,
+      }, {
+        limit: recallContext.recallLimit || 4,
+        providerLimit: recallContext.recallProviderLimit || 3,
+        timeoutMs: recallContext.recallTimeoutMs || process.env.SQUIDRUN_MEMORY_BROKER_TIMEOUT_MS || 900,
+      });
+      return prependRecallToMessage(originalMessage, recall, {
+        limit: recallContext.recallLimit || 4,
+      });
+    } catch (err) {
+      log.warn('MemoryBroker', `Unified recall skipped for ${logLabel}: ${err.message}`);
+      return originalMessage;
+    }
+  }
+
+  buildTelegramReplyTargetPaneMessage(message, recallContext = {}) {
+    const text = String(message || '');
+    const chatId = normalizeChatId(recallContext.chatId || recallContext.telegramChatId || recallContext.metadata?.chatId);
+    const messageId = toNonEmptyString(recallContext.messageId);
+    const sender = toNonEmptyString(recallContext.sender) || 'user';
+    const guardLines = [
+      '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]',
+      `Source: Telegram from ${sender}${messageId ? ` (${messageId})` : ''}${chatId ? ` chat=${chatId}` : ''}.`,
+      "Do not answer only in this pane. Reply via `hm-send telegram ...` or report a Telegram-route block.",
+      '[END SQUIDRUN REPLY TARGET]',
+    ];
+    return `${guardLines.join('\n')}\n\n${text}`;
+  }
+
+  applyTelegramReplyTargetMetadata(meta = {}, recallContext = {}) {
+    meta.source = toNonEmptyString(meta.source) || 'telegram-poller';
+    meta.channel = 'telegram';
+    meta.replyTarget = 'telegram';
+    meta.reply_target = 'telegram';
+    meta.replyTargetRequired = true;
+    meta.replyTargetReason = 'telegram_origin_user_message';
+    meta.telegramRequiresEgress = true;
+    meta.originChannel = 'telegram';
+    const chatId = normalizeChatId(recallContext.chatId || recallContext.telegramChatId || meta.chatId || meta.telegramChatId);
+    if (chatId) {
+      meta.chatId = chatId;
+      meta.telegramChatId = chatId;
+    }
+    if (toNonEmptyString(recallContext.messageId) && !toNonEmptyString(meta.replyToMessageId)) {
+      meta.replyToMessageId = toNonEmptyString(recallContext.messageId);
+    }
+    return meta;
+  }
+
+  persistPendingTelegramReplyGuardObligation(guard = {}, options = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const inboundMessageId = toNonEmptyString(guard.messageId);
+    if (!inboundMessageId) {
+      return { ok: false, status: 'invalid', reason: 'inbound_message_id_required' };
+    }
+    try {
+      const writeFn = typeof options.openTelegramReplyObligation === 'function'
+        ? options.openTelegramReplyObligation
+        : openTelegramReplyObligation;
+      const result = writeFn({
+        inboundMessageId,
+        chatId: guard.chatId || guard.telegramChatId || null,
+        sessionId: guard.sessionScopeId || null,
+        paneId,
+        windowKey: guard.windowKey || null,
+        profileName: guard.profileName || guard.profile || null,
+        senderRole: guard.sender || 'user',
+        targetRole: resolveCanonicalRoleForPaneId(paneId) || `pane-${paneId}`,
+        openedAtMs: guard.createdAtMs || null,
+        deadlineAtMs: guard.expiresAtMs || null,
+        metadata: {
+          source: 'squidrun-app.telegram-reply-guard',
+          requiresTelegramEgress: true,
+          status: guard.status || null,
+        },
+      }, {
+        nowMs: options.nowMs,
+      });
+      const latest = this.pendingTelegramReplyGuards.get(paneId);
+      if (latest && toNonEmptyString(latest.messageId) === inboundMessageId) {
+        latest.durableObligationOk = result?.ok === true;
+        latest.durableObligationStatus = result?.status || null;
+        latest.durableObligationId = result?.obligation?.obligationId || latest.durableObligationId || null;
+        latest.durableObligationUpdatedAtMs = Date.now();
+        latest.durableObligationError = result?.ok === false
+          ? (result.reason || result.error || 'durable_obligation_write_failed')
+          : null;
+        this.pendingTelegramReplyGuards.set(paneId, latest);
+      }
+      if (result?.ok === false) {
+        log.warn(
+          'TelegramReplyRequirement',
+          `Failed writing durable reply obligation for inbound ${inboundMessageId}: ${result.reason || result.error || 'unknown'}`
+        );
+      }
+      return result;
+    } catch (err) {
+      const latest = this.pendingTelegramReplyGuards.get(paneId);
+      if (latest && toNonEmptyString(latest.messageId) === inboundMessageId) {
+        latest.durableObligationOk = false;
+        latest.durableObligationStatus = 'exception';
+        latest.durableObligationError = err.message;
+        latest.durableObligationUpdatedAtMs = Date.now();
+        this.pendingTelegramReplyGuards.set(paneId, latest);
+      }
+      log.warn('TelegramReplyRequirement', `Durable reply obligation write failed: ${err.message}`);
+      return { ok: false, status: 'exception', reason: err.message };
+    }
+  }
+
+  buildPendingTelegramReplyGuardFromObligation(obligation = {}, options = {}) {
+    const paneId = toNonEmptyString(obligation.paneId) || '1';
+    const inboundMessageId = toNonEmptyString(obligation.inboundMessageId);
+    if (!inboundMessageId) return null;
+    const nowMs = Number(options.nowMs || Date.now());
+    const openedAtMs = Number(obligation.openedAtMs || 0);
+    const createdAtMs = Number.isFinite(openedAtMs) && openedAtMs > 0 ? openedAtMs : Date.now();
+    const deadlineAtMs = Number(obligation.deadlineAtMs || 0);
+    const expiresAtMs = Number.isFinite(deadlineAtMs) && deadlineAtMs > 0
+      ? deadlineAtMs
+      : (createdAtMs + TELEGRAM_REPLY_WINDOW_MS);
+    const chatId = normalizeChatId(obligation.chatId);
+    return {
+      paneId,
+      messageId: inboundMessageId,
+      sender: toNonEmptyString(obligation.senderRole) || 'user',
+      chatId,
+      telegramChatId: chatId,
+      windowKey: toNonEmptyString(obligation.windowKey) || 'main',
+      profileName: toNonEmptyString(obligation.profileName) || 'main',
+      sessionScopeId: toNonEmptyString(obligation.sessionId) || this.getWindowSessionScopeId('main'),
+      createdAtMs,
+      expiresAtMs,
+      lastWarningAtMs: 0,
+      warningCount: 0,
+      violationCount: 0,
+      lastViolationAtMs: 0,
+      lastPaneOutputPreview: null,
+      phoneEscalationAttemptCount: 0,
+      phoneEscalationAttemptedAtMs: 0,
+      phoneEscalationSentAtMs: 0,
+      phoneEscalationMessageId: null,
+      phoneEscalationError: null,
+      phoneEscalationInFlight: false,
+      agentDebtNoticeAttemptCount: 0,
+      agentDebtNoticeAttemptedAtMs: 0,
+      agentDebtNoticeSentAtMs: 0,
+      agentDebtNoticeError: null,
+      agentDebtNoticeTargetRoles: [],
+      status: 'pending_telegram_egress',
+      requiresTelegramEgress: true,
+      durableObligationOk: true,
+      durableObligationStatus: obligation.status || 'open',
+      durableObligationId: obligation.obligationId || null,
+      durableObligationUpdatedAtMs: nowMs,
+      durableHydratedAtMs: nowMs,
+      hydratedFromDurableObligation: true,
+      autoEscalationSuppressed: options.autoEscalationSuppressed !== false,
+      durableDeadlineElapsedAtHydration: expiresAtMs <= nowMs,
+    };
+  }
+
+  hydratePendingTelegramReplyGuardsFromObligations(options = {}) {
+    const queryFn = typeof options.queryTelegramReplyObligations === 'function'
+      ? options.queryTelegramReplyObligations
+      : queryTelegramReplyObligations;
+    const sessionId = options.sessionId === null
+      ? null
+      : (toNonEmptyString(options.sessionId) || toNonEmptyString(this.commsSessionScopeId));
+    const filters = {
+      status: 'open',
+      order: 'asc',
+      limit: Math.max(1, Math.min(1000, Number(options.limit) || 100)),
+    };
+    if (sessionId) filters.sessionId = sessionId;
+    let obligations = [];
+    try {
+      obligations = queryFn(filters) || [];
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Failed loading durable reply obligations: ${err.message}`);
+      return {
+        ok: false,
+        status: 'query_failed',
+        reason: err.message,
+        hydratedCount: 0,
+        skippedCount: 0,
+      };
+    }
+
+    const nowMs = Number(options.nowMs || Date.now());
+    const scheduleEscalation = options.scheduleEscalation === true;
+    let hydratedCount = 0;
+    let skippedCount = 0;
+    let autoEscalationScheduledCount = 0;
+    let autoEscalationSuppressedCount = 0;
+    for (const obligation of Array.isArray(obligations) ? obligations : []) {
+      if (!obligation || String(obligation.status || '').toLowerCase() !== 'open') {
+        skippedCount += 1;
+        continue;
+      }
+      const guard = this.buildPendingTelegramReplyGuardFromObligation(obligation, {
+        nowMs,
+        autoEscalationSuppressed: !scheduleEscalation,
+      });
+      if (!guard) {
+        skippedCount += 1;
+        continue;
+      }
+      const existing = this.pendingTelegramReplyGuards.get(guard.paneId);
+      if (existing && toNonEmptyString(existing.messageId) === toNonEmptyString(guard.messageId)) {
+        skippedCount += 1;
+        continue;
+      }
+      this.pendingTelegramReplyGuards.set(guard.paneId, guard);
+      if (scheduleEscalation) {
+        this.schedulePendingTelegramReplyGuardEscalation(guard);
+        autoEscalationScheduledCount += 1;
+      } else {
+        autoEscalationSuppressedCount += 1;
+      }
+      hydratedCount += 1;
+    }
+    if (hydratedCount > 0) {
+      this.ensurePendingTelegramReplyGuardJournalReconcileTimer();
+    }
+    return {
+      ok: true,
+      status: hydratedCount > 0
+        ? 'telegram_reply_obligations_hydrated'
+        : 'telegram_reply_obligations_checked',
+      hydratedCount,
+      skippedCount,
+      sessionId: sessionId || null,
+      autoEscalationScheduledCount,
+      autoEscalationSuppressedCount,
+    };
+  }
+
+  satisfyDurableTelegramReplyObligationForGuard(guard = {}, evidence = {}, options = {}) {
+    const inboundMessageId = toNonEmptyString(guard.messageId);
+    if (!inboundMessageId) {
+      return { ok: false, status: 'invalid', reason: 'inbound_message_id_required' };
+    }
+    const satisfyFn = typeof options.satisfyTelegramReplyObligation === 'function'
+      ? options.satisfyTelegramReplyObligation
+      : satisfyTelegramReplyObligation;
+    const satisfiedAtMs = Number(evidence.satisfiedAtMs || evidence.egressAtMs || evidence.sentAtMs || Date.now());
+    const row = evidence.row && typeof evidence.row === 'object' ? evidence.row : null;
+    const rowMetadata = row?.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+      ? row.metadata
+      : {};
+    const egressMessageId = toNonEmptyString(
+      evidence.egressMessageId
+      || evidence.messageId
+      || row?.messageId
+      || null
+    );
+    try {
+      const result = satisfyFn({
+        inboundMessageId,
+        satisfiedAtMs: Number.isFinite(satisfiedAtMs) ? Math.floor(satisfiedAtMs) : Date.now(),
+        satisfiedByMessageId: egressMessageId,
+        satisfiedByRowId: Number.isFinite(Number(evidence.egressRowId ?? row?.rowId))
+          ? Math.floor(Number(evidence.egressRowId ?? row?.rowId))
+          : null,
+        satisfactionSource: toNonEmptyString(evidence.source) || 'squidrun-app.telegram-reply-satisfaction',
+        satisfaction: {
+          reason: toNonEmptyString(evidence.reason) || 'telegram_delivery_confirmed',
+          chatId: normalizeChatId(
+            evidence.chatId
+            || rowMetadata.chatId
+            || rowMetadata.telegramChatId
+            || guard.chatId
+            || guard.telegramChatId
+            || null
+          ),
+          sessionId: toNonEmptyString(
+            evidence.sessionId
+            || row?.sessionId
+            || rowMetadata.sessionScopeId
+            || rowMetadata.session_id
+            || guard.sessionScopeId
+            || null
+          ),
+          replyToMessageId: toNonEmptyString(
+            evidence.replyToMessageId
+            || rowMetadata.replyToMessageId
+            || rowMetadata.inboundMessageId
+            || null
+          ),
+        },
+      }, {
+        nowMs: options.nowMs,
+      });
+      if (result?.ok === false && !['not_found', 'terminal_state'].includes(result.status)) {
+        log.warn(
+          'TelegramReplyRequirement',
+          `Failed satisfying durable reply obligation for inbound ${inboundMessageId}: ${result.reason || result.error || 'unknown'}`
+        );
+      }
+      return result;
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Durable reply obligation satisfaction failed: ${err.message}`);
+      return { ok: false, status: 'exception', reason: err.message };
+    }
+  }
+
+  satisfyLatestDurableTelegramReplyObligationForTelegramEgress(evidence = {}, options = {}) {
+    const chatId = normalizeChatId(evidence.chatId || evidence.telegramChatId || null);
+    if (!chatId) {
+      return { ok: false, status: 'skipped', reason: 'chat_id_required' };
+    }
+    const queryFn = typeof options.queryTelegramReplyObligations === 'function'
+      ? options.queryTelegramReplyObligations
+      : queryTelegramReplyObligations;
+    const satisfyFn = typeof options.satisfyTelegramReplyObligation === 'function'
+      ? options.satisfyTelegramReplyObligation
+      : satisfyTelegramReplyObligation;
+    const satisfiedAtMs = Number(evidence.satisfiedAtMs || evidence.egressAtMs || evidence.sentAtMs || Date.now());
+    const normalizedSatisfiedAtMs = Number.isFinite(satisfiedAtMs) && satisfiedAtMs > 0
+      ? Math.floor(satisfiedAtMs)
+      : Date.now();
+    let obligations = [];
+    try {
+      obligations = queryFn({
+        status: 'open',
+        chatId,
+        untilMs: normalizedSatisfiedAtMs,
+        order: 'desc',
+        limit: 20,
+      }) || [];
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Failed finding durable reply obligation for Telegram egress: ${err.message}`);
+      return { ok: false, status: 'query_failed', reason: err.message };
+    }
+    const obligation = (Array.isArray(obligations) ? obligations : [])
+      .find((candidate) => String(candidate.status || '').toLowerCase() === 'open') || null;
+    if (!obligation) {
+      return { ok: false, status: 'not_found', reason: 'no_open_obligation_for_chat' };
+    }
+    try {
+      return satisfyFn({
+        obligationId: obligation.obligationId || null,
+        inboundMessageId: obligation.inboundMessageId || null,
+        satisfiedAtMs: normalizedSatisfiedAtMs,
+        satisfiedByMessageId: toNonEmptyString(evidence.egressMessageId || evidence.messageId || null),
+        satisfiedByRowId: Number.isFinite(Number(evidence.egressRowId))
+          ? Math.floor(Number(evidence.egressRowId))
+          : null,
+        satisfactionSource: toNonEmptyString(evidence.source) || 'squidrun-app.telegram-egress-durable-fallback',
+        satisfaction: {
+          reason: toNonEmptyString(evidence.reason) || 'same_chat_telegram_delivery_confirmed',
+          chatId,
+          sessionId: toNonEmptyString(evidence.sessionId || null),
+          replyToMessageId: toNonEmptyString(evidence.replyToMessageId || obligation.inboundMessageId || null),
+        },
+      }, {
+        nowMs: options.nowMs,
+      });
+    } catch (err) {
+      log.warn('TelegramReplyRequirement', `Durable reply obligation fallback satisfaction failed: ${err.message}`);
+      return { ok: false, status: 'exception', reason: err.message };
+    }
+  }
+
+  markPendingTelegramReplyGuard(input = {}) {
+    const paneId = toNonEmptyString(input.paneId) || '1';
+    const messageId = toNonEmptyString(input.messageId)
+      || `telegram-pending-${paneId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const chatId = normalizeChatId(input.chatId);
+    const inputCreatedAtMs = Number(input.createdAtMs ?? input.openedAtMs ?? input.opened_at_ms);
+    const createdAtMs = Number.isFinite(inputCreatedAtMs) && inputCreatedAtMs > 0
+      ? Math.floor(inputCreatedAtMs)
+      : Date.now();
+    const inputExpiresAtMs = Number(input.expiresAtMs ?? input.deadlineAtMs ?? input.deadline_at_ms);
+    const expiresAtMs = Number.isFinite(inputExpiresAtMs) && inputExpiresAtMs > 0
+      ? Math.floor(inputExpiresAtMs)
+      : (createdAtMs + TELEGRAM_REPLY_WINDOW_MS);
+    const guard = {
+      paneId,
+      messageId,
+      sender: toNonEmptyString(input.sender) || 'user',
+      chatId,
+      telegramChatId: chatId,
+      windowKey: toNonEmptyString(input.windowKey) || 'main',
+      profileName: toNonEmptyString(input.profileName || input.profile) || 'main',
+      sessionScopeId: toNonEmptyString(input.sessionScopeId) || this.getWindowSessionScopeId('main'),
+      createdAtMs,
+      expiresAtMs,
+      lastWarningAtMs: 0,
+      warningCount: 0,
+      violationCount: 0,
+      lastViolationAtMs: 0,
+      lastPaneOutputPreview: null,
+      phoneEscalationAttemptCount: 0,
+      phoneEscalationAttemptedAtMs: 0,
+      phoneEscalationSentAtMs: 0,
+      phoneEscalationMessageId: null,
+      phoneEscalationError: null,
+      phoneEscalationInFlight: false,
+      agentDebtNoticeAttemptCount: 0,
+      agentDebtNoticeAttemptedAtMs: 0,
+      agentDebtNoticeSentAtMs: 0,
+      agentDebtNoticeError: null,
+      agentDebtNoticeTargetRoles: [],
+      status: 'pending_telegram_egress',
+      requiresTelegramEgress: true,
+    };
+    this.pendingTelegramReplyGuards.set(paneId, guard);
+    if (input.persistDurable !== false) {
+      this.persistPendingTelegramReplyGuardObligation(guard, {
+        nowMs: createdAtMs,
+        openTelegramReplyObligation: input.openTelegramReplyObligation,
+      });
+    }
+    this.schedulePendingTelegramReplyGuardEscalation(guard);
+    this.ensurePendingTelegramReplyGuardJournalReconcileTimer();
+    return { ...(this.pendingTelegramReplyGuards.get(paneId) || guard) };
+  }
+
+  clearPendingTelegramReplyGuardTimer(paneId = '1') {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const timer = this.pendingTelegramReplyGuardTimers.get(normalizedPaneId);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingTelegramReplyGuardTimers.delete(normalizedPaneId);
+    }
+  }
+
+  schedulePendingTelegramReplyGuardEscalation(guard = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    this.clearPendingTelegramReplyGuardTimer(paneId);
+    const expiresAtMs = Number(guard.expiresAtMs || 0);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= 0) return;
+    const delayMs = Math.max(0, expiresAtMs - Date.now());
+    const timer = setTimeout(() => {
+      this.pendingTelegramReplyGuardTimers.delete(paneId);
+      this.expirePendingTelegramReplyGuard(paneId, {
+        messageId: guard.messageId,
+        reason: 'reply_window_expired',
+      });
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingTelegramReplyGuardTimers.set(paneId, timer);
+  }
+
+  ensurePendingTelegramReplyGuardJournalReconcileTimer() {
+    if (this.pendingTelegramReplyGuardJournalReconcileTimer) return;
+    const timer = setInterval(() => {
+      if (this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle()) {
+        return;
+      }
+      this.reconcilePendingTelegramReplyGuardsWithJournal({
+        reason: 'telegram_reply_guard_journal_reconcile_timer',
+        logMisses: true,
+      });
+    }, TELEGRAM_REPLY_GUARD_JOURNAL_RECONCILE_INTERVAL_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingTelegramReplyGuardJournalReconcileTimer = timer;
+  }
+
+  clearPendingTelegramReplyGuardJournalReconcileTimer() {
+    if (!this.pendingTelegramReplyGuardJournalReconcileTimer) return;
+    clearInterval(this.pendingTelegramReplyGuardJournalReconcileTimer);
+    this.pendingTelegramReplyGuardJournalReconcileTimer = null;
+  }
+
+  isTerminalPendingTelegramReplyGuard(guard = {}) {
+    return TERMINAL_PENDING_TELEGRAM_REPLY_GUARD_STATUSES.has(String(guard.status || '').toLowerCase());
+  }
+
+  countNonTerminalPendingTelegramReplyGuards() {
+    if (!this.pendingTelegramReplyGuards || this.pendingTelegramReplyGuards.size === 0) return 0;
+    return Array.from(this.pendingTelegramReplyGuards.values())
+      .filter((guard) => !this.isTerminalPendingTelegramReplyGuard(guard))
+      .length;
+  }
+
+  clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle() {
+    if (this.countNonTerminalPendingTelegramReplyGuards() > 0) return false;
+    this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    return true;
+  }
+
+  getPendingTelegramReplyRequirement(paneId = '1') {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    return guard ? { ...guard } : null;
+  }
+
+  getPendingTelegramReplyRequirements() {
+    return Array.from(this.pendingTelegramReplyGuards.values()).map((guard) => ({ ...guard }));
+  }
+
+  emitTelegramReplyRequirementNotice(guard = {}, {
+    message,
+    type = 'warning',
+    reason = null,
+    outputPreview = null,
+  } = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const notice = toNonEmptyString(message);
+    if (!notice) return false;
+    if (type === 'error') {
+      log.error('TelegramReplyRequirement', notice);
+    } else {
+      log.warn('TelegramReplyRequirement', notice);
+    }
+    // Ceremony purge SHRINK (inventory: ONE notice, then the ledger holds
+    // it): three emitters - deferred nag, agent escalation, expiry - each
+    // correctly capped per-guard, still stacked into a 3-alerts-in-2-min
+    // barrage for one inbound (July 2). This funnel now chokes the AGENT
+    // ALERT to one per inbound; the activity ledger below still records
+    // every occurrence, so nothing is lost - only the nagging.
+    const inboundKey = toNonEmptyString(guard.messageId);
+    const alreadyAlerted = inboundKey && guard.debtAlertEmittedForMessageId === inboundKey;
+    let agentAlert = null;
+    if (!alreadyAlerted) {
+      agentAlert = this.routeTelegramReplyRequirementAgentAlert(guard, notice, {
+        severity: type,
+        reason,
+      });
+      if (inboundKey) {
+        guard.debtAlertEmittedForMessageId = inboundKey;
+        const latestGuard = this.pendingTelegramReplyGuards.get(paneId);
+        if (latestGuard && toNonEmptyString(latestGuard.messageId) === inboundKey) {
+          latestGuard.debtAlertEmittedForMessageId = inboundKey;
+          this.pendingTelegramReplyGuards.set(paneId, latestGuard);
+        }
+      }
+    }
+    const details = {
+      source: 'telegram-reply-requirement',
+      debtKind: 'telegram_reply_required',
+      agentSideOnly: true,
+      userFacingNoticeSuppressed: true,
+      messageId: guard.messageId || null,
+      chatId: guard.chatId || null,
+      status: guard.status || null,
+      reason,
+      violationCount: Number(guard.violationCount || 0),
+      warningCount: Number(guard.warningCount || 0),
+      requiresTelegramEgress: true,
+      requiredAction: 'send_telegram_reply_or_report_route_block',
+      severity: type,
+      agentAlert,
+      outputPreview: outputPreview || guard.lastPaneOutputPreview || null,
+    };
+    this.activity.logActivity?.('agent_response_debt', paneId, notice, details);
+    return true;
+  }
+
+  buildTelegramReplyRequirementAgentAlert(guard = {}, notice = '', options = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const responsibleRole = resolveCanonicalRoleForPaneId(paneId) || `pane-${paneId}`;
+    const severity = toNonEmptyString(options.severity) || 'warning';
+    const reason = toNonEmptyString(options.reason) || 'telegram_reply_required';
+    return [
+      '(SYSTEM RESPONSE-DEBT):',
+      notice,
+      `Responsible lane: ${responsibleRole}.`,
+      'Required action: send a real Telegram reply with `hm-send telegram ...`, or report the exact Telegram route block to Architect.',
+      `Evidence: source=telegram-reply-requirement severity=${severity} reason=${reason} inbound=${guard.messageId || 'unknown'} pane=${paneId} session=${guard.sessionScopeId || 'unknown'}.`,
+    ].join(' ');
+  }
+
+  routeTelegramReplyRequirementAgentAlert(guard = {}, notice = '', options = {}) {
+    const paneId = toNonEmptyString(guard.paneId) || '1';
+    const responsibleRole = resolveCanonicalRoleForPaneId(paneId);
+    const targetRoles = Array.from(new Set(
+      [responsibleRole || 'architect', 'architect']
+        .map((role) => toNonEmptyString(role)?.toLowerCase())
+        .filter(Boolean)
+    ));
+    const routeableNotice = this.buildTelegramReplyRequirementAgentAlert(guard, notice, options);
+    const delivered = this.sendInternalHmMessage(targetRoles, routeableNotice, { role: 'system' });
+    const nowMs = Date.now();
+    guard.agentDebtNoticeAttemptCount = Number(guard.agentDebtNoticeAttemptCount || 0) + 1;
+    guard.agentDebtNoticeAttemptedAtMs = nowMs;
+    guard.agentDebtNoticeTargetRoles = targetRoles;
+    guard.agentDebtNoticeError = delivered ? null : 'agent_route_unavailable';
+    if (delivered) {
+      guard.agentDebtNoticeSentAtMs = nowMs;
+    }
+    const latest = this.pendingTelegramReplyGuards.get(paneId);
+    if (latest && toNonEmptyString(latest.messageId) === toNonEmptyString(guard.messageId)) {
+      Object.assign(latest, {
+        agentDebtNoticeAttemptCount: guard.agentDebtNoticeAttemptCount,
+        agentDebtNoticeAttemptedAtMs: guard.agentDebtNoticeAttemptedAtMs,
+        agentDebtNoticeSentAtMs: guard.agentDebtNoticeSentAtMs || 0,
+        agentDebtNoticeError: guard.agentDebtNoticeError,
+        agentDebtNoticeTargetRoles: targetRoles,
+      });
+      this.pendingTelegramReplyGuards.set(paneId, latest);
+    }
+    if (!delivered) {
+      log.warn('TelegramReplyRequirement', `Failed routing reply debt to agent lane for pane ${paneId}`);
+    }
+    return {
+      ok: delivered,
+      route: 'agent_hm_send',
+      targetRoles,
+      responsibleRole,
+      error: delivered ? null : 'agent_route_unavailable',
+    };
+  }
+
+  expirePendingTelegramReplyGuard(paneId = '1', options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return null;
+    const expectedMessageId = toNonEmptyString(options.messageId);
+    if (expectedMessageId && toNonEmptyString(guard.messageId) !== expectedMessageId) {
+      return null;
+    }
+    const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);
+    if (journalSatisfaction) {
+      return {
+        ...guard,
+        status: journalSatisfaction.status,
+        satisfiedByMessageId: journalSatisfaction.egressMessageId,
+      };
+    }
+    if (guard.phoneEscalationSentAtMs) {
+      guard.status = 'telegram_reply_required_phone_escalated';
+      this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+      this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
+      return { ...guard };
+    }
+    if (guard.status === 'telegram_reply_required_expired_unresolved' && guard.expiredAtMs) {
+      this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
+      return { ...guard };
+    }
+    this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
+    const nowMs = Number(options.nowMs) || Date.now();
+    guard.status = 'telegram_reply_required_expired_unresolved';
+    guard.expiredAtMs = nowMs;
+    guard.unresolvedSinceMs = Number(guard.unresolvedSinceMs || 0) || nowMs;
+    guard.unresolvedReason = toNonEmptyString(options.reason) || 'reply_window_expired';
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
+    this.emitTelegramReplyRequirementNotice(guard, {
+      type: 'error',
+      reason: guard.unresolvedReason,
+      message: [
+        'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
+        `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}.`,
+        'A pane-only answer does not close this turn. Send a Telegram reply or report the Telegram route block.',
+      ].join(' '),
+    });
+    return { ...guard };
+  }
+
+  buildTelegramReplyRequirementAgentEscalationNotice(guard = {}) {
+    const normalizedPaneId = toNonEmptyString(guard.paneId) || '1';
+    return [
+      'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
+      `Pane ${normalizedPaneId} still owes Telegram egress for inbound ${guard.messageId}.`,
+      'A pane-only answer does not close this turn. Send a Telegram reply or report the Telegram route block.',
+    ].join(' ');
+  }
+
+  async sendTelegramReplyRequirementAgentEscalation(paneId = '1', options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) {
+      return { ok: false, status: 'no_pending_guard' };
+    }
+    if (guard.agentDebtNoticeSentAtMs && options.force !== true) {
+      return {
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alert_already_sent',
+        guard: { ...guard },
+      };
+    }
+
+    const notice = toNonEmptyString(options.message)
+      || this.buildTelegramReplyRequirementAgentEscalationNotice(guard);
+    guard.status = 'telegram_reply_required_agent_alerted';
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.emitTelegramReplyRequirementNotice(guard, {
+      type: 'error',
+      reason: toNonEmptyString(options.reason) || 'reply_debt_agent_escalation',
+      message: notice,
+    });
+    const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId) || guard;
+    if (latest.agentDebtNoticeSentAtMs) {
+      return {
+        ok: true,
+        status: 'telegram_reply_requirement_agent_alerted',
+        guard: { ...latest },
+      };
+    }
+    latest.status = 'telegram_reply_required_agent_alert_failed';
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+    return {
+      ok: false,
+      status: 'telegram_reply_requirement_agent_alert_failed',
+      error: latest.agentDebtNoticeError || 'agent_route_unavailable',
+      guard: { ...latest },
+    };
+  }
+
+  async sendTelegramReplyRequirementPhoneEscalation(paneId = '1', options = {}) {
+    return this.sendTelegramReplyRequirementAgentEscalation(paneId, options);
+  }
+
+  getCommsJournalRowTimestampMs(row = {}) {
+    for (const value of [row.sentAtMs, row.brokeredAtMs, row.updatedAtMs]) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) return numeric;
+    }
+    return 0;
+  }
+
+  getCommsJournalRowChatId(row = {}) {
+    const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+      ? row.metadata
+      : {};
+    return normalizeChatId(
+      metadata.chatId
+      || metadata.telegramChatId
+      || metadata.routedChatId
+      || metadata.envelope?.metadata?.chatId
+      || metadata.envelope?.metadata?.telegramChatId
+      || null
+    );
+  }
+
+  getCommsJournalRowSessionId(row = {}) {
+    const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+      ? row.metadata
+      : {};
+    return toNonEmptyString(
+      row.sessionId
+      || metadata.sessionScopeId
+      || metadata.session_scope_id
+      || metadata.sessionId
+      || metadata.session_id
+      || metadata.envelope?.session_id
+      || null
+    );
+  }
+
+  isProvenTelegramEgressJournalRow(row = {}) {
+    const metadata = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+      ? row.metadata
+      : {};
+    const targetSignals = [
+      row.targetRole,
+      metadata.targetRaw,
+      metadata.directTarget,
+      metadata.target?.raw,
+      metadata.target?.role,
+      metadata.envelope?.target?.raw,
+      metadata.envelope?.target?.role,
+    ].map((value) => toNonEmptyString(value)?.toLowerCase()).filter(Boolean);
+    const hasTelegramTargetSignal = targetSignals.includes('telegram')
+      || String(metadata.routeKind || '').toLowerCase() === 'telegram';
+    const hasUserTelegramTargetSignal = targetSignals.includes('user');
+    return String(row.channel || '').toLowerCase() === 'telegram'
+      && String(row.direction || '').toLowerCase() === 'outbound'
+      && String(row.status || '').toLowerCase() === 'acked'
+      && String(row.ackStatus || '').toLowerCase() === 'telegram_delivered'
+      && (hasTelegramTargetSignal || hasUserTelegramTargetSignal);
+  }
+
+  getAckedTelegramEgressForPendingGuardResult(guard = {}, options = {}) {
+    const guardChatId = normalizeChatId(guard.chatId || guard.telegramChatId);
+    const guardSessionId = toNonEmptyString(guard.sessionScopeId);
+    const guardMessageId = toNonEmptyString(guard.messageId);
+    const guardCreatedAtMs = Number(guard.createdAtMs || 0);
+    const graceMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_JOURNAL_GRACE_MS) || 0);
+    const sinceMs = Number.isFinite(guardCreatedAtMs) && guardCreatedAtMs > 0
+      ? Math.max(0, guardCreatedAtMs - graceMs)
+      : 0;
+    const diagnostics = {
+      guardChatId: guardChatId || null,
+      guardSessionId: guardSessionId || null,
+      guardCreatedAtMs: Number.isFinite(guardCreatedAtMs) ? guardCreatedAtMs : 0,
+      sinceMs,
+      candidateRowCount: 0,
+      reason: null,
+      error: null,
+    };
+    if (!guardSessionId || !Number.isFinite(guardCreatedAtMs) || guardCreatedAtMs <= 0) {
+      diagnostics.reason = 'missing_required_guard_fields';
+      return { row: null, diagnostics };
+    }
+
+    let rows = [];
+    try {
+      const queryFn = typeof options.queryCommsJournalEntries === 'function'
+        ? options.queryCommsJournalEntries
+        : queryCommsJournalEntries;
+      rows = queryFn({
+        sessionId: guardSessionId,
+        channel: 'telegram',
+        direction: 'outbound',
+        sinceMs,
+        order: 'asc',
+        limit: 500,
+      });
+      diagnostics.candidateRowCount = Array.isArray(rows) ? rows.length : 0;
+    } catch (err) {
+      diagnostics.reason = 'query_failed';
+      diagnostics.error = err.message;
+      log.warn('TelegramReplyRequirement', `Failed checking Telegram egress journal: ${err.message}`);
+      return { row: null, diagnostics };
+    }
+
+    const row = (Array.isArray(rows) ? rows : []).find((candidate) => {
+      const metadata = (candidate.metadata && typeof candidate.metadata === 'object' && !Array.isArray(candidate.metadata))
+        ? candidate.metadata
+        : {};
+      if (!this.isProvenTelegramEgressJournalRow(candidate)) return false;
+      if (this.getCommsJournalRowSessionId(candidate) !== guardSessionId) return false;
+      const rowTimestampMs = this.getCommsJournalRowTimestampMs(candidate);
+      if (rowTimestampMs < sinceMs) return false;
+      const rowChatId = this.getCommsJournalRowChatId(candidate);
+      if (guardChatId && rowChatId && rowChatId !== guardChatId) return false;
+      const replyToMessageId = toNonEmptyString(
+        metadata.replyToMessageId
+        || metadata.reply_to_message_id
+        || metadata.inboundMessageId
+        || metadata.inbound_message_id
+        || null
+      );
+      if (!replyToMessageId || replyToMessageId === guardMessageId) return true;
+      // Telegram reply debt is an egress guard, not semantic coverage. During rapid
+      // same-chat bursts hm-send can stamp a reply with an adjacent inbound id; the
+      // delivered same-chat Telegram row still proves the pane did not answer only locally.
+      return Boolean(guardChatId && rowChatId && guardChatId === rowChatId);
+    }) || null;
+    diagnostics.reason = row ? 'matched' : 'no_matching_acked_telegram_egress';
+    return { row, diagnostics };
+  }
+
+  findAckedTelegramEgressForPendingGuard(guard = {}, options = {}) {
+    return this.getAckedTelegramEgressForPendingGuardResult(guard, options).row;
+  }
+
+  notePendingTelegramReplyGuardJournalMiss(paneId = '1', guard = {}, diagnostics = {}, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const latest = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!latest || toNonEmptyString(latest.messageId) !== toNonEmptyString(guard.messageId)) return;
+    const nowMs = Date.now();
+    latest.lastJournalReconcileAtMs = nowMs;
+    latest.lastJournalReconcileReason = diagnostics.reason || 'no_matching_acked_telegram_egress';
+    latest.lastJournalReconcileCandidateRowCount = Number(diagnostics.candidateRowCount || 0);
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+    if (options.logMisses !== true) return;
+    const lastDiagnosticAtMs = Number(latest.lastJournalReconcileDiagnosticAtMs || 0);
+    if ((nowMs - lastDiagnosticAtMs) < TELEGRAM_REPLY_GUARD_JOURNAL_DIAGNOSTIC_THROTTLE_MS) return;
+    latest.lastJournalReconcileDiagnosticAtMs = nowMs;
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, latest);
+    log.warn(
+      'TelegramReplyRequirement',
+      [
+        'No acked Telegram egress matched pending guard',
+        `pane=${normalizedPaneId}`,
+        `inbound=${toNonEmptyString(latest.messageId) || 'unknown'}`,
+        `chatId=${diagnostics.guardChatId || latest.chatId || latest.telegramChatId || 'missing'}`,
+        `session=${diagnostics.guardSessionId || latest.sessionScopeId || 'missing'}`,
+        `createdAtMs=${diagnostics.guardCreatedAtMs || latest.createdAtMs || 'missing'}`,
+        `sinceMs=${diagnostics.sinceMs || 'missing'}`,
+        `candidateRows=${Number(diagnostics.candidateRowCount || 0)}`,
+        `reason=${diagnostics.reason || 'unknown'}`,
+        `source=${toNonEmptyString(options.reason) || 'journal_reconcile'}`,
+      ].join(' ')
+    );
+  }
+
+  reconcilePendingTelegramReplyGuardWithJournal(paneId = '1', guard = {}, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    if (this.isTerminalPendingTelegramReplyGuard(guard)) {
+      return null;
+    }
+    const result = this.getAckedTelegramEgressForPendingGuardResult(guard, options);
+    const egressRow = result.row;
+    if (!egressRow) {
+      this.notePendingTelegramReplyGuardJournalMiss(normalizedPaneId, guard, result.diagnostics, options);
+      return null;
+    }
+    const durableSatisfaction = this.satisfyDurableTelegramReplyObligationForGuard(guard, {
+      source: 'squidrun-app.journal-reconcile',
+      reason: result.diagnostics?.reason || 'acked_telegram_egress_journal_row',
+      row: egressRow,
+      egressMessageId: egressRow.messageId || null,
+      egressRowId: egressRow.rowId || null,
+      satisfiedAtMs: this.getCommsJournalRowTimestampMs(egressRow) || Date.now(),
+      chatId: this.getCommsJournalRowChatId(egressRow),
+      sessionId: this.getCommsJournalRowSessionId(egressRow),
+    }, options);
+    this.clearPendingTelegramReplyGuard({
+      paneId: normalizedPaneId,
+      chatId: guard.chatId || guard.telegramChatId || null,
+    });
+    return {
+      ok: true,
+      status: 'telegram_reply_requirement_satisfied_by_journal',
+      paneId: normalizedPaneId,
+      inboundMessageId: guard.messageId || null,
+      egressMessageId: egressRow.messageId || null,
+      chatId: this.getCommsJournalRowChatId(egressRow),
+      sessionScopeId: this.getCommsJournalRowSessionId(egressRow),
+      durableSatisfaction,
+    };
+  }
+
+  reconcilePendingTelegramReplyGuardsWithJournal(options = {}) {
+    const reconciled = [];
+    let skippedTerminalCount = 0;
+    for (const [paneId, guard] of Array.from(this.pendingTelegramReplyGuards.entries())) {
+      if (this.isTerminalPendingTelegramReplyGuard(guard)) {
+        skippedTerminalCount += 1;
+        continue;
+      }
+      const satisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(paneId, guard, options);
+      if (satisfaction) reconciled.push(satisfaction);
+    }
+    const nonTerminalPendingCount = this.countNonTerminalPendingTelegramReplyGuards();
+    if (nonTerminalPendingCount === 0) {
+      this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    }
+    return {
+      ok: true,
+      status: reconciled.length > 0
+        ? 'telegram_reply_guards_reconciled_from_journal'
+        : 'telegram_reply_guards_checked_from_journal',
+      reconciledCount: reconciled.length,
+      pendingCount: this.pendingTelegramReplyGuards.size,
+      nonTerminalPendingCount,
+      skippedTerminalCount,
+      reconciled,
+    };
+  }
+
+  clearPendingTelegramReplyGuard({ paneId = '1', chatId = null } = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return false;
+    const normalizedChatId = normalizeChatId(chatId);
+    const guardChatId = normalizeChatId(guard.chatId);
+    if (normalizedChatId && guardChatId && normalizedChatId !== guardChatId) {
+      return false;
+    }
+    this.clearPendingTelegramReplyGuardTimer(normalizedPaneId);
+    this.clearPendingTelegramReplyGuardEmitTimer(normalizedPaneId);
+    this.pendingTelegramReplyGuards.delete(normalizedPaneId);
+    this.clearPendingTelegramReplyGuardJournalReconcileTimerIfIdle();
+    return true;
+  }
+
+  isPendingTelegramReplyGuardFresh(guard = {}, nowMs = Date.now()) {
+    const createdAtMs = Number(guard.createdAtMs || 0);
+    if (!Number.isFinite(createdAtMs) || createdAtMs <= 0) return false;
+    return (nowMs - createdAtMs) <= TELEGRAM_REPLY_WINDOW_MS;
+  }
+
+  inspectPaneOutputForReplyGuards(paneId, text, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return { ok: true, status: 'no_pending_guard' };
+    const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);
+    if (journalSatisfaction) {
+      return {
+        ok: true,
+        status: journalSatisfaction.status,
+        guard: null,
+        satisfaction: journalSatisfaction,
+      };
+    }
+    const nowMs = Date.now();
+    if (!this.isPendingTelegramReplyGuardFresh(guard, nowMs)) {
+      const expiredGuard = this.expirePendingTelegramReplyGuard(normalizedPaneId, {
+        messageId: guard.messageId,
+        nowMs,
+        reason: 'reply_window_expired',
+      });
+      return {
+        ok: false,
+        status: expiredGuard?.phoneEscalationSentAtMs
+          ? 'telegram_reply_requirement_phone_escalated_unresolved'
+          : 'telegram_reply_requirement_expired_unresolved',
+        guard: expiredGuard || { ...guard },
+      };
+    }
+    if (options.outputKind === 'squidrun_injected_echo') {
+      return { ok: true, status: 'injected_echo_ignored' };
+    }
+    const visibleText = toNonEmptyString(text);
+    if (!visibleText) return { ok: true, status: 'empty_output_ignored' };
+
+    guard.status = 'telegram_reply_required_unresolved';
+    guard.violationCount = Number(guard.violationCount || 0) + 1;
+    guard.lastViolationAtMs = nowMs;
+    guard.unresolvedSinceMs = Number(guard.unresolvedSinceMs || 0) || nowMs;
+    guard.lastPaneOutputPreview = visibleText.slice(0, 240);
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+
+    // Don't nag synchronously — the architect prints pane output BEFORE running
+    // `hm-send telegram`, and a real reply takes minutes. The deferred timer is
+    // a sliding idle window, but ONLY meaningful output may re-arm it: Claude
+    // panes repaint their status line/spinner continuously while idle, and raw
+    // re-arms would make the idle window unreachable exactly when it matters.
+    // Frames with no printable payload, or whose digit-normalized payload
+    // matches the previous frame (timer-tick repaints), never re-arm; whatever
+    // repaint noise leaks past this is bounded by the absolute cap.
+    const hasPendingDeferredNag = this.pendingTelegramReplyGuardEmitTimers.has(normalizedPaneId)
+      && toNonEmptyString(guard.deferredPaneOutputNagMessageId) === toNonEmptyString(guard.messageId);
+    const printablePayload = extractPrintablePtyPayload(visibleText);
+    const rearmPayloadKey = printablePayload ? printablePayload.replace(/\d+/g, '#').slice(0, 2000) : '';
+    const meaningfulOutput = Boolean(rearmPayloadKey) && rearmPayloadKey !== guard.deferredPaneOutputRearmPayloadKey;
+    if (!hasPendingDeferredNag || meaningfulOutput) {
+      if (rearmPayloadKey) guard.deferredPaneOutputRearmPayloadKey = rearmPayloadKey;
+      this.scheduleDeferredTelegramReplyDebtNag(normalizedPaneId, guard, {
+        outputPreview: visibleText.slice(0, 240),
+      });
+    }
+    return {
+      ok: false,
+      status: 'telegram_reply_requirement_pending_grace',
+      guard: { ...guard },
+    };
+  }
+
+  scheduleDeferredTelegramReplyDebtNag(paneId, guard = {}, options = {}) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const messageId = toNonEmptyString(guard.messageId);
+    // At most one nag per inbound: never re-arm once emitted.
+    if (messageId && guard.paneOutputNagEmittedForMessageId === messageId) return false;
+    const nowMs = Date.now();
+    // Sliding idle window: every output line for the same inbound re-arms the
+    // timer, so the nag fires only after the pane goes QUIET without egress -
+    // an architect mid-reply (context reads, composing) is not in debt yet.
+    if (guard.deferredPaneOutputNagMessageId !== messageId
+        || !Number.isFinite(Number(guard.deferredPaneOutputNagFirstViolationAtMs))
+        || Number(guard.deferredPaneOutputNagFirstViolationAtMs) <= 0) {
+      guard.deferredPaneOutputNagFirstViolationAtMs = nowMs;
+    }
+    guard.deferredPaneOutputNagMessageId = messageId;
+    guard.deferredPaneOutputNagPreview = toNonEmptyString(options.outputPreview)
+      || guard.lastPaneOutputPreview || null;
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    this.clearPendingTelegramReplyGuardEmitTimer(normalizedPaneId);
+    const idleMs = Math.max(0, Number(options.graceMs ?? TELEGRAM_REPLY_GUARD_EMIT_GRACE_MS) || 0);
+    // Continuous output cannot defer past the absolute cap from first violation.
+    const capAtMs = Number(guard.deferredPaneOutputNagFirstViolationAtMs)
+      + Math.max(0, Number(options.maxDeferMs ?? TELEGRAM_REPLY_GUARD_MAX_DEFER_MS) || 0);
+    const delayMs = Math.max(0, Math.min(idleMs, capAtMs - nowMs));
+    const timer = setTimeout(() => {
+      this.pendingTelegramReplyGuardEmitTimers.delete(normalizedPaneId);
+      this.emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(normalizedPaneId, messageId);
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    this.pendingTelegramReplyGuardEmitTimers.set(normalizedPaneId, timer);
+    return true;
+  }
+
+  clearPendingTelegramReplyGuardEmitTimer(paneId = '1') {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const timer = this.pendingTelegramReplyGuardEmitTimers.get(normalizedPaneId);
+    if (timer) {
+      clearTimeout(timer);
+      this.pendingTelegramReplyGuardEmitTimers.delete(normalizedPaneId);
+    }
+  }
+
+  emitDeferredTelegramReplyDebtNagIfStillUnsatisfied(paneId, messageId) {
+    const normalizedPaneId = toNonEmptyString(paneId) || '1';
+    const guard = this.pendingTelegramReplyGuards.get(normalizedPaneId);
+    if (!guard) return { ok: true, status: 'no_pending_guard' };
+    if (toNonEmptyString(guard.messageId) !== toNonEmptyString(messageId)) {
+      return { ok: true, status: 'superseded_inbound' };
+    }
+    if (this.isTerminalPendingTelegramReplyGuard(guard)) {
+      return { ok: true, status: 'terminal_guard' };
+    }
+    // A telegram reply may have landed during the grace window — re-check first.
+    const journalSatisfaction = this.reconcilePendingTelegramReplyGuardWithJournal(normalizedPaneId, guard);
+    if (journalSatisfaction) {
+      return { ok: true, status: journalSatisfaction.status, satisfaction: journalSatisfaction };
+    }
+    if (guard.paneOutputNagEmittedForMessageId === toNonEmptyString(guard.messageId)) {
+      return { ok: true, status: 'already_nagged' };
+    }
+    const nowMs = Date.now();
+    guard.lastWarningAtMs = nowMs;
+    guard.warningCount = Number(guard.warningCount || 0) + 1;
+    guard.paneOutputNagEmittedForMessageId = toNonEmptyString(guard.messageId);
+    this.pendingTelegramReplyGuards.set(normalizedPaneId, guard);
+    const warning = [
+      'TELEGRAM REPLY REQUIREMENT UNRESOLVED',
+      `Pane ${normalizedPaneId} produced visible output after Telegram inbound ${guard.messageId}.`,
+      "That output did not satisfy the Telegram reply debt. Use `hm-send telegram ...` or explicitly report the Telegram route block.",
+    ].join(' ');
+    this.emitTelegramReplyRequirementNotice(guard, {
+      type: 'warning',
+      reason: 'pane_output_without_telegram_egress',
+      outputPreview: guard.deferredPaneOutputNagPreview || guard.lastPaneOutputPreview || null,
+      message: warning,
+    });
+    return {
+      ok: false,
+      status: 'telegram_reply_requirement_unresolved',
+      guard: { ...guard },
+      warning,
+    };
+  }
+
+  /**
+   * COMPOSE THE EXACT BYTES A PANE WILL RECEIVE — and stop there. Split out
+   * because the admission kernel must hash what is really delivered: recall and
+   * the reply-target guard run AFTER the caller's message, so a digest taken
+   * before this point describes a string no consumer ever sees.
+   */
+  async composeHumanPaneMessage(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const messageWithRecall = await this.buildHumanMessageWithUnifiedRecall(message, recallContext, logLabel);
+    const meta = {
+      ...((recallContext.meta && typeof recallContext.meta === 'object') ? recallContext.meta : {}),
+      ...((recallContext.metadata && typeof recallContext.metadata === 'object') ? recallContext.metadata : {}),
+    };
+    if (toNonEmptyString(recallContext.windowKey) && !toNonEmptyString(meta.windowKey)) {
+      meta.windowKey = toNonEmptyString(recallContext.windowKey);
+    }
+    if (toNonEmptyString(recallContext.profileName || recallContext.profile) && !toNonEmptyString(meta.profileName)) {
+      meta.profileName = toNonEmptyString(recallContext.profileName || recallContext.profile);
+    }
+    if (toNonEmptyString(recallContext.sessionScopeId) && !toNonEmptyString(meta.sessionScopeId)) {
+      meta.sessionScopeId = toNonEmptyString(recallContext.sessionScopeId);
+    }
+    const channel = toNonEmptyString(recallContext.channel) || 'user';
+    const isTelegramInbound = channel.toLowerCase() === 'telegram';
+    const outboundMessage = isTelegramInbound
+      ? this.buildTelegramReplyTargetPaneMessage(messageWithRecall, recallContext)
+      : messageWithRecall;
+    if (isTelegramInbound) {
+      this.applyTelegramReplyTargetMetadata(meta, recallContext);
+    }
+    return { outboundMessage, meta, channel, isTelegramInbound };
+  }
+
+  /**
+   * Write ONE composed message to its pane. `composed.outboundMessage` is
+   * authoritative and is never re-decorated: on the Telegram path those bytes
+   * are already hashed into a durable `delivery_started`.
+   */
+  async deliverComposedHumanMessage(composed = {}, recallContext = {}, logLabel = 'HumanMessage') {
+    const { outboundMessage, meta = {}, channel = 'user', isTelegramInbound = false } = composed;
+    const result = await this.deliverPaneMessageReliably({
+      paneId: String(recallContext.paneId || '1'),
+      message: outboundMessage,
+      fromRole: null,
+      traceContext: recallContext.traceContext || null,
+      meta: Object.keys(meta).length > 0 ? meta : null,
+      queueOnAcceptedUnverified: !isTelegramInbound,
+      queueOnHardFailure: true,
+      messageId: recallContext.messageId || null,
+      channel,
+      sender: recallContext.sender || 'user',
+      logLabel,
+    });
+    const deliveredOk = result?.accepted === true || result?.queued === true
+      || result?.verified === true || result?.ok === true || result?.pendingQueued === true;
+    if (isTelegramInbound) {
+      // S464 telegram-loss fix (b): a reply debt may only exist for a message
+      // the pane actually RECEIVED. The old order opened the guard before
+      // delivery was attempted, so a dropped payload (telegram-in-700100031)
+      // put the Architect in debt for words he never saw.
+      if (deliveredOk) {
+        this.markPendingTelegramReplyGuard({
+          paneId: String(recallContext.paneId || '1'),
+          messageId: recallContext.messageId || null,
+          sender: recallContext.sender || 'user',
+          chatId: recallContext.chatId || meta.chatId || meta.telegramChatId || null,
+          windowKey: recallContext.windowKey || meta.windowKey || null,
+          profileName: recallContext.profileName || recallContext.profile || meta.profileName || null,
+          sessionScopeId: recallContext.sessionScopeId || meta.sessionScopeId || null,
+        });
+      } else {
+        log.error(
+          logLabel,
+          `TELEGRAM INBOUND NOT DELIVERED to pane ${recallContext.paneId || '1'} (${recallContext.messageId || 'no-id'}, status=${result?.status || result?.error || 'unknown'}) - NO reply debt opened; user message must be recovered/redelivered`
+        );
+      }
+    }
+    if (!deliveredOk) {
+      log.warn(logLabel, `Failed to inject inbound message into pane ${recallContext.paneId || '1'} (${result?.error || 'unknown'})`);
+    }
+    return result;
+  }
+
+  /**
+   * Compose then deliver. Unchanged for every non-Telegram caller.
+   * `recallContext.preComposed` is the admitted path: composition already
+   * happened inside the admission sequence and `message` is the exact string
+   * hashed into `delivery_started`, so recomposing would decorate it twice.
+   */
+  async deliverHumanMessageWithRecall(message, recallContext = {}, logLabel = 'HumanMessage') {
+    const composed = recallContext.preComposed
+      ? { ...recallContext.preComposed, outboundMessage: String(message) }
+      : await this.composeHumanPaneMessage(message, recallContext, logLabel);
+    return this.deliverComposedHumanMessage(composed, recallContext, logLabel);
+  }
+
+  startSmsPoller() {
+    const started = this.inboundPollerService.startSms({
+      onMessage: (text, from, metadata = {}) => {
+        const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
+        const body = typeof text === 'string' ? text.trim() : '';
+        if (!body) return;
+
+        const inboundSid = typeof metadata?.sid === 'string' ? metadata.sid.trim() : '';
+        const inboundMessageId = inboundSid
+          ? `sms-in-${inboundSid}`
+          : `sms-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const sentAtMs = Number.isFinite(Number(metadata?.timestampMs))
+          ? Math.floor(Number(metadata.timestampMs))
+          : Date.now();
+        void Promise.resolve(executeEvidenceLedgerOperation(
+          'upsert-comms-journal',
+          {
+            messageId: inboundMessageId,
+            sessionId: this.commsSessionScopeId || null,
+            senderRole: 'user',
+            targetRole: 'architect',
+            channel: 'sms',
+            direction: 'inbound',
+            sentAtMs,
+            brokeredAtMs: Date.now(),
+            rawBody: body,
+            status: 'brokered',
+            attempt: 1,
+            metadata: {
+              source: 'sms-poller',
+              from: sender,
+              sid: inboundSid || null,
+            },
+          },
+          {
+            source: {
+              via: 'sms-poller',
+              role: 'system',
+              paneId: 'system',
+            },
+          }
+        )).then((result) => {
+          if (result?.ok === false) {
+            log.warn('EvidenceLedger', `SMS inbound journal upsert failed: ${result.reason || 'unknown'}`);
+          }
+        }).catch((err) => {
+          log.warn('EvidenceLedger', `SMS inbound journal upsert error: ${err.message}`);
+        });
+
+        void this.deliverHumanMessageWithRecall(
+          `[SMS from ${sender}]: ${body}`,
+          {
+            paneId: '1',
+            role: 'architect',
+            channel: 'sms',
+            sender,
+            messageId: inboundMessageId,
+            metadata,
+            header: 'MESSAGE RECALL',
+          },
+          'SMS'
+        );
+      },
+    });
+
+    if (started) {
+      log.info('SMS', 'Inbound SMS bridge enabled');
+    }
+  }
+
+  /** Run the admission kernel for one inbound job on a durable handle. */
+  async runTelegramAdmissionForJob(options = {}) {
+    return telegramAdmissionDelivery.runAdmissionForJob(this, options);
+  }
+
+  /**
+   * Deliver one inbound Telegram job to its pane. Called ONLY by the drain
+   * coordinator, never straight from the poller callback: the callback now
+   * makes the message durable and schedules a drain, so exactly one code path
+   * puts a message on screen. Two paths would double-deliver every replay.
+   *
+   * Returns a receipt carrying its own identity, because the drain validator
+   * refuses to synthesize identity for a proof (Architect #62).
+   */
+  async deliverTelegramInboundJob(job = {}) {
+    const {
+      body, sender, metadata, media, photo, document, archivePath,
+      inboundRoute, inboundWindowKey, inboundSessionScopeId,
+      inboundMessageId, updateId, messageId, sentAtMs,
+    } = job;
+    const deliveryIdentity = {
+      messageId: inboundMessageId,
+      routeKey: inboundRoute?.profile || inboundWindowKey || 'main',
+      windowKey: inboundWindowKey,
+      profile: inboundRoute?.profile || inboundWindowKey || 'main',
+    };
+    if (inboundWindowKey === 'main') {
+      this.markTelegramInboundContext(sender, {
+        chatId: metadata?.chatId,
+        windowKey: inboundWindowKey,
+        profile: inboundRoute.profile || 'main',
+        sessionScopeId: inboundSessionScopeId,
+        messageId: inboundMessageId,
+        inboundMessageId,
+        updateId,
+        telegramMessageId: messageId,
+        body,
+      });
+    }
+    // THE GENERIC COMMS UPSERT THAT USED TO LIVE HERE IS GONE, ON PURPOSE: a
+    // second, unawaited writer of `telegram-in-<updateId>` that could rewrite
+    // body, session, identity and metadata. Generic-first stranded every source
+    // as `source_identity_missing`; generic-second overwrote the identity the
+    // claim was joined to. The kernel is sole owner now.
+    const formattedBody = archivePath ? `${body} | saved: ${archivePath}` : body;
+    const fullTelegramMessage = `[Telegram from ${sender}]: ${formattedBody}`;
+    const telegramMsgBytes = Buffer.byteLength(fullTelegramMessage, 'utf8');
+    const TELEGRAM_MSG_SIZE_LIMIT = 256 * 1024; // 256 KB
+    if (telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT) {
+      log.warn('Telegram', `Oversized message from ${sender} (${telegramMsgBytes} bytes > ${TELEGRAM_MSG_SIZE_LIMIT}). Truncating.`);
+    }
+    const safeMessage = telegramMsgBytes > TELEGRAM_MSG_SIZE_LIMIT
+      ? fullTelegramMessage.slice(0, TELEGRAM_MSG_SIZE_LIMIT) + '\n[...truncated — full text in evidence ledger]'
+      : fullTelegramMessage;
+    const admissionJob = telegramAdmissionDelivery.buildAdmissionJob(job, deliveryIdentity);
+    const admissionRecord = job.record || {};
+
+    if (inboundWindowKey !== 'main') {
+      // Source-only admission: see telegram-admission-delivery.js for why a
+      // scoped route may not claim a transport attempt.
+      const scopedAdmission = await telegramAdmissionDelivery.admitScopedTelegramSource(this, {
+        job: admissionJob, record: admissionRecord, inboundMessageId, log,
+      });
+      if (!scopedAdmission.ok) {
+        return { ...scopedAdmission.refusal, ...deliveryIdentity };
+      }
+
+      // ===================================================================
+      // THE SCOPED CUTOVER IS BINARY, AND THIS IS THE STOP (Oracle #10).
+      // ===================================================================
+      // The source row is recorded — the kernel owns the identity — and then
+      // this route REFUSES, before a far-process WebSocket is constructed or
+      // opened. It is not a capability we removed; it is one we never actually
+      // had and were reporting as delivery:
+      //
+      //   * the far side renders its own pane, so no marker we append can come
+      //     back and no terminal producer exists on that side at all;
+      //   * the ACK that came back carries no chatId, generation or provedAtMs,
+      //     so it fails the strict proof gate by construction;
+      //   * its duplicate suppression was RAM-only, so a far restart could put
+      //     the same message on screen twice with nothing able to notice;
+      //   * the source row lives in THIS profile's ledger while the lookup that
+      //     would retire it reads the SCOPED one — two databases, no binding.
+      //
+      // A send whose success can never be proved and whose duplicate can never
+      // be detected is not a delivery, and continuing to make it while calling
+      // the result `verified` is how a scoped message becomes invisible in both
+      // directions. The record stays pending and visible until a durable
+      // far-side claim, marker and terminal producer exist with a cross-ledger
+      // binding. That work is named, not hidden behind a hopeful send.
+      log.warn(
+        'Telegram',
+        `Scoped route ${inboundWindowKey} admitted source for ${inboundMessageId} and refused delivery: no far-side proof authority`
+      );
+      return {
+        ok: false,
+        status: 'scoped_delivery_unprovable',
+        admissionStage: 'A_source',
+        admissionPhase: 'before_delivery',
+        scopedSourceRecorded: true,
+        // Source-only never claims a transport attempt, so this refusal owns
+        // nothing the drain may close on its behalf.
+        claimRelease: { kind: 'none' },
+        ...deliveryIdentity,
+      };
+    }
+    const mainPaneRecallContext = {
+      paneId: '1',
+      role: 'architect',
+      windowKey: inboundWindowKey,
+      profileName: inboundRoute.profile || inboundWindowKey,
+      sessionScopeId: inboundSessionScopeId,
+      channel: 'telegram',
+      sender,
+      messageId: inboundMessageId,
+      chatId: metadata?.chatId,
+      telegramChatId: metadata?.chatId,
+      metadata: {
+        ...(metadata && typeof metadata === 'object' ? metadata : {}),
+        windowKey: inboundWindowKey,
+        profileName: inboundRoute.profile || inboundWindowKey,
+        sessionScopeId: inboundSessionScopeId,
+      },
+      header: 'MESSAGE RECALL',
+    };
+    // Admission-then-one-write. The whole sequence, including composition of
+    // the exact bytes, lives in telegram-admission-delivery.js.
+    const deliverMainTelegramToArchitect = async () => telegramAdmissionDelivery
+      .deliverAdmittedMainTelegram(this, {
+        safeMessage,
+        recallContext: mainPaneRecallContext,
+        job: admissionJob,
+        record: admissionRecord,
+        inboundMessageId,
+        log,
+      });
+
+    if (this.shouldRouteMainTelegramInboundToMira({
+      body,
+      inboundWindowKey,
+      archivePath,
+      media,
+      photo,
+      document,
+    })) {
+      // ===================================================================
+      // A DOMINATES THE ROUTE SPLIT (Oracle #10). THIS BRANCH WAS A BYPASS.
+      // ===================================================================
+      // Every Mira outcome below returns BEFORE deliverMainTelegramToArchitect,
+      // therefore before step A ever ran. With the generic upsert deleted, a
+      // message answered through Mira created NO inbound source row at all — it
+      // was answered and left with no immutable identity anywhere, which is
+      // indistinguishable from never having arrived.
+      //
+      // So the source is recorded first, for the route rather than for the pane
+      // write. There is deliberately no claim and no marker: Mira's transport is
+      // its own outbound journal, not a pane whose bytes we hash, and pretending
+      // otherwise would claim A-E for a delivery that never touches E.
+      const miraSource = await this.runTelegramAdmissionForJob({
+        job: admissionJob,
+        record: admissionRecord,
+        mode: telegramAdmissionDelivery.MODES.SOURCE_ONLY,
+      });
+      if (!miraSource.ok) {
+        log.warn(
+          'Telegram',
+          `Mira route admission refused for ${inboundMessageId} at ${miraSource.stage} (${miraSource.reason}); not answering`
+        );
+        return {
+          ok: false,
+          status: `admission_refused:${miraSource.reason}`,
+          admissionStage: miraSource.stage,
+          admissionPhase: miraSource.phase || 'before_delivery',
+          claimRelease: telegramAdmissionDelivery.claimReleaseFor(miraSource),
+          ...deliveryIdentity,
+        };
+      }
+      // ONE ROW, NAMED ON EVERY OUTCOME BELOW, so complete / partial /
+      // ambiguous / proof-pending all point at the same immutable identity.
+      const miraIdentity = { ...deliveryIdentity, admissionSourceRowId: miraSource.sourceRowId };
+
+      const miraOutcome = await this.routeMainTelegramInboundToMira({
+        body,
+        sender,
+        metadata,
+        inboundMessageId,
+        inboundSessionScopeId,
+      }).catch((err) => ({
+        ok: false,
+        // A throw out of the Mira route may still have sent. Treat it as
+        // ambiguous so the adapter holds instead of replying twice.
+        accepted: true,
+        ambiguous: true,
+        status: 'mira_runtime_error',
+        error: err.message,
+      }));
+
+      // Evidence FIRST, verdict second — and this must happen even when the
+      // aggregate says ok:false, because a later chunk can fail after earlier
+      // chunks were already delivered to Operator.
+      // Caught SEPARATELY from delivery. If this throws inside the caller's
+      // try, processRecord reads it as deliver_threw -> DEFINITE -> retry, and
+      // retrying after Mira may already have sent is a second reply to Operator.
+      let egress;
+      try {
+        egress = this.inspectMiraOutboundEgress(inboundMessageId, {
+          inboundMessageId,
+          chatId: metadata?.chatId,
+          windowKey: inboundWindowKey,
+          profile: inboundRoute?.profile || 'main',
+          routeKey: inboundRoute?.profile || inboundWindowKey || 'main',
+        });
+      } catch (err) {
+        log.warn('Telegram', `Mira egress proof lookup failed for ${inboundMessageId}: ${err.message}; holding`);
+        return {
+          status: 'accepted.proof_lookup_pending',
+          accepted: true,
+          ...miraIdentity,
+        };
+      }
+
+      if (egress.complete) {
+        log.info('Telegram', `Telegram inbound ${inboundMessageId} answered through Mira live path`);
+        return {
+          status: 'delivered.user_visible',
+          userVisible: true,
+          miraStatus: miraOutcome?.status || null,
+          ...miraIdentity,
+        };
+      }
+
+      if (egress.anyDelivered) {
+        // PARTIAL. Operator has already seen part of the reply; an Architect
+        // fallback now would be a second visible message on top of it.
+        log.warn(
+          'Telegram',
+          `Mira egress for ${inboundMessageId} is partial (${egress.delivered}/${egress.expectedParts ?? '?'}); holding instead of falling back`
+        );
+        return {
+          status: 'accepted.mira_partial_egress',
+          accepted: true,
+          ...miraIdentity,
+        };
+      }
+
+      // An ambiguous send may already have reached Operator. Falling back now is
+      // how he sees the same answer twice.
+      if (miraOutcome?.ambiguous === true || miraOutcome?.accepted === true) {
+        log.warn(
+          'Telegram',
+          `Mira send for ${inboundMessageId} is ambiguous (${miraOutcome?.status || 'unknown'}); holding instead of falling back`
+        );
+        return {
+          status: 'accepted.mira_send_ambiguous',
+          accepted: true,
+          ...miraIdentity,
+        };
+      }
+
+      if (miraOutcome?.ok) {
+        // Mira claims success but the journal shows ZERO delivered parts. Hold:
+        // the proof may still land, and a resend is the one thing we cannot take
+        // back. Only a definite failure with no delivered part may fall back.
+        log.warn(
+          'Telegram',
+          `Mira accepted ${inboundMessageId} but no durable outbound proof is present; holding`
+        );
+        return {
+          status: 'accepted.mira_proof_pending',
+          accepted: true,
+          ...miraIdentity,
+        };
+      }
+
+      log.warn(
+        'Telegram',
+        `Mira live Telegram reply failed for ${inboundMessageId} (${miraOutcome?.status || miraOutcome?.error || 'unknown'}); falling back to Architect pane`
+      );
+      // Fall through to the main pane and report THAT outcome — the fallback is
+      // the delivery now, so its result is what the queue is entitled to see.
+      return { ...(await deliverMainTelegramToArchitect()), ...deliveryIdentity };
+    }
+
+    return { ...(await deliverMainTelegramToArchitect()), ...deliveryIdentity };
+  }
+
+  /**
+   * ONE coordinator per app. Two instances draining the same directory would
+   * each hold their own single-flight latch and deliver the same record twice,
+   * which is precisely the failure the latch exists to prevent.
+   */
+  /**
+   * Stop accepting inbound deliveries and wait for any in flight to settle.
+   *
+   * Ordering matters more than it looks: killing the daemon or closing journals
+   * while a delivery is mid-flight can lose or duplicate a message that the
+   * queue sidecar cannot then reason about. Idempotent, so both
+   * performFullShutdown and shutdown may call it.
+   */
+  /**
+   * One honest line to Operator before the poller dies.
+   *
+   * Main owns getUpdates, so only the main active profile sends this — a scoped
+   * window closing does not take polling down and must not claim it does.
+   */
+  async sendQuitTelegramNotice(reason = 'quit') {
+    try {
+      if (!isMainProfile(this.activeProfileName)) {
+        return { ok: false, skipped: true, reason: 'not_main_profile' };
+      }
+      const env = this.buildTelegramPollerEnv(process.env);
+      // BOUND THIS SEND. hm-telegram's requestTelegram has no socket timeout, so
+      // a never-settling request would hang Quit forever — the awaited notice
+      // would become the thing that traps the app open, which is the opposite
+      // of best-effort. Bounded narrowly here rather than by changing global
+      // Telegram transport in this slice.
+      const timeoutMs = Number.isFinite(Number(this.quitNoticeTimeoutMs))
+        ? Number(this.quitNoticeTimeoutMs)
+        : QUIT_NOTICE_TIMEOUT_MS;
+
+      let timer = null;
+      const sending = sendRoutedTelegramMessage(QUIT_TELEGRAM_NOTICE, env, {
+        messageId: `squidrun-quit-notice-${Date.now()}`,
+        senderRole: 'system',
+        sessionId: this.commsSessionScopeId || null,
+        metadata: {
+          source: 'squidrun-quit-notice',
+          shutdownReason: reason,
+          windowKey: 'main',
+          profile: 'main',
+        },
+      });
+      // The losing promise needs its OWN catch: if the send rejects after the
+      // timeout has already won, nothing else is listening and it would surface
+      // as an unhandled rejection during shutdown.
+      sending.catch(() => {});
+
+      // try/finally: a FAST REJECTION makes the race reject straight past a
+      // trailing clearTimeout, leaving the timer armed for the full bound.
+      let result;
+      try {
+        result = await Promise.race([
+          sending,
+          new Promise((resolve) => {
+            timer = setTimeout(() => resolve({ __quitNoticeTimedOut: true }), timeoutMs);
+            if (typeof timer.unref === 'function') timer.unref();
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+
+      if (result && result.__quitNoticeTimedOut) {
+        log.warn('Telegram', `Quit notice timed out after ${timeoutMs}ms; continuing shutdown`);
+        return { ok: false, reason: 'timeout' };
+      }
+      if (!result || result.ok !== true) {
+        log.warn('Telegram', `Quit notice not delivered (${result?.error || result?.status || 'unknown'})`);
+        return { ok: false, reason: result?.error || result?.status || 'send_failed' };
+      }
+      return { ok: true };
+    } catch (err) {
+      // Never block teardown on a courtesy message.
+      log.warn('Telegram', `Quit notice threw: ${err.message}`);
+      return { ok: false, reason: `threw:${err.message}` };
+    }
+  }
+
+  async quiesceTelegramIngressDrain() {
+    // Latch FIRST. Nulling the coordinator while the poller is still alive let
+    // an inbound callback build a brand new one and start delivering again
+    // before the daemon kill — quiesce that un-quiesces itself.
+    this.telegramDrainQuiesced = true;
+    if (!this.telegramDrainCoordinator) return { ok: true, skipped: true };
+    try {
+      await this.telegramDrainCoordinator.dispose();
+    } catch (err) {
+      log.warn('Telegram', `Ingress drain dispose failed: ${err.message}`);
+      return { ok: false, reason: err.message };
+    }
+    this.telegramDrainCoordinator = null;
+    this.telegramDrainInFlight = null;
+    return { ok: true };
+  }
+
+  getTelegramDrainCoordinator() {
+    // Once quiesced, nothing may resurrect it for the rest of this process.
+    if (this.telegramDrainQuiesced) return null;
+    if (!this.telegramDrainCoordinator) {
+      this.telegramDrainCoordinator = telegramIngressDrain.createDrainCoordinator({
+        log,
+        resolveRoute: (chatId) => this.resolveTelegramInboundRoute(chatId),
+        currentSessionFor: (windowKey) => this.getWindowSessionScopeId(windowKey || 'main'),
+        deliver: (job) => this.deliverTelegramInboundJob(this.buildTelegramInboundJob(job)),
+        // The admission database claim is the sole at-most-once key. An
+        // unreadable lookup is deliberately fail-open in the drain: possible
+        // duplication is cheaper than muting the channel.
+        lookupTransportClaim: (query) => telegramAdmissionDelivery.lookupTransportClaimForApp(this, query),
+        // v7 §3 Phase L. The drain asks once per pass and this answers from a
+        // value frozen at STARTUP, in init immediately after loadSettings, so
+        // no settings save can move a running generation between operating
+        // states mid-backlog (Architect #146/#147/#148). Freezing at first ask
+        // was the rejected design: the first ask comes from runPass, which is
+        // late enough for a mutation to get in front of it.
+        activationMode: () => this.getTelegramActivationModeSetting(),
+      });
+    }
+    return this.telegramDrainCoordinator;
+  }
+
+  /**
+   * FREEZE THE TELEGRAM TRANSPORT ACTIVATION MODE FOR THIS APP GENERATION.
+   *
+   * Called exactly once from `init()`, immediately after `loadSettings()` and
+   * well before the startup backlog drain and the poller.
+   *
+   * =====================================================================
+   * WHY HERE, AND NOT EARLIER OR LATER (Architect #146/#147/#148, Oracle #92)
+   * =====================================================================
+   * The constructor is too early: `ctx.currentSettings` is not authoritative
+   * until `loadSettings()` has run, so capturing there would freeze whatever
+   * happened to be in the context object.
+   *
+   * Lazily capturing at first ask is too late: the first ask comes from
+   * `runPass`, so anything that mutated settings between construction and the
+   * first drain would still decide this generation's operating state. "Frozen"
+   * has to mean frozen from a point nothing downstream can get in front of.
+   *
+   * And it must never be re-read. A settings reload mid-session would otherwise
+   * move a RUNNING drain between Phase L and not-Phase-L between two records of
+   * the same backlog, and the stable fence Step 3 derives has to be able to say
+   * "this generation settled legacy" as one fact rather than a majority vote.
+   *
+   * ONE AUTHORITY. This reads `ctx.currentSettings` and nothing else. An
+   * earlier draft fell back to `settings.loadSettings()` when the field was
+   * absent, which is two mutable snapshots answering one question — and the
+   * fallback would fire in exactly the case that matters, an install where
+   * nobody has configured the mode.
+   *
+   * The RAW value is stored, deliberately unresolved. `telegram-activation-mode`
+   * owns what counts as valid; resolving here as well would let the app and the
+   * drain hold different opinions about which state this process is in.
+   */
+  captureTelegramActivationMode() {
+    if (this.telegramActivationModeCaptured === true) return this.telegramActivationModeRaw;
+    let raw;
+    try {
+      const loaded = this.ctx.currentSettings;
+      raw = loaded && typeof loaded === 'object'
+        ? loaded.telegramTransportActivationMode
+        : undefined;
+    } catch (err) {
+      // UNREADABLE IS NOT UNSET, and both fail closed. The distinction belongs
+      // in the log rather than in a stored value that would afterwards look
+      // like something an operator deliberately configured.
+      log.warn('Telegram', `Activation mode unreadable at startup (${err.message}); treating as unset`);
+      raw = undefined;
+    }
+    this.telegramActivationModeRaw = raw === undefined ? null : raw;
+    this.telegramActivationModeCaptured = true;
+    // PUBLISHED FROM THE SAME FREEZE THE COORDINATOR READS (Architect #202).
+    // Not a second capture and not a second settings read: the value assigned
+    // one line above is the value published, so a consumer that is not this app
+    // instance — the Step 3 fence's Phase-L readiness proof — reads exactly what
+    // the drain coordinator resolves instead of asserting its own constants.
+    const published = telegramActivationMode.publishFrozenActivationMode(this.telegramActivationModeRaw);
+    if (!published.ok) {
+      log.warn('Telegram', `Activation mode already frozen for this process: ${JSON.stringify(published.detail)}`);
+    }
+    log.info('Telegram', `Transport activation mode frozen for this generation: ${JSON.stringify(this.telegramActivationModeRaw)}`);
+    return this.telegramActivationModeRaw;
+  }
+
+  /**
+   * FREEZE THE LOADED RELEASE FOR THIS GENERATION (v7 §4).
+   *
+   * The fence's release/call-graph fingerprint has to describe the code this
+   * process loaded, not the code on disk whenever the fence first happened to
+   * be needed. Capturing lazily would fingerprint a later world; capturing here
+   * — one line after the activation mode, still before any drain or poller —
+   * means a file that changes afterwards shows up as a DIVERGENCE at fence
+   * creation and at every health check, which is the whole point.
+   *
+   * A FAILED CAPTURE IS STORED AS THE FAILURE. It is not retried later and not
+   * softened into "unknown": an ambiguous root or a reachable legacy writer is
+   * a reason to hold the fence, and re-asking after startup would just be asking
+   * a different question.
+   *
+   * THE APP NO LONGER HOLDS THE CAPTURE (Architect #192). It used to keep the
+   * branded object on `this` and hand it to the fence, which made "the release
+   * that is running" whatever the app passed in. The freeze now lives inside the
+   * fence authority; this method triggers it at the right moment and keeps only
+   * a status of strings and numbers, which is all the log and the diagnostics
+   * ever needed.
+   */
+  captureTelegramLoadedRelease() {
+    if (this.telegramLoadedReleaseCaptured === true) return this.telegramLoadedRelease;
+    let status;
+    try {
+      status = telegramLegacyCutoverFence.captureStartupRelease();
+    } catch (err) {
+      status = { ok: false, reason: 'release_capture_threw', detail: { message: err.message } };
+    }
+    this.telegramLoadedRelease = status;
+    this.telegramLoadedReleaseCaptured = true;
+    if (status && status.ok === true) {
+      log.info('Telegram', `Loaded release frozen for this generation: ${status.fingerprint} (${status.fileCount} files)`);
+    } else {
+      log.warn('Telegram', `Loaded release could not be frozen: ${status && status.reason}`);
+    }
+    return status;
+  }
+
+  /**
+   * The frozen capture's STATUS, or a refusal. Does not capture.
+   *
+   * Deliberately not the capture itself: the branded object stays inside the
+   * fence closure, and nothing outside it needs more than the fingerprint.
+   */
+  getTelegramLoadedReleaseCapture() {
+    if (this.telegramLoadedReleaseCaptured !== true) {
+      throw new Error('telegram loaded release was never frozen at startup');
+    }
+    return this.telegramLoadedRelease;
+  }
+
+  /**
+   * The frozen value, or a refusal.
+   *
+   * DOES NOT CAPTURE. If the freeze never happened, something is calling the
+   * drain outside the startup sequence that owns this decision, and the honest
+   * answer is not "unset" — that would be indistinguishable from a real install
+   * whose operator has not configured the mode. Throwing makes the drain hold
+   * with a reason that names the actual defect.
+   */
+  getTelegramActivationModeSetting() {
+    if (this.telegramActivationModeCaptured !== true) {
+      throw new Error('telegram activation mode was never frozen at startup');
+    }
+    return this.telegramActivationModeRaw;
+  }
+
+  /** Stable per-process id; see telegram-drain-wiring.makeDrainGeneration. */
+  getTelegramDrainGeneration() {
+    if (!this.telegramDrainGeneration) {
+      this.telegramDrainGeneration = telegramDrainWiring.makeDrainGeneration(process.pid, Date.now());
+    }
+    return this.telegramDrainGeneration;
+  }
+
+  /** The pane command decides the runtime name; unknown stays unknown. */
+  resolveTelegramPaneRuntime() {
+    // Telegram inbound is delivered to the Architect pane (pane 1).
+    try {
+      const live = this.ctx.currentSettings?.paneCommands;
+      const liveCommand = live && typeof live === 'object' ? String(live['1'] || '') : '';
+      if (liveCommand.trim()) return telegramDrainWiring.resolvePaneRuntimeFromCommand(liveCommand);
+      const persisted = this.settings?.loadSettings?.()?.paneCommands;
+      return telegramDrainWiring.resolvePaneRuntimeFromCommand(
+        persisted && typeof persisted === 'object' ? persisted['1'] : ''
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Observed proof flow per runtime. A throw must NOT become an empty set:
+   * empty reads as "no runtime has ever proved anything" and would mark every
+   * route unprovable at once. null lets the probe say "unknown" instead.
+   */
+  getTelegramReceiptRuntimeActivity() {
+    try {
+      return getReceiptRuntimeActivity();
+    } catch (err) {
+      log.warn('Telegram', `Receipt runtime activity unreadable: ${err.message}`);
+      return null;
+    }
+  }
+
+  /** Publish the backlog snapshot for the out-of-process health check. */
+  recordTelegramBacklogHealth(routeKey, backlog) {
+    const result = telegramDrainWiring.writeBacklogHealth({
+      statePath: resolveCoordPath('runtime/telegram-backlog-health.json', { forWrite: true }),
+      routeKey,
+      backlog,
+      nowMs: Date.now(),
+    });
+    if (!result.ok && result.reason !== 'missing_backlog') {
+      log.warn('Telegram', `Backlog health write failed: ${result.reason}`);
+    }
+    return result;
+  }
+
+  scheduleTelegramIngressDrain(dir, routeKey) {
+    if (!dir || !routeKey) return { ok: false, reason: 'missing_drain_target' };
+    const coordinator = this.getTelegramDrainCoordinator();
+    if (!coordinator) return { ok: false, reason: 'drain_quiesced' };
+    // Callers treat this as fire-and-forget, so the rejection has to be caught
+    // HERE. An unhandled rejection would take the drain down silently and the
+    // queue would just stop moving with nobody the wiser.
+    const pending = coordinator.schedule(dir, routeKey)
+      .then((result) => {
+        if (result?.stoppedAt) {
+          log.warn(
+            'Telegram',
+            `Ingress drain held at update ${result.stoppedAt.updateId} (${result.stoppedAt.reason}, ${result.stoppedAt.failureClass})`
+          );
+        }
+        // S491. The backlog snapshot has to reach a surface that can SCORE it.
+        // Logging alone is what let an 8-hour wedge sit behind a 100/100 health
+        // reading: the drain knew, and nothing that reported health ever asked.
+        if (result?.backlog) {
+          this.recordTelegramBacklogHealth(routeKey, result.backlog);
+        }
+        return result;
+      })
+      .catch((err) => {
+        log.warn('Telegram', `Ingress drain failed for ${routeKey}: ${err.message}`);
+        return { ok: false, reason: `drain_threw:${err.message}` };
+      });
+    this.telegramDrainInFlight = pending;
+    return pending;
+  }
+
+  /**
+   * Rebuild the delivery context from a spooled record. The drain hands us the
+   * stored payload plus the freshly re-resolved route; everything the old inline
+   * path derived from the live callback is derived here instead, so a message
+   * replayed after a restart is delivered the same way it would have been live.
+   */
+  buildTelegramInboundJob(job = {}) {
+    const record = job.record || {};
+    const metadata = record.rawMetadata && typeof record.rawMetadata === 'object'
+      ? record.rawMetadata
+      : {};
+    const media = record.media || metadata.media || null;
+    return {
+      body: record.text || '',
+      sender: record.from || 'unknown',
+      metadata,
+      media,
+      photo: record.photo || metadata.photo || null,
+      document: record.document || metadata.document || null,
+      archivePath: typeof media?.localPath === 'string' && media.localPath.trim()
+        ? media.localPath.trim()
+        : null,
+      inboundRoute: { ok: true, profile: job.profile, windowKey: job.windowKey },
+      inboundWindowKey: job.windowKey || 'main',
+      // Current session for delivery; the session the message originally
+      // belonged to stays in metadata for context.
+      inboundSessionScopeId: job.sessionScopeId || null,
+      inboundMessageId: job.messageId,
+      updateId: job.updateId,
+      // THE DURABLE QUEUE RECORD ITSELF. The canonical payload digest is
+      // computed from it and echoed back by the consumer. Dropping it does not
+      // fail loudly: `canonicalQueuedPayloadDigest({})` is a valid hash, the
+      // same one for every message ever sent, agreeing with itself forever.
+      record,
+      messageId: record.messageId ?? null,
+      sentAtMs: Number.isFinite(Number(record.timestampMs))
+        ? Math.floor(Number(record.timestampMs))
+        : Date.now(),
+    };
+  }
+
+  /**
+   * The evidence ledger belonging to a specific profile.
+   *
+   * Main uses its canonical default database. A scoped profile keeps its
+   * ledger under ITS OWN resolved root, so reading main's ledger for a scoped
+   * message answers a different question entirely and could retire a message
+   * that never reached her window.
+   *
+   * An unresolvable profile root THROWS rather than falling back to main, cwd,
+   * or getProjectRoot(). The live drain no longer calls this legacy proof seam.
+   */
+  resolveScopedLedgerDbPath(profile) {
+    const name = typeof profile === 'string' ? profile.trim() : '';
+    if (!name || name === 'main') return null;
+
+    const root = getProfileProjectRootOverride(name, process.env);
+    if (!root) {
+      throw new Error(`cannot resolve evidence ledger root for profile ${name}`);
+    }
+    // Scoped profiles NAMESPACE the first coord segment: resolveCoordPath
+    // rewrites `runtime` to `runtime-<profile>`. Using plain `runtime` would
+    // point at a database that never exists, read as ABSENCE, and mean "never
+    // delivered" — a duplicate, dressed as a miss.
+    return path.join(
+      path.resolve(root),
+      '.squidrun',
+      `runtime-${normalizeProfileName(name)}`,
+      'evidence-ledger.db'
+    );
+  }
+
+  /**
+   * Legacy crash-replay proof lookup, retained for explicit diagnostics.
+   * The live ingress drain no longer gates retirement on this result.
+   *
+   * An in-memory map cannot answer this question: the whole point is surviving
+   * a process that died between delivering and acking, and a Map dies with it.
+   *
+   * THE ROW THIS MUST NEVER ACCEPT: squidrun-app writes an inbound/brokered
+   * journal row under the SAME telegram-in-<updateId> BEFORE delivery. That row
+   * proves the message reached US, not that it reached a pane. Matching it would
+   * retire every record on its first drain pass, undelivered.
+   *
+   * S492: proof comes from `telegram_consumed_receipts`, written at a consumer
+   * boundary that saw the exact bytes. The generic model-prompt receipt store
+   * it replaced could not name an update, a chat or a generation, so the object
+   * it returned could never satisfy the proof gate — see the full account in
+   * telegram-terminal-lookup.js, which owns that argument and the code for it.
+   */
+  async findTelegramDeliveryReceipt(identity = {}) {
+    if (!identity?.messageId) return null;
+
+    // MIRA REPLAY, FIRST. A message answered by Mira never reaches a pane at
+    // all, so it can never produce a pane consumption receipt; checking only
+    // that store would find nothing after a crash and send Operator a SECOND Mira
+    // reply. An in-memory latch cannot help: it dies with the process.
+    //
+    // STRUCTURALLY INCOMPLETE, AND SAID SO OUT LOUD: the outbound row proves
+    // Mira answered, but it owns no app generation and no proof timestamp, so
+    // this object could not satisfy the retired proof gate. It remains
+    // structurally incomplete and must not be promoted into stronger evidence.
+    if (this.hasDurableMiraOutboundProof(identity.messageId, {
+      inboundMessageId: identity.messageId,
+      chatId: identity.chatId,
+      windowKey: identity.windowKey,
+      profile: identity.profile,
+      routeKey: identity.routeKey,
+    })) {
+      return {
+        status: 'delivered.user_visible',
+        userVisible: true,
+        proofSource: 'mira_outbound_row',
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        windowKey: identity.windowKey,
+        profile: identity.profile,
+      };
+    }
+
+    // TERMINAL CONSUMPTION. The lookup returns the stored record's own fields
+    // or nothing; it cannot complete a partial record, and a store it cannot
+    // read or that holds two conflicting accounts throws.
+    try {
+      // MAIN gets strict semantics too. A scoped profile's proof lives in a
+      // scoped ledger; reading main's for a scoped message answers a different
+      // question and could retire a message that never reached her window.
+      const scopedDbPath = this.resolveScopedLedgerDbPath(identity.profile);
+      return telegramTerminalLookup.findTerminalConsumptionEvidence({
+        messageId: identity.messageId,
+        routeKey: identity.routeKey,
+        dbPath: scopedDbPath || undefined,
+      });
+    } catch (err) {
+      // Cannot tell whether it landed; preserve that uncertainty for callers.
+      throw new Error(`terminal consumption lookup failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Durable proof that Mira's reply actually went out for this inbound message.
+   * Transport success is not proof and does not survive a crash; a persisted
+   * outbound row does. Either chunked reply id or the direct-status variant
+   * counts, and the row must be outbound, from mira, on telegram, delivered.
+   */
+  hasDurableMiraOutboundProof(inboundMessageId, expected = {}) {
+    return this.inspectMiraOutboundEgress(inboundMessageId, expected).complete;
+  }
+
+  /**
+   * What the journal actually proves about Mira's reply to this inbound id.
+   *
+   * sendLongTelegramMessage splits long replies and ids each piece
+   * `<base>-part<N>` (scripts/hm-telegram-routing.js:255), so querying only
+   * `<base>` proves nothing about a chunked reply. Worse, a later chunk can fail
+   * AFTER part 1 was already delivered: the aggregate says ok:false while Operator
+   * has already seen text. Falling back to the Architect pane there would be a
+   * second visible reply.
+   *
+   * Throws on lookup failure by design so a diagnostic caller cannot confuse
+   * unreadable state with a clean miss.
+   *
+   * @returns {{complete: boolean, anyDelivered: boolean, delivered: number, expectedParts: number|null}}
+   */
+  inspectMiraOutboundEgress(inboundMessageId, expected = {}) {
+    if (!inboundMessageId) {
+      throw new Error('Mira egress proof requires an inbound message id');
+    }
+
+    // REQUIRED expected identity, INCLUDING the inbound id itself (#145/#150).
+    // A missing field used to act as a wildcard and authorize replay against
+    // any row: "did MY message reach THAT window" is unanswerable without both.
+    const required = ['inboundMessageId', 'chatId', 'windowKey', 'profile', 'routeKey'];
+    for (const field of required) {
+      const value = expected[field];
+      if (value === undefined || value === null || String(value).trim() === '') {
+        throw new Error(`Mira egress proof requires expected.${field}`);
+      }
+    }
+    for (const field of ['windowKey', 'profile', 'routeKey']) {
+      if (typeof expected[field] !== 'string' || !expected[field].trim()) {
+        throw new Error(`Mira egress proof requires expected.${field} to be a non-empty string`);
+      }
+    }
+    if (String(expected.inboundMessageId) !== String(inboundMessageId)) {
+      throw new Error('Mira egress proof expected.inboundMessageId must match the inbound id');
+    }
+
+    // ACTUAL positive safe integers. Number('2') is 2 and Number(true) is 1, so
+    // coercion let a string or boolean pose as a chunk position.
+    const asPositiveInt = (value) => (
+      typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+    );
+
+    /**
+     * The producer persists identity in METADATA. Allowing a top-level field to
+     * stand in let an exact top-level value hide missing or wrong durable
+     * metadata — the row would look correlated while its persisted record was
+     * not.
+     */
+    const eligible = (row, messageId) => {
+      if (!row || row.messageId !== messageId) return false;
+      if (row.direction !== 'outbound') return false;
+      if (row.channel !== 'telegram') return false;
+      if (row.senderRole !== 'mira') return false;
+      if (row.ackStatus !== 'telegram_delivered') return false;
+      if (row.status !== 'acked') return false;
+
+      const meta = (row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata))
+        ? row.metadata
+        : null;
+      if (!meta) return false;
+
+      if (String(meta.inboundMessageId ?? '') !== String(inboundMessageId)) return false;
+      if (String(meta.chatId ?? '') !== String(expected.chatId)) return false;
+      if (String(meta.windowKey ?? '') !== String(expected.windowKey)) return false;
+      if (String(meta.profile ?? '') !== String(expected.profile)) return false;
+      if (String(meta.routeKey ?? '') !== String(expected.routeKey)) return false;
+      return true;
+    };
+
+    /**
+     * EXACTLY ONE eligible row. `.find()` returned the first and made duplicate
+     * delivered rows invisible, so two records for one part could still read as
+     * complete. A duplicate means we cannot say what was sent once.
+     */
+    /**
+     * A row that was DELIVERED for this id, regardless of whether its durable
+     * identity checks out. This must be counted separately from correlation:
+     * filtering delivered rows through exact identity made a mismatched or
+     * incomplete record look like "nothing was ever sent", which permits the
+     * Architect fallback and puts a SECOND reply in front of the user on top of
+     * one Mira already delivered.
+     */
+    const basicallyDelivered = (row, messageId) => (
+      row
+      && row.messageId === messageId
+      && row.direction === 'outbound'
+      && row.channel === 'telegram'
+      && row.senderRole === 'mira'
+      && row.ackStatus === 'telegram_delivered'
+      && row.status === 'acked'
+    );
+
+    const findRow = (messageId) => {
+      const rows = queryCommsJournalEntries({ messageId, limit: 5 }, { strict: true }) || [];
+      const all = Array.isArray(rows) ? rows : [];
+      const candidates = all.filter((row) => basicallyDelivered(row, messageId));
+      const hits = candidates.filter((row) => eligible(row, messageId));
+      return {
+        row: hits.length === 1 ? hits[0] : null,
+        duplicate: hits.length > 1 || candidates.length > 1,
+        // Something WAS delivered under this id even if we cannot correlate it.
+        anyCandidate: candidates.length > 0,
+      };
+    };
+
+    const metaOf = (row) => ((row.metadata && typeof row.metadata === 'object') ? row.metadata : {});
+
+    for (const base of [`${inboundMessageId}-mira-reply`, `${inboundMessageId}-mira-direct-status-reply`]) {
+      const single = findRow(base);
+      if (single.duplicate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (!single.row && single.anyCandidate) {
+        // Delivered, but its durable identity does not correlate. HOLD: we
+        // cannot prove it was this message, and we cannot prove it was not.
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (single.row) {
+        // A BASE id must not carry chunk metadata: the chunked producer uses
+        // exact -partN ids, so this row disagrees with its own shape.
+        const meta = metaOf(single.row);
+        if (meta.chunkIndex !== undefined || meta.chunkCount !== undefined) {
+          return { complete: false, anyDelivered: true, delivered: 1, expectedParts: null };
+        }
+        return { complete: true, anyDelivered: true, delivered: 1, expectedParts: 1 };
+      }
+
+      const first = findRow(`${base}-part1`);
+      if (first.duplicate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (!first.row && first.anyCandidate) {
+        return { complete: false, anyDelivered: true, delivered: 0, expectedParts: null };
+      }
+      if (!first.row) continue;
+
+      const firstMeta = metaOf(first.row);
+      const expectedParts = asPositiveInt(firstMeta.chunkCount);
+      if (expectedParts === null || asPositiveInt(firstMeta.chunkIndex) !== 1) {
+        return { complete: false, anyDelivered: true, delivered: 1, expectedParts: null };
+      }
+
+      const seen = new Set([1]);
+      for (let part = 2; part <= expectedParts; part += 1) {
+        const found = findRow(`${base}-part${part}`);
+        if (found.duplicate || !found.row) break; // uncorrelated or missing: partial
+        const meta = metaOf(found.row);
+        if (asPositiveInt(meta.chunkCount) !== expectedParts) break;
+        if (asPositiveInt(meta.chunkIndex) !== part) break;
+        if (seen.has(part)) break;
+        seen.add(part);
+      }
+
+      const delivered = seen.size;
+      return {
+        complete: delivered === expectedParts,
+        anyDelivered: true,
+        delivered,
+        expectedParts,
+      };
+    }
+
+    return { complete: false, anyDelivered: false, delivered: 0, expectedParts: null };
+  }
+
+
+
+  /** Drain every spool directory the canonical owner root already contains. */
+  async drainTelegramIngressBacklog(dataRoot, options = {}) {
+    const readdir = options.readdir || ((dir) => fs.readdirSync(dir));
+    const coordinator = this.getTelegramDrainCoordinator();
+    const found = coordinator.discoverRouteDirs(dataRoot, readdir);
+    if (!found.ok) return { ok: false, reason: found.reason };
+    const results = [];
+    for (const route of found.routes) {
+      results.push({ routeKey: route.routeKey, ...(await coordinator.schedule(route.dir, route.routeKey)) });
+    }
+    return { ok: true, routes: results };
+  }
+
+  startTelegramPoller() {
+    if (!isMainProfile(this.activeProfileName)) {
+      log.info(
+        'Telegram',
+        `Inbound Telegram bridge skipped for profile ${this.activeProfileName}; main profile owns getUpdates`
+      );
+      return;
+    }
+    const telegramEnv = {
+      ...this.buildTelegramPollerEnv(process.env),
+    };
+    // The ingress spool is owned by THIS getUpdates owner, so its base is the
+    // canonical data root captured here — never a delivery-target root.
+    const ingressBase = telegramEnv.SQUIDRUN_DATA_ROOT || null;
+    // STARTUP DISCOVERY. Anything spooled while the app was down is still
+    // pending; nothing else will schedule it, so the backlog would sit there
+    // until the next inbound message happened to arrive.
+    void this.drainTelegramIngressBacklog(ingressBase).catch((err) => {
+      log.warn('Telegram', `Startup ingress drain failed: ${err.message}`);
+    });
+    const accepted = this.inboundPollerService.startTelegram({
+      env: telegramEnv,
+      onMessage: async (text, from, metadata = {}) => {
+        const sender = typeof from === 'string' && from.trim() ? from.trim() : 'unknown';
+        const media = metadata?.media && typeof metadata.media === 'object' ? metadata.media : null;
+        const photo = metadata?.photo && typeof metadata.photo === 'object' ? metadata.photo : null;
+        const document = metadata?.document && typeof metadata.document === 'object' ? metadata.document : null;
+        let body = typeof text === 'string' ? text.trim() : '';
+        if (!body && media?.kind === 'photo') {
+          body = '[Photo received]';
+        } else if (!body && media?.kind === 'video') {
+          body = '[Video received]';
+        } else if (!body && photo) {
+          body = '[Photo received]';
+        } else if (!body && media?.kind === 'document') {
+          const fileName = typeof media?.fileName === 'string' && media.fileName.trim()
+            ? media.fileName.trim()
+            : 'unknown';
+          body = `[File: ${fileName}]`;
+        } else if (!body && document) {
+          const fileName = typeof document?.file_name === 'string' && document.file_name.trim()
+            ? document.file_name.trim()
+            : 'unknown';
+          body = `[File: ${fileName}]`;
+        }
+        const archivePath = typeof media?.localPath === 'string' && media.localPath.trim()
+          ? media.localPath.trim()
+          : null;
+        const inboundRoute = this.resolveTelegramInboundRoute(metadata?.chatId);
+        if (!inboundRoute?.ok) {
+          log.warn(
+            'Telegram',
+            `Blocked inbound Telegram callback before pane delivery (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} chat=${inboundRoute?.chatId || 'unknown'} reason=${inboundRoute?.reason || 'telegram_inbound_route_blocked'})`
+          );
+          return { ok: false, reason: inboundRoute?.reason || 'telegram_inbound_route_blocked' };
+        }
+        const inboundWindowKey = inboundRoute.windowKey || 'main';
+        const inboundSessionScopeId = this.getWindowSessionScopeId(inboundWindowKey);
+
+        // A poison update — no text, no media — can never become deliverable, so
+        // holding the cursor on it would livelock the whole inbound lane. But it
+        // still has to be RECORDED before we let the cursor past it: route first,
+        // then an explicit terminal record, then the ack. Progress without a
+        // durable trace is the loss shape this lane exists to close.
+        if (!body) {
+          const terminalUpdateId = Number.isFinite(Number(metadata?.updateId))
+            ? Math.floor(Number(metadata.updateId))
+            : null;
+          log.warn(
+            'Telegram',
+            `Inbound Telegram update has empty body (update=${terminalUpdateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))}); recording terminal disposition`
+          );
+          const terminal = telegramIngressSpool.acceptInbound({
+            dataRoot: ingressBase,
+            routeKey: inboundRoute.profile || inboundWindowKey || 'main',
+            text: '',
+            from: sender,
+            metadata,
+            terminalDisposition: 'empty_body',
+            targetProfile: inboundRoute.profile || 'main',
+            targetWindow: inboundWindowKey,
+            targetSession: inboundSessionScopeId || null,
+            // v7 §1: the producer declares its protocol. The spool fails closed
+            // without these, so a build that cannot name its own generation
+            // never appends an anonymous legacy record (Architect #104).
+            producerAppGeneration: currentAppGeneration(),
+            producerSessionId: this.commsSessionScopeId || null,
+          });
+          if (!terminal.ok) {
+            log.warn('Telegram', `Could not record empty-body update (${terminal.reason}); holding cursor`);
+            return { ok: false, reason: terminal.reason };
+          }
+          // Terminal records still go through the drain: it validates the route
+          // and acks them without any pane delivery. Returning early here left
+          // tombstones pending forever.
+          this.scheduleTelegramIngressDrain(
+            terminal.dir,
+            inboundRoute.profile || inboundWindowKey || 'main'
+          );
+          return { ok: true, durable: true, updateId: terminal.updateId };
+        }
+
+        log.info(
+          'Telegram',
+          `Handling inbound Telegram callback from ${sender} (update=${metadata?.updateId ?? 'unknown'} message=${metadata?.messageId ?? 'unknown'} mediaKind=${media?.kind || (photo ? 'photo' : (document ? 'document' : 'none'))})`
+        );
+        const updateId = Number.isFinite(Number(metadata?.updateId))
+          ? Math.floor(Number(metadata.updateId))
+          : null;
+        const messageId = Number.isFinite(Number(metadata?.messageId))
+          ? Math.floor(Number(metadata.messageId))
+          : null;
+        const inboundMessageId = updateId !== null
+          ? `telegram-in-${updateId}`
+          : (messageId !== null
+            ? `telegram-in-msg-${messageId}`
+            : `telegram-in-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+        const sentAtMs = Number.isFinite(Number(metadata?.timestampMs))
+          ? Math.floor(Number(metadata.timestampMs))
+          : Date.now();
+        // DURABLE FIRST. Everything below this point is delivery; if the append
+        // fails we must not report acceptance, because the worker's ack is what
+        // releases the Telegram cursor.
+        const spooled = telegramIngressSpool.acceptInbound({
+          dataRoot: ingressBase,
+          routeKey: inboundRoute.profile || inboundWindowKey || 'main',
+          text: body,
+          from: sender,
+          metadata,
+          targetProfile: inboundRoute.profile || 'main',
+          targetWindow: inboundWindowKey,
+          targetSession: inboundSessionScopeId || null,
+          // v7 §1: the producer declares its protocol. See the empty-body site
+          // above; both production appends stamp, and the spool refuses any
+          // append that cannot (Architect #104).
+          producerAppGeneration: currentAppGeneration(),
+          producerSessionId: this.commsSessionScopeId || null,
+        });
+        if (!spooled.ok) {
+          log.warn(
+            'Telegram',
+            `Telegram ingress spool refused update ${updateId ?? 'unknown'} (${spooled.reason}); holding cursor`
+          );
+          return { ok: false, reason: spooled.reason };
+        }
+
+        // DELIVERY IS NOT DONE HERE ANY MORE. The record is durable; the drain
+        // owns putting it on screen, in updateId order, exactly once. Doing it
+        // both here and in the drain is how a replay becomes a duplicate.
+        this.scheduleTelegramIngressDrain(
+          spooled.dir,
+          inboundRoute.profile || inboundWindowKey || 'main'
+        );
+        return { ok: true, durable: true, updateId };
+      },
+    });
+
+    const workerState = typeof this.inboundPollerService.getTelegramWorkerState === 'function'
+      ? this.inboundPollerService.getTelegramWorkerState()
+      : null;
+    const ready = workerState
+      ? workerState.ready === true
+      : accepted === true;
+    const startStatus = {
+      accepted: accepted === true,
+      phase: workerState?.phase || (ready ? 'ready' : (accepted ? 'accepted' : 'failed')),
+      ready,
+      reason: workerState?.reason || null,
+      started: ready,
+    };
+
+    if (ready) {
+      log.info('Telegram', 'Inbound Telegram bridge enabled');
+    } else if (accepted) {
+      log.info(
+        'Telegram',
+        `Inbound Telegram worker launch accepted; awaiting readiness (phase=${startStatus.phase})`
+      );
+    }
+    return startStatus;
+  }
+
+  /**
+   * Replace the Telegram poller worker safely.
+   *
+   * STOP -> OBSERVED EXIT -> START, never overlapping. This previously called
+   * stopTelegram() and then immediately forked, so two getUpdates children
+   * could be alive at once — two pollers sharing one cursor is the duplicate
+   * delivery this whole lane exists to prevent.
+   *
+   * Single-flight: concurrent callers share one restart promise instead of
+   * racing to fork.
+   *
+   * @returns {Promise<object>} same result shape as before, now awaited.
+   */
+  restartTelegramPoller(payload = {}) {
+    if (this.telegramRestartPromise) return this.telegramRestartPromise;
+
+    const reason = typeof payload?.reason === 'string' && payload.reason.trim()
+      ? payload.reason.trim()
+      : 'app-control';
+    const isCancelled = typeof payload?.isCancelled === 'function' ? payload.isCancelled : null;
+
+    const pending = (async () => {
+      log.info('Telegram', `Restarting Telegram poller (${reason})`);
+
+      // PUBLIC lifecycle, not the worker-only seam: routing through the private
+      // path regressed useTelegramWorker=false, where there is no worker at all.
+      const stopped = await this.inboundPollerService.stopTelegram(payload.stopOptions || {});
+      if (!stopped || stopped.ok !== true) {
+        // An unobserved exit is indistinguishable from a live child. Forking
+        // here is exactly how two pollers end up on one cursor.
+        log.warn(
+          'Telegram',
+          `Poller restart aborted: previous worker exit not observed (${stopped?.reason || 'unknown'})`
+        );
+        return {
+          success: false,
+          accepted: false,
+          aborted: true,
+          phase: 'failed',
+          ready: false,
+          started: false,
+          startupReason: stopped?.reason || 'stop_not_observed',
+          reason,
+          note: 'Telegram poller restart aborted: the previous worker did not exit, so no replacement was started.',
+        };
+      }
+
+      // Re-checked IMMEDIATELY before forking: shutdown or an explicit cancel
+      // may have won while we were waiting for the exit.
+      const abortNow = this.shuttingDown
+        ? 'shutting_down'
+        : (isCancelled && isCancelled() ? 'cancelled' : null);
+      if (abortNow) {
+        return {
+          success: false,
+          accepted: false,
+          skipped: true,
+          phase: 'idle',
+          ready: false,
+          started: false,
+          startupReason: abortNow,
+          reason,
+          note: `Telegram poller restart skipped (${abortNow}); no replacement was started.`,
+        };
+      }
+
+      const rawStartStatus = this.startTelegramPoller();
+      const startStatus = rawStartStatus && typeof rawStartStatus === 'object'
+        ? rawStartStatus
+        : {
+          accepted: Boolean(rawStartStatus),
+          phase: rawStartStatus ? 'ready' : 'failed',
+          ready: Boolean(rawStartStatus),
+          reason: null,
+          started: Boolean(rawStartStatus),
+        };
+      return {
+        success: startStatus.accepted === true,
+        accepted: startStatus.accepted === true,
+        phase: startStatus.phase || (startStatus.ready ? 'ready' : 'failed'),
+        ready: startStatus.ready === true,
+        started: startStatus.ready === true,
+        startupReason: startStatus.reason || null,
+        reason,
+        note: startStatus.ready
+          ? 'Telegram poller restart requested without reloading panes.'
+          : 'Telegram poller restart accepted without reloading panes; worker readiness is still pending.',
+      };
+    })().finally(() => {
+      this.telegramRestartPromise = null;
+    });
+
+    this.telegramRestartPromise = pending;
+    return pending;
+  }
+
+  async handleTeamMemoryGuardExperiment(entry = {}) {
+    if (!entry || typeof entry !== 'object') return { ok: false, reason: 'invalid_guard_action' };
+    if (String(entry.action || '').toLowerCase() !== 'block') return { ok: false, reason: 'not_block_action' };
+    const experimentReady = await this.ensureExperimentInitialized('guard-block');
+    if (!experimentReady) return { ok: false, reason: 'experiment_unavailable' };
+
+    const event = (entry.event && typeof entry.event === 'object') ? entry.event : {};
+    const claimId = String(event.claimId || event.claim_id || '').trim();
+    const claimStatus = String(event.status || '').trim().toLowerCase();
+    if (!claimId) return { ok: false, reason: 'claim_id_missing' };
+    if (claimStatus !== 'contested' && claimStatus !== 'pending_proof') {
+      return { ok: false, reason: 'claim_not_contested' };
+    }
+
+    const scope = String(event.scope || event.file || '').trim();
+    const requestedBy = String(event.agent || event.owner || 'system').trim() || 'system';
+    const session = String(event.session || '').trim() || null;
+    const idempotencyKey = `guard-block:${entry.guardId || 'unknown'}:${claimId}:${session || 'none'}`;
+
+    const runResult = await experiment.executeExperimentOperation('run-experiment', {
+      profileId: TEAM_MEMORY_BLOCK_GUARD_PROFILE,
+      claimId,
+      requestedBy,
+      session,
+      idempotencyKey,
+      guardContext: {
+        guardId: entry.guardId || null,
+        action: 'block',
+        blocking: true,
+      },
+      scope: scope || null,
+      input: {
+        args: {},
+      },
+    });
+
+    if (!runResult?.ok) {
+      log.warn(
+        'TeamMemoryGuard',
+        `Block guard failed to queue experiment for claim ${claimId}: ${runResult?.reason || 'unknown'}`
+      );
+      return {
+        ok: false,
+        reason: runResult?.reason || 'experiment_queue_failed',
+        runResult,
+      };
+    }
+
+    const statusUpdate = await teamMemory.executeTeamMemoryOperation('update-claim-status', {
+      claimId,
+      status: 'pending_proof',
+      changedBy: requestedBy,
+      reason: 'guard_block_experiment_started',
+      nowMs: Date.now(),
+    });
+    if (statusUpdate?.ok === false && statusUpdate.reason !== 'invalid_transition') {
+      log.warn(
+        'TeamMemoryGuard',
+        `Experiment queued but claim ${claimId} pending_proof transition failed: ${statusUpdate.reason || 'unknown'}`
+      );
+    }
+
+    log.info(
+      'TeamMemoryGuard',
+      `Queued guard-block experiment for claim ${claimId} (runId=${runResult.runId || 'unknown'}, queued=${runResult.queued === true})`
+    );
+    return {
+      ok: true,
+      runResult,
+      statusUpdate,
+    };
+  }
+
+  /**
+   * App-alive Telegram freshness watch.
+   *
+   * INCIDENT BOUNDARY, and it is narrow: this repairs an app-alive worker that
+   * is DEAD or WEDGED. It cannot cover S488 — that loss happened across an
+   * app-down Quit window, where no in-app timer exists to run. A getUpdates
+   * owner that survives our exit is a separate product decision, not this.
+   *
+   * In-app only. It reads freshness and calls the safe awaited restart; it does
+   * not shell out, list or kill processes, or enter the standalone lane.
+   */
+  startTelegramFreshnessWatch(options = {}) {
+    // Advance FIRST, always. Any tick still in flight belongs to the previous
+    // watch, and its isCancelled predicate must report cancelled so it cannot
+    // fork a replacement underneath the new schedule (or underneath no
+    // schedule at all, on a side profile).
+    this.telegramFreshnessWatchGeneration += 1;
+
+    // Side profiles arm nothing: one watch, on the profile that owns the
+    // single getUpdates owner. Clean up before returning — a main->side re-arm
+    // must not leave the previous profile's timer running.
+    if (!isMainProfile(this.activeProfileName || getActiveProfileName())) {
+      this.stopTelegramFreshnessWatchTimer();
+      this.telegramFreshnessWatchIntervalMs = null;
+      return { started: false, reason: 'not_main_profile' };
+    }
+
+    const requested = Number(options.intervalMs);
+    const intervalMs = Math.min(
+      TELEGRAM_FRESHNESS_WATCH_MAX_MS,
+      Math.max(
+        TELEGRAM_FRESHNESS_WATCH_MIN_MS,
+        Number.isFinite(requested) && requested > 0
+          ? Math.floor(requested)
+          : TELEGRAM_FRESHNESS_WATCH_DEFAULT_MS
+      )
+    );
+
+    // Idempotent: replace, never stack. Two timers would mean two concurrent
+    // restart decisions against one worker.
+    this.stopTelegramFreshnessWatchTimer();
+
+    const generation = this.telegramFreshnessWatchGeneration;
+    const timer = setInterval(() => {
+      this.runTelegramFreshnessWatchTick({ generation }).catch(() => {
+        // Tick-local failures are logged inside the tick; a rejection here must
+        // never take down the interval.
+      });
+    }, intervalMs);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    this.telegramFreshnessWatchTimer = timer;
+    this.telegramFreshnessWatchIntervalMs = intervalMs;
+    return { started: true, intervalMs };
+  }
+
+  /** Clears the interval only. Cancellation/join lives in the async stop. */
+  stopTelegramFreshnessWatchTimer() {
+    if (this.telegramFreshnessWatchTimer) {
+      clearInterval(this.telegramFreshnessWatchTimer);
+      this.telegramFreshnessWatchTimer = null;
+    }
+  }
+
+  /**
+   * Cancellation AND join. Incrementing the generation first means a tick that
+   * is mid-await cannot fork a replacement after we return.
+   */
+  async stopTelegramFreshnessWatch() {
+    this.telegramFreshnessWatchGeneration += 1;
+    this.stopTelegramFreshnessWatchTimer();
+    this.telegramFreshnessWatchIntervalMs = null;
+
+    const inFlight = this.telegramFreshnessWatchTick;
+    if (!inFlight) return { stopped: true, joined: false };
+    try {
+      await inFlight;
+    } catch (err) {
+      log.warn('Telegram', `Freshness watch tick failed during stop: ${err?.message || err}`);
+    }
+    return { stopped: true, joined: true };
+  }
+
+  /** One tick at a time; an overlapping interval firing is skipped, not queued. */
+  runTelegramFreshnessWatchTick(options = {}) {
+    if (this.telegramFreshnessWatchTick) return this.telegramFreshnessWatchTick;
+
+    const generation = Number.isFinite(Number(options.generation))
+      ? Number(options.generation)
+      : this.telegramFreshnessWatchGeneration;
+
+    const pending = (async () => {
+      if (generation !== this.telegramFreshnessWatchGeneration) {
+        return { skipped: true, reason: 'stopped' };
+      }
+      if (this.shuttingDown) return { skipped: true, reason: 'shutting_down' };
+
+      // EXACT root derivation, every tick. An installed deployment's data root
+      // is not the source tree's, and inspecting the wrong one reports a
+      // healthy poller that is not the one running.
+      const env = this.buildTelegramPollerEnv(process.env);
+      const inspect = this.telegramFreshnessInspector || inspectTelegramPollerFreshness;
+      const freshness = inspect({
+        statePath: env.TELEGRAM_POLLER_STATE_PATH,
+        projectRoot: env.SQUIDRUN_PROJECT_ROOT || env.SQUIDRUN_DATA_ROOT,
+        appUp: true,
+      });
+
+      const workerState = this.inboundPollerService.getTelegramWorkerState();
+
+      // MISSING CONFIG IS NOT A WEDGE. InboundPollerService reports
+      // phase:'failed' reason:'missing_config' when there is no bot token or
+      // chat id — restarting cannot conjure credentials, so recovering on it
+      // is an infinite hammer against a user who simply has not configured
+      // Telegram. This is the ONLY failure reason excluded, and it is excluded
+      // whatever the freshness state says.
+      const missingConfig = workerState
+        && workerState.phase === 'failed'
+        && workerState.reason === 'missing_config';
+      if (missingConfig) {
+        return { restarted: false, reason: 'missing_config', status: freshness?.status || null };
+      }
+
+      const workerDead = workerState
+        && (workerState.phase === 'failed' || workerState.phase === 'dead');
+      const wedged = freshness && freshness.wedged === true;
+
+      // An UNREADABLE state file says we cannot tell, so stay conservative.
+      // A MISSING one is different: the inspector reports it wedged on purpose,
+      // and a worker claiming ready whose state file never appeared is exactly
+      // the silent-death case this watch exists for.
+      const unreadable = freshness && freshness.status === 'state_read_error';
+
+      if (!workerDead && (!wedged || unreadable)) {
+        return { restarted: false, reason: 'healthy', status: freshness?.status || null };
+      }
+
+      log.warn(
+        'Telegram',
+        `Freshness watch recovering poller (worker=${workerState?.phase || 'unknown'}, freshness=${freshness?.status || 'unknown'})`
+      );
+
+      const startGeneration = this.telegramFreshnessWatchGeneration;
+      const result = await this.restartTelegramPoller({
+        reason: 'freshness-watch',
+        isCancelled: () => (
+          this.shuttingDown || this.telegramFreshnessWatchGeneration !== startGeneration
+        ),
+      });
+      // ATTEMPTED is not RECOVERED. An aborted or failed restart reported as
+      // restarted:true would read downstream as "the poller is back".
+      return {
+        attempted: true,
+        restarted: result?.success === true,
+        reason: result?.success === true ? 'recovered' : (result?.startupReason || result?.reason || 'restart_failed'),
+        result,
+      };
+    })()
+      .catch((err) => {
+        log.warn('Telegram', `Freshness watch tick failed: ${err?.message || err}`);
+        return { restarted: false, reason: 'tick_failed' };
+      })
+      .finally(() => {
+        // Identity-clear: a slow tick must not wipe a newer tick's slot, or
+        // every later tick would be skipped forever.
+        if (this.telegramFreshnessWatchTick === pending) {
+          this.telegramFreshnessWatchTick = null;
+        }
+      });
+
+    this.telegramFreshnessWatchTick = pending;
+    return pending;
+  }
+
+  async shutdown() {
+    log.info('App', 'Shutting down SquidRun Application');
+    this.shuttingDown = true;
+    // Before any later teardown or stopAll: a watch tick mid-flight here would
+    // race the poller stop below and could fork a replacement behind it.
+    // Idempotent, so performFullShutdown having already stopped it is fine.
+    await this.stopTelegramFreshnessWatch();
+    // Idempotent: performFullShutdown already quiesced before touching the
+    // daemon, but a plain shutdown() must still be safe on its own.
+    await this.quiesceTelegramIngressDrain();
+    this.clearPtyDataFlushTimer();
+    this.flushBufferedPtyData();
+    this.clearPtyVisibleReleaseTimer();
+    this.flushVisibleFilteredPtyData(null, { force: true });
+    this.clearPendingTelegramReplyGuardJournalReconcileTimer();
+    for (const paneId of Array.from(this.pendingTelegramReplyGuardTimers.keys())) {
+      this.clearPendingTelegramReplyGuardTimer(paneId);
+    }
+    for (const paneId of Array.from(this.pendingTelegramReplyGuardEmitTimers.keys())) {
+      this.clearPendingTelegramReplyGuardEmitTimer(paneId);
+    }
+    this.clearDaemonConnectTimeout();
+    this.clearWebSocketStartRetry();
+    if (this.paneHostBootstrapTimer) {
+      clearTimeout(this.paneHostBootstrapTimer);
+      this.paneHostBootstrapTimer = null;
+    }
+    if (this.paneHostBootstrapVerifyTimer) {
+      clearTimeout(this.paneHostBootstrapVerifyTimer);
+      this.paneHostBootstrapVerifyTimer = null;
+    }
+    try {
+      ipcMain.removeHandler('pane-host-inject');
+    } catch (_) {
+      // no-op
+    }
+    try {
+      ipcMain.removeHandler('pipeline-get-items');
+      ipcMain.removeHandler('pipeline-get-active');
+      ipcMain.removeHandler('pipeline-mark-committed');
+      ipcMain.removeHandler('shared-state-get');
+      ipcMain.removeHandler('shared-state-changelog');
+      ipcMain.removeHandler('shared-state-mark-seen');
+      ipcMain.removeHandler('context-snapshot-refresh');
+      armStateProjectionHandlersModule.unregisterArmStateProjectionHandlers({ ipcMain });
+    } catch (_) {
+      // no-op
+    }
+    if (this.paneHostReadyListener) {
+      ipcMain.removeListener('pane-host-ready', this.paneHostReadyListener);
+      this.paneHostReadyListener = null;
+      this.paneHostReadyIpcRegistered = false;
+    }
+    if (this.mainWindowSendInterceptInstalled && this.ctx.mainWindow && !this.ctx.mainWindow.isDestroyed()) {
+      try {
+        this.ctx.mainWindow.webContents.send = this.mainWindowSendRaw;
+      } catch (_) {
+        // no-op
+      }
+    }
+    this.mainWindowSendRaw = null;
+    this.mainWindowSendInterceptInstalled = false;
+    try {
+      const sessionEndResult = await this.captureSessionEndState();
+      if (sessionEndResult?.ok === false && sessionEndResult?.skipped !== true) {
+        log.warn('EvidenceLedger', `Session-end capture failed: ${sessionEndResult.reason || sessionEndResult.error || 'unknown'}`);
+      }
+    } catch (err) {
+      log.warn('EvidenceLedger', `Session-end capture error during shutdown: ${err.message}`);
+    }
+    this.paneHostWindowManager.closeAllPaneWindows();
+    await this.evidenceLedgerPruneHousekeeping.stop({ wait: true });
+    await this.stopAutoHandoffMaterializer({ flush: true });
+    contextCompressor.shutdown();
+    teamMemory.stopIntegritySweep();
+    teamMemory.stopPatternMiningSweep();
+    if (typeof teamMemory.stopCommsTaggedClaimsSweep === 'function') {
+      teamMemory.stopCommsTaggedClaimsSweep();
+    }
+    try {
+      closeSharedRuntime();
+    } catch (err) {
+      log.warn('EvidenceLedger', `Failed to close shared runtime during shutdown: ${err.message}`);
+    }
+    try {
+      closeSharedCognitiveMemoryRuntime();
+    } catch (err) {
+      log.warn('CognitiveMemory', `Failed to close shared runtime during shutdown: ${err.message}`);
+    }
+    experiment.closeExperimentRuntime({ killTimeoutMs: 2000 });
+    teamMemory.closeTeamMemoryRuntime({ killTimeoutMs: 2000 }).catch((err) => {
+      log.warn('TeamMemory', `Failed to close team memory runtime during shutdown: ${err.message}`);
+    });
+    websocketServer.stop();
+    if (this.bridgeClient) {
+      this.bridgeClient.stop();
+      this.bridgeClient = null;
+    }
+    this.backgroundAgentManager.stop();
+    this.backgroundAgentManager.killAll({ reason: 'app_shutdown' }).catch((err) => {
+      log.warn('BackgroundAgent', `Failed to kill background agents during shutdown: ${err.message}`);
+    });
+    // AWAITED: teardown must not advance to app.exit while the Telegram child
+    // may still be alive, or Windows is left with an orphaned getUpdates owner
+    // that the next start would race. Bounded and non-hanging by construction —
+    // the worker stop resolves on an observed exit or on its own timeout, and a
+    // rejection is logged rather than allowed to abort teardown.
+    try {
+      const stopped = await this.inboundPollerService.stopAll();
+      if (stopped && stopped.ok === false) {
+        // Proceed, but never silently: the child's exit was not observed, so
+        // the next start must treat it as possibly alive.
+        log.warn(
+          'Telegram',
+          `Poller stop did not confirm exit during shutdown (${stopped.reason || 'unknown'}); proceeding with teardown`
+        );
+      }
+    } catch (err) {
+      log.warn('Telegram', `Poller stop failed during shutdown: ${err?.message || err}`);
+    }
+    closeCommsJournalStores();
+    this.consoleLogWriter.flush().catch((err) => {
+      log.warn('App', `Failed flushing console.log buffer during shutdown: ${err.message}`);
+    });
+    this.stopRuntimeServices('shutdown').catch((err) => {
+      log.warn('RuntimeLifecycle', `Failed stopping runtime services during shutdown: ${err.message}`);
+    });
+    if (powerMonitor && typeof powerMonitor.removeListener === 'function') {
+      for (const entry of this.powerMonitorListeners) {
+        powerMonitor.removeListener(entry.eventName, entry.handler);
+      }
+    }
+    this.powerMonitorListeners = [];
+
+    if (this.ctx.daemonClient) {
+      this.clearDaemonClientListeners(this.ctx.daemonClient);
+      this.ctx.daemonClient.disconnect();
+    }
+
+    ipcHandlers.cleanup();
+    ipcHandlers.cleanupProcesses();
+  }
+}
+
+module.exports = SquidRunApp;
+module.exports.isCurrentSessionComputerUseVerifierTerminal =
+  isCurrentSessionComputerUseVerifierTerminal;
+// Testable helper (S464 telegram-loss fix): oversized-payload materializer.
+module.exports.materializeOversizedPanePayload = materializeOversizedPanePayload;
+module.exports.findPaneSubmitCorroboration = findPaneSubmitCorroboration;
+module.exports.scheduleReceiptVerifiedSubmit = scheduleReceiptVerifiedSubmit;

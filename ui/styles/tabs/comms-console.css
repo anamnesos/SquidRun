@@ -1,0 +1,420 @@
+.comms-console-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  border: 1px solid rgba(0, 255, 208, 0.18);
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 255, 208, 0.04) 0px,
+      rgba(0, 255, 208, 0.04) 1px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0) 4px
+    ),
+    radial-gradient(circle at 20% -10%, rgba(37, 255, 208, 0.13), rgba(0, 0, 0, 0) 44%),
+    radial-gradient(circle at 92% 10%, rgba(38, 166, 255, 0.12), rgba(0, 0, 0, 0) 38%),
+    linear-gradient(180deg, rgba(6, 11, 19, 0.95), rgba(2, 5, 11, 0.98));
+  box-shadow: inset 0 0 24px rgba(0, 255, 208, 0.08), 0 0 24px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+}
+
+.comms-console-shell::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(0deg, rgba(0, 255, 208, 0.02), rgba(0, 255, 208, 0.08), rgba(0, 255, 208, 0.02));
+  opacity: 0.3;
+  animation: comms-scan 5.4s linear infinite;
+}
+
+.comms-console-list {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.comms-console-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.comms-console-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 255, 208, 0.18);
+  border-radius: 999px;
+}
+
+.comms-console-empty {
+  margin: auto 0;
+  text-align: center;
+  color: rgba(164, 219, 212, 0.7);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.comms-console-history-loading {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  margin: 4px auto 2px;
+  padding: 4px 10px;
+  border: 1px solid rgba(0, 255, 208, 0.25);
+  border-radius: 999px;
+  font-size: 11px;
+  color: rgba(184, 227, 221, 0.9);
+  background: rgba(8, 18, 24, 0.92);
+}
+
+.comms-console-history-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(140, 191, 183, 0.4);
+  border-top-color: rgba(196, 255, 245, 0.95);
+  border-radius: 50%;
+  animation: comms-spin 0.8s linear infinite;
+}
+
+.comms-console-session-sep {
+  position: relative;
+  margin: 12px 0;
+  text-align: center;
+  line-height: 1;
+}
+
+.comms-console-session-sep::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgba(0, 255, 208, 0.25);
+  transform: translateY(-50%);
+}
+
+.comms-console-session-sep > span {
+  position: relative;
+  z-index: 1;
+  display: inline-block;
+  padding: 0 8px;
+  color: rgba(164, 219, 212, 0.7);
+  font-size: 11px;
+  background: rgba(6, 11, 19, 0.95);
+}
+
+.comms-console-entry {
+  padding: 9px 10px 8px;
+  border: 1px solid rgba(0, 255, 208, 0.17);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(13, 25, 33, 0.9), rgba(7, 15, 25, 0.96));
+  box-shadow: inset 0 1px 0 rgba(132, 255, 238, 0.06), 0 0 12px rgba(0, 255, 208, 0.06);
+  transform-origin: 0 0;
+}
+
+.comms-console-entry.entering {
+  animation: comms-entry-in 360ms ease-out;
+}
+
+.comms-console-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  margin-bottom: 5px;
+}
+
+.comms-console-time {
+  color: rgba(126, 159, 170, 0.9);
+}
+
+.comms-console-role {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.comms-console-role.role-architect {
+  color: #7ed0ff;
+}
+
+.comms-console-role.role-builder {
+  color: #50f2b1;
+}
+
+.comms-console-role.role-builder-bg {
+  color: #7ac8ff;
+}
+
+.comms-console-role.role-oracle {
+  color: #ffd677;
+}
+
+.comms-console-role.role-system {
+  color: #e8a8ff;
+}
+
+.comms-console-role.role-user {
+  color: #ffd39a;
+}
+
+.comms-console-role.role-external {
+  color: #8ef0a8;
+}
+
+.comms-console-role.role-unknown {
+  color: #99a9ba;
+}
+
+.comms-console-route-arrow {
+  color: rgba(144, 208, 194, 0.68);
+}
+
+.comms-console-channel {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 200, 214, 0.36);
+  color: #b8ced9;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.comms-console-channel.ch-ws {
+  border-color: rgba(89, 183, 255, 0.45);
+  color: #87c9ff;
+}
+
+.comms-console-channel.ch-telegram {
+  border-color: rgba(91, 214, 255, 0.45);
+  color: #7bddff;
+}
+
+.comms-console-channel.ch-sms {
+  border-color: rgba(255, 211, 97, 0.5);
+  color: #ffde8a;
+}
+
+.comms-console-status {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(154, 200, 214, 0.36);
+  color: rgba(213, 236, 247, 0.92);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.comms-console-status.is-acked {
+  border-color: rgba(98, 232, 176, 0.42);
+  color: #9df5cb;
+}
+
+.comms-console-status.is-failed {
+  border-color: rgba(255, 128, 128, 0.46);
+  color: #ffb0b0;
+}
+
+.comms-console-status.is-recorded,
+.comms-console-status.is-brokered,
+.comms-console-status.is-routed {
+  border-color: rgba(255, 223, 128, 0.36);
+  color: #ffe099;
+}
+
+.comms-console-session-id {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(173, 190, 208, 0.34);
+  color: rgba(185, 204, 221, 0.92);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.comms-console-session-id.is-missing {
+  border-style: dashed;
+  color: rgba(142, 158, 176, 0.85);
+}
+
+.comms-console-entry-body {
+  color: #d6fff4;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: default;
+}
+
+.comms-console-entry-body.is-truncated {
+  cursor: pointer;
+}
+
+.comms-console-entry-body.is-truncated:hover {
+  color: #ebfff9;
+}
+
+.comms-console-entry-meta {
+  margin-top: 5px;
+  color: rgba(166, 206, 218, 0.86);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.comms-console-expand {
+  margin-top: 4px;
+  border: none;
+  background: none;
+  color: #7ad8ff;
+  font-size: 11px;
+  padding: 0;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.comms-console-expand:hover {
+  color: #b5eaff;
+}
+
+.comms-console-entry.sender-architect {
+  border-color: rgba(255, 170, 102, 0.42);
+  background: linear-gradient(180deg, rgba(58, 37, 18, 0.92), rgba(33, 20, 10, 0.96));
+}
+
+.comms-console-entry.sender-architect .comms-console-entry-body {
+  color: #ffe9cc;
+}
+
+.comms-console-entry.sender-builder {
+  border-color: rgba(108, 214, 255, 0.45);
+  background: linear-gradient(180deg, rgba(12, 34, 44, 0.9), rgba(8, 21, 31, 0.96));
+}
+
+.comms-console-entry.sender-builder .comms-console-entry-body {
+  color: #d9f6ff;
+}
+
+.comms-console-entry.sender-builder-bg {
+  border-color: rgba(122, 200, 255, 0.52);
+  background: linear-gradient(180deg, rgba(22, 38, 59, 0.92), rgba(12, 23, 39, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg .comms-console-entry-body {
+  color: #e0f2ff;
+}
+
+.comms-console-entry.sender-builder-bg-1 {
+  border-color: rgba(96, 188, 255, 0.56);
+  background: linear-gradient(180deg, rgba(17, 46, 67, 0.92), rgba(10, 27, 43, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg-1 .comms-console-entry-body {
+  color: #d8f5ff;
+}
+
+.comms-console-entry.sender-builder-bg-2 {
+  border-color: rgba(143, 167, 255, 0.56);
+  background: linear-gradient(180deg, rgba(25, 35, 72, 0.92), rgba(15, 22, 48, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg-2 .comms-console-entry-body {
+  color: #e1e6ff;
+}
+
+.comms-console-entry.sender-builder-bg-3 {
+  border-color: rgba(145, 214, 255, 0.56);
+  background: linear-gradient(180deg, rgba(18, 46, 59, 0.92), rgba(9, 28, 40, 0.97));
+}
+
+.comms-console-entry.sender-builder-bg-3 .comms-console-entry-body {
+  color: #ddf8ff;
+}
+
+.comms-console-entry.sender-oracle {
+  border-color: rgba(204, 151, 255, 0.46);
+  background: linear-gradient(180deg, rgba(37, 20, 49, 0.92), rgba(21, 13, 31, 0.96));
+}
+
+.comms-console-entry.sender-oracle .comms-console-entry-body {
+  color: #efe1ff;
+}
+
+.comms-console-entry.sender-external {
+  border-color: rgba(143, 230, 170, 0.42);
+  background: linear-gradient(180deg, rgba(19, 39, 28, 0.92), rgba(12, 24, 18, 0.96));
+}
+
+.comms-console-entry.sender-external .comms-console-entry-body {
+  color: #d9ffe7;
+}
+
+.comms-console-entry.sender-user {
+  border-color: rgba(255, 213, 136, 0.42);
+  background: linear-gradient(180deg, rgba(53, 40, 20, 0.92), rgba(31, 23, 12, 0.96));
+}
+
+.comms-console-entry.sender-user .comms-console-entry-body {
+  color: #ffefd5;
+}
+
+.panel-tab[data-tab="comms"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.panel-tab[data-tab="comms"] .tab-icon {
+  width: 13px;
+  height: 13px;
+  opacity: 0.9;
+}
+
+@keyframes comms-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes comms-entry-in {
+  0% {
+    opacity: 0;
+    transform: translateY(7px) scale(0.985);
+    filter: drop-shadow(0 0 0 rgba(0, 255, 208, 0));
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: drop-shadow(0 0 8px rgba(0, 255, 208, 0.12));
+  }
+}
+
+@keyframes comms-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 900px) {
+  .comms-console-entry-head {
+    flex-wrap: wrap;
+  }
+
+  .comms-console-channel {
+    margin-left: 0;
+  }
+}

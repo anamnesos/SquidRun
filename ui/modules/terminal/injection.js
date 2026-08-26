@@ -1,0 +1,2261 @@
+/**
+ * Terminal injection helpers
+ * Extracted from terminal.js to isolate fragile send/verify logic.
+ */
+
+const log = require('../logger');
+const bus = require('../event-bus');
+const { BYPASS_CLEAR_DELAY_MS: DEFAULT_BYPASS_CLEAR_DELAY_MS } = require('../constants');
+const {
+  getRuntimeInjectionCapabilityDefault,
+  resolveInjectionRuntimeKey,
+} = require('./injection-capabilities');
+const {
+  DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+  DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+} = require('../inject-message-ipc');
+
+const EVENT_SOURCE = 'injection.js';
+const IS_DARWIN = process.platform === 'darwin';
+
+function createInjectionController(options = {}) {
+  const {
+    terminals,
+    lastOutputTime,
+    lastTypedTime,
+    messageQueue,
+    getPaneCapabilities,
+    isCodexPane,
+    isGeminiPane,
+    buildCodexExecPrompt,
+    userIsTyping,
+    userInputFocused,
+    updatePaneStatus,
+    markPotentiallyStuck,
+    getInjectionInFlight,
+    setInjectionInFlight,
+    constants = {},
+  } = options;
+
+  const {
+    FOCUS_RETRY_DELAY_MS,
+    MAX_FOCUS_RETRIES,
+    QUEUE_RETRY_MS,
+    QUEUE_DEFER_BACKOFF_START_MS = 100,
+    QUEUE_DEFER_BACKOFF_MAX_MS = 2000,
+    QUEUE_DEFER_BACKOFF_MULTIPLIER = 2,
+    INJECTION_LOCK_TIMEOUT_MS,
+    BYPASS_CLEAR_DELAY_MS = DEFAULT_BYPASS_CLEAR_DELAY_MS,
+    TYPING_GUARD_MS = 300,
+    CODEX_ENTER_DELAY_MS = 200,
+    GEMINI_ENTER_DELAY_MS = 75,
+    MAX_COMPACTION_DEFER_MS = 8000,
+    CLAUDE_CHUNK_SIZE = DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES,
+    CLAUDE_CHUNK_MIN_SIZE = 1024,
+    CLAUDE_CHUNK_MAX_SIZE = 8192,
+    CLAUDE_CHUNK_THRESHOLD_BYTES = DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES,
+    CLAUDE_CHUNK_YIELD_MS = 0,
+    CLAUDE_ENTER_DELAY_MS = 50,
+    CLAUDE_LONG_MESSAGE_BYTES = 1024,
+    CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS = 200,
+    HM_SEND_FAST_CHUNK_THRESHOLD_BYTES = IS_DARWIN ? 1024 : 256,
+    HM_SEND_FAST_CHUNK_SIZE_BYTES = IS_DARWIN ? DEFAULT_INJECT_IPC_CHUNK_SIZE_BYTES : 256,
+    HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS = IS_DARWIN ? 0 : 1,
+    HM_SEND_FAST_ENTER_DELAY_MS = IS_DARWIN ? 150 : 500,
+    CLAUDE_ENTER_DELAY_SCALE_START_BYTES = 256,
+    CLAUDE_ENTER_DELAY_BYTES_PER_MS = 64,
+    CLAUDE_ENTER_DELAY_MAX_EXTRA_MS = 250,
+    SUBMIT_ACCEPT_VERIFY_WINDOW_MS = 1200,
+    SUBMIT_ACCEPT_POLL_MS = 50,
+    SUBMIT_ACCEPT_RETRY_BACKOFF_MS = 250,
+    SUBMIT_ACCEPT_MAX_ATTEMPTS = 2,
+    SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS = 350,
+    SUBMIT_DEFER_MAX_WAIT_MS = 2000,
+    SUBMIT_DEFER_MAX_WAIT_LONG_MS = 5000,
+    SUBMIT_DEFER_POLL_MS = 100,
+    CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS = 9000,
+    SAFE_DEFAULT_ENTER_DELAY_MS = 50,
+    INJECTION_QUEUE_MAX_ITEMS = 200,
+    INJECTION_QUEUE_MAX_BYTES = 512 * 1024,
+    CODEX_PENDING_RECOVERY_MAX_ATTEMPTS = 2,
+    CODEX_PENDING_RECOVERY_VERIFY_MS = 1200,
+    CODEX_PENDING_RECOVERY_POLL_MS = 50,
+  } = constants;
+
+  // Track when compaction deferral started per pane (false positive safety valve)
+  const compactionDeferStart = new Map();
+  // Track per-pane queue defer retry backoff and deferred-log suppression state.
+  const queueDeferBackoffMs = new Map();
+  const queueDeferLogState = new Map();
+  // Keep same-pane injections serialized. hm-send fast-path bypasses the global
+  // injection lock so different panes can proceed in parallel, but overlapping
+  // writes into one PTY can interleave and truncate user input.
+  const paneInjectionInFlight = new Set();
+  // A Codex composer may retain a collapsed `[Pasted Content N chars]` item
+  // after an Enter that looked successful. Keep the payload's queue item in
+  // place while bounded Enter-only recovery clears that composer.
+  const codexPendingRecoveryAttempts = new Map();
+  const codexActiveQueueTokens = new Map();
+  const codexAwaitingSubmitPanes = new Set();
+  const codexPaneGenerations = new Map();
+
+  function nextCodexPaneGeneration(paneId) {
+    const id = String(paneId);
+    const nextGeneration = (codexPaneGenerations.get(id) || 0) + 1;
+    codexPaneGenerations.set(id, nextGeneration);
+    return nextGeneration;
+  }
+
+  function getCodexRecoveryAttempts(paneId, generation) {
+    const state = codexPendingRecoveryAttempts.get(String(paneId));
+    return state?.generation === generation ? state.attempts : 0;
+  }
+
+  function setCodexRecoveryAttempts(paneId, generation, attempts) {
+    codexPendingRecoveryAttempts.set(String(paneId), { generation, attempts });
+  }
+
+  function clearCodexRecoveryAttempts(paneId, generation) {
+    const id = String(paneId);
+    const state = codexPendingRecoveryAttempts.get(id);
+    if (state?.generation === generation) {
+      codexPendingRecoveryAttempts.delete(id);
+    }
+  }
+
+  /**
+   * Attempt to focus textarea with retries
+   * Returns true if focus succeeded, false if failed after retries
+   * @param {HTMLElement} textarea - The textarea element to focus
+   * @param {number} retries - Number of retry attempts remaining
+   * @returns {Promise<boolean>} - Whether focus succeeded
+   */
+  async function focusWithRetry(textarea, retries = MAX_FOCUS_RETRIES) {
+    if (!textarea) return false;
+
+    textarea.focus();
+
+    // Check if focus succeeded
+    if (document.activeElement === textarea) {
+      return true;
+    }
+
+    // Retry if attempts remaining
+    if (retries > 0) {
+      await new Promise(resolve => setTimeout(resolve, FOCUS_RETRY_DELAY_MS));
+      return focusWithRetry(textarea, retries - 1);
+    }
+
+    return false;
+  }
+
+  /**
+   * Send Enter to terminal via direct DOM keyboard dispatch on xterm textarea.
+   * @param {string} paneId - The pane ID
+   * @returns {Promise<{success: boolean, method: string}>}
+   */
+  async function sendEnterToPane(paneId) {
+    const terminal = terminals.get(paneId);
+    // sendInputEvent can produce isTrusted=false, which the key handler blocks
+    // unless bypassed. Set bypass flag so attachCustomKeyEventHandler allows Enter.
+    if (terminal) {
+      terminal._squidrunBypass = true;
+      log.debug(`sendEnterToPane ${paneId}`, 'Set _squidrunBypass=true for DOM dispatch');
+    }
+
+    const tryDomFallback = () => {
+      if (typeof document === 'undefined') return false;
+      let textarea = document.querySelector(`.pane[data-pane-id="${paneId}"] .xterm-helper-textarea`);
+      if (!textarea || typeof textarea.dispatchEvent !== 'function') {
+        const paneEl = document.querySelector(`.pane[data-pane-id="${paneId}"]`);
+        textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+      }
+      if (!textarea) return false;
+
+      try {
+        const makeEvent = (type) => {
+          const evt = new KeyboardEvent(type, {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true,
+          });
+          evt._squidrunBypass = true;
+          return evt;
+        };
+        textarea.dispatchEvent(makeEvent('keydown'));
+        textarea.dispatchEvent(makeEvent('keypress'));
+        textarea.dispatchEvent(makeEvent('keyup'));
+        log.info(`sendEnterToPane ${paneId}`, 'Enter sent via DOM dispatch');
+        return true;
+      } catch (err) {
+        log.warn(`sendEnterToPane ${paneId}`, 'DOM dispatch failed:', err);
+        return false;
+      }
+    };
+
+    try {
+      const fallbackOk = tryDomFallback();
+      if (fallbackOk) {
+        return { success: true, method: 'domFallback' };
+      }
+      return { success: false, method: 'domFallback' };
+    } finally {
+      // Clear bypass flag after Enter is processed (next tick to ensure event handled)
+      if (terminal) {
+        setTimeout(() => {
+          terminal._squidrunBypass = false;
+          log.debug(`sendEnterToPane ${paneId}`, 'Cleared _squidrunBypass');
+        }, BYPASS_CLEAR_DELAY_MS);
+      }
+    }
+  }
+
+  /**
+   * Check if terminal shows a prompt (ready for input).
+   * Used by terminal.js startup detection to know when a pane is ready.
+   * @param {string} paneId - The pane ID
+   * @returns {boolean}
+   */
+  function isPromptReady(paneId) {
+    const lineText = getCurrentPromptLineText(paneId);
+    if (!lineText) return false;
+
+    const promptPatterns = [
+      /(?:^|[\s>])(codex|gemini|claude|cursor)>\s*$/i,
+      /(?:^|[\s>])PS\s+[^>\n]*>\s*$/i,
+      /(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s*$/,
+      /(?:^|[\w./~:-]+)[$#]\s*$/,
+    ];
+    const hasPrompt = promptPatterns.some(p => p.test(lineText));
+
+    if (hasPrompt) {
+      log.debug(`isPromptReady ${paneId}`, `Prompt detected: "${lineText.slice(-20)}"`);
+    }
+    return hasPrompt;
+  }
+
+  function getCurrentPromptLineText(paneId) {
+    const terminal = terminals.get(paneId);
+    if (!terminal || !terminal.buffer || !terminal.buffer.active) return '';
+
+    try {
+      const buffer = terminal.buffer.active;
+      const cursorY = buffer.cursorY;
+      const line = buffer.getLine(cursorY + buffer.viewportY);
+      if (!line) return '';
+      return line.translateToString(true).trimEnd();
+    } catch (err) {
+      log.warn(`getCurrentPromptLineText ${paneId}`, 'Buffer read failed:', err.message);
+      return '';
+    }
+  }
+
+  function getPromptKind(paneId) {
+    const lineText = getCurrentPromptLineText(paneId);
+    if (!lineText) return 'unknown';
+    if (/^>\s*$/.test(lineText) || /(?:^|[\s>])(?:codex|claude|gemini|cursor)>\s*$/i.test(lineText)) {
+      return 'cli';
+    }
+    if (/(?:^|[\s>])PS\s+[^>\n]*>\s*$/i.test(lineText)) {
+      return 'powershell';
+    }
+    if (/(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s*$/.test(lineText)) {
+      return 'cmd';
+    }
+    if (/(?:^|[\w./~:-]+)[$#]\s*$/.test(lineText)) {
+      return 'unix';
+    }
+    return 'unknown';
+  }
+
+  function formatHmSendForPrompt(text, promptKind) {
+    if (!text || promptKind === 'cli') return text;
+    const prefix = promptKind === 'cmd' ? 'REM ' : (promptKind === 'powershell' || promptKind === 'unix' ? '# ' : '');
+    if (!prefix) return text;
+    return String(text)
+      .split('\n')
+      .map((line) => (line ? `${prefix}${line}` : prefix.trimEnd()))
+      .join('\n');
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getLastOutputTimestamp(paneId) {
+    const ts = Number(lastOutputTime?.[paneId]);
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
+  function paneHasRecentOutput(paneId, windowMs = SUBMIT_DEFER_ACTIVE_OUTPUT_WINDOW_MS) {
+    const ts = getLastOutputTimestamp(paneId);
+    if (!ts) return false;
+    return (Date.now() - ts) <= windowMs;
+  }
+
+  function canProbePromptState(paneId) {
+    const terminal = terminals.get(paneId);
+    const buffer = terminal?.buffer?.active;
+    return !!(buffer && typeof buffer.getLine === 'function');
+  }
+
+  function normalizePendingProbeText(value) {
+    return String(value || '')
+      .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function getPendingInputFragments(text) {
+    const normalized = normalizePendingProbeText(text)
+      .replace(/^\[\d{2}:\d{2}\s+local\]\s*/i, '');
+    const fragments = [];
+    const candidates = [
+      normalized,
+      ...normalized.split(/[#.?!]\s+/),
+    ];
+    for (const candidate of candidates) {
+      const compact = candidate.trim();
+      if (compact.length < 8) continue;
+      fragments.push(compact.slice(0, 80));
+      if (compact.length > 80) {
+        fragments.push(compact.slice(-80));
+      }
+    }
+    return [...new Set(fragments)].slice(0, 6);
+  }
+
+  function isCodexInjectionCapability(capabilities = {}) {
+    return String(capabilities.displayName || '').trim().toLowerCase() === 'codex'
+      || String(capabilities.modeLabel || '').trim().toLowerCase().includes('codex');
+  }
+
+  function probePendingInputBuffer(paneId, pendingInputText = '') {
+    const lineText = getCurrentPromptLineText(paneId);
+    if (!lineText) {
+      return { pending: false, lineText: '', available: false };
+    }
+    const normalizedLine = normalizePendingProbeText(lineText);
+    const pastedContentPlaceholder = /\[\s*pasted content\s+\d[\d,]*\s+chars?\s*\]/iu.exec(lineText);
+    if (pastedContentPlaceholder) {
+      return {
+        pending: true,
+        lineText,
+        fragment: pastedContentPlaceholder[0],
+        marker: 'codex_pasted_content_placeholder',
+        available: true,
+      };
+    }
+    const hasPromptPrefix = (
+      /(?:^|[\s>])(?:codex|claude|gemini|cursor)>\s+\S/i.test(lineText)
+      || /(?:^|[\s>])PS\s+[^>\n]*>\s+\S/i.test(lineText)
+      || /(?:^|[\s>])[A-Za-z]:\\[^>\n]*>\s+\S/.test(lineText)
+      || /(?:^|[\w./~:-]+)[$#]\s+\S/.test(lineText)
+    );
+    if (!hasPromptPrefix) {
+      return { pending: false, lineText, available: true };
+    }
+
+    const fragment = getPendingInputFragments(pendingInputText)
+      .find((candidate) => normalizedLine.includes(candidate));
+    return {
+      pending: Boolean(fragment),
+      lineText,
+      fragment: fragment || null,
+      available: true,
+    };
+  }
+
+  function ptyWriteAccepted(result) {
+    return !(result && (result.success === false || result.ok === false));
+  }
+
+  async function recoverPendingCodexComposer(paneId, pendingInputText = '', generation = 0) {
+    const id = String(paneId);
+    const usedAttempts = getCodexRecoveryAttempts(id, generation);
+    const maxAttempts = Math.max(1, Number(CODEX_PENDING_RECOVERY_MAX_ATTEMPTS) || 2);
+    if (usedAttempts >= maxAttempts) {
+      return { cleared: false, exhausted: true, attempts: usedAttempts };
+    }
+
+    const attempt = usedAttempts + 1;
+    setCodexRecoveryAttempts(id, generation, attempt);
+    try {
+      const pasteEndResult = await window.squidrun.pty.write(id, '\u001b[201~');
+      if (!ptyWriteAccepted(pasteEndResult)) {
+        throw new Error(pasteEndResult?.reason || pasteEndResult?.error || 'codex_paste_end_failed');
+      }
+      if (codexPaneGenerations.get(id) !== generation) {
+        return { cleared: false, stale: true, exhausted: false, attempts: attempt };
+      }
+      const enterResult = await window.squidrun.pty.write(id, '\r');
+      if (!ptyWriteAccepted(enterResult)) {
+        throw new Error(enterResult?.reason || enterResult?.error || 'codex_raw_enter_failed');
+      }
+    } catch (err) {
+      log.error(`processQueue ${id}`, `Codex pending-composer recovery write failed: ${err?.message || err}`);
+      return { cleared: false, exhausted: attempt >= maxAttempts, attempts: attempt, reason: 'pty_write_failed' };
+    }
+
+    const verifyMs = Math.max(50, Number(CODEX_PENDING_RECOVERY_VERIFY_MS) || 1200);
+    const pollMs = Math.max(10, Number(CODEX_PENDING_RECOVERY_POLL_MS) || 50);
+    const deadline = Date.now() + verifyMs;
+    while (Date.now() < deadline) {
+      await sleep(pollMs);
+      const pendingProbe = probePendingInputBuffer(id, pendingInputText);
+      if (pendingProbe.available === true && pendingProbe.pending === false) {
+        clearCodexRecoveryAttempts(id, generation);
+        log.info(`processQueue ${id}`, `Codex pending composer cleared by raw PTY Enter (attempt ${attempt}/${maxAttempts})`);
+        return { cleared: true, exhausted: false, attempts: attempt };
+      }
+    }
+
+    log.warn(`processQueue ${id}`, `Codex composer still pending after raw PTY Enter (attempt ${attempt}/${maxAttempts})`);
+    return { cleared: false, exhausted: attempt >= maxAttempts, attempts: attempt };
+  }
+
+  function computeScaledEnterDelayMs(baseDelayMs, payloadBytes, capabilities = {}) {
+    const defaultBase = Math.max(0, Number(baseDelayMs) || 0);
+    const byteLength = Math.max(0, Number(payloadBytes) || 0);
+    const explicitScaling = capabilities.scaleEnterDelayByPayload === true;
+    const displayName = String(capabilities.displayName || '').trim().toLowerCase();
+    const modeLabel = String(capabilities.modeLabel || '').trim().toLowerCase();
+    const isCodexCapability = displayName === 'codex' || modeLabel.includes('codex');
+    const shouldScale = explicitScaling || capabilities.enterMethod === 'trusted' || isCodexCapability;
+    if (!shouldScale) {
+      return defaultBase;
+    }
+
+    const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
+    const longMessageBaseDelayMs = Math.max(0, Number(CLAUDE_LONG_MESSAGE_BASE_ENTER_DELAY_MS) || 200);
+    const base = byteLength >= longMessageBytes
+      ? Math.max(defaultBase, longMessageBaseDelayMs)
+      : defaultBase;
+
+    const scaleStartBytes = Math.max(0, Number(CLAUDE_ENTER_DELAY_SCALE_START_BYTES) || 256);
+    const bytesPerMs = Math.max(1, Number(CLAUDE_ENTER_DELAY_BYTES_PER_MS) || 64);
+    const maxExtraMs = Math.max(0, Number(CLAUDE_ENTER_DELAY_MAX_EXTRA_MS) || 250);
+    const bytesOverThreshold = Math.max(0, byteLength - scaleStartBytes);
+    const extraDelayMs = Math.ceil(bytesOverThreshold / bytesPerMs);
+
+    return base + Math.min(maxExtraMs, extraDelayMs);
+  }
+
+  async function deferSubmitWhilePaneActive(paneId, maxWaitMs = SUBMIT_DEFER_MAX_WAIT_MS) {
+    const deferMaxWaitMs = Math.max(0, Number(maxWaitMs) || 0);
+    const start = Date.now();
+    while (paneHasRecentOutput(paneId) && (Date.now() - start) < deferMaxWaitMs) {
+      await sleep(SUBMIT_DEFER_POLL_MS);
+    }
+
+    const waitedMs = Date.now() - start;
+    if (waitedMs <= 0) {
+      return { waitedMs: 0, forcedExpire: false };
+    }
+
+    if (paneHasRecentOutput(paneId)) {
+      log.warn(
+        `doSendToPane ${paneId}`,
+        `Claude pane still active after ${waitedMs}ms defer window; proceeding with submit`
+      );
+      return { waitedMs, forcedExpire: true };
+    }
+
+    log.info(
+      `doSendToPane ${paneId}`,
+      `Deferred submit ${waitedMs}ms while pane reported active output`
+    );
+    return { waitedMs, forcedExpire: false };
+  }
+
+  async function verifySubmitAccepted(paneId, baseline = {}, options = {}) {
+    const {
+      outputTsBefore = 0,
+      promptProbeAvailable = false,
+      promptWasReady = false,
+    } = baseline;
+    const allowOutputTransitionOnly = Boolean(options.allowOutputTransitionOnly);
+    const requireObservedSignal = Boolean(options.requireObservedSignal);
+    const requireOutputTransition = Boolean(options.requireOutputTransition);
+    const acceptOutputTransitionWithoutPrompt = options.acceptOutputTransitionWithoutPrompt !== false;
+    const pendingInputText = options.pendingInputText || '';
+
+    // Fallback when prompt probing is unavailable (mock/test edge cases).
+    if (!promptProbeAvailable) {
+      if (requireObservedSignal) {
+        const start = Date.now();
+        while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
+          const outputTsAfter = getLastOutputTimestamp(paneId);
+          if (outputTsAfter > outputTsBefore) {
+            if (!acceptOutputTransitionWithoutPrompt) {
+              return {
+                accepted: false,
+                signal: 'output_transition_without_prompt_probe_disallowed',
+                outputTransitionObserved: true,
+                promptTransitionObserved: false,
+                pendingInputProbeAvailable: false,
+              };
+            }
+            return {
+              accepted: true,
+              signal: 'output_transition_prompt_probe_unavailable',
+              outputTransitionObserved: true,
+              promptTransitionObserved: false,
+              pendingInputProbeAvailable: false,
+            };
+          }
+          await sleep(SUBMIT_ACCEPT_POLL_MS);
+        }
+
+        return {
+          accepted: false,
+          signal: 'prompt_probe_unavailable_no_output',
+          outputTransitionObserved: false,
+          promptTransitionObserved: false,
+          pendingInputProbeAvailable: false,
+        };
+      }
+
+      return {
+        accepted: true,
+        signal: 'prompt_probe_unavailable',
+        outputTransitionObserved: false,
+        promptTransitionObserved: false,
+        pendingInputProbeAvailable: false,
+      };
+    }
+
+    const start = Date.now();
+    let outputTransitionObserved = false;
+    let promptTransitionObserved = false;
+    let pendingInputProbeAvailable = false;
+    while ((Date.now() - start) < SUBMIT_ACCEPT_VERIFY_WINDOW_MS) {
+      const outputTsAfter = getLastOutputTimestamp(paneId);
+      if (outputTsAfter > outputTsBefore) {
+        outputTransitionObserved = true;
+      }
+
+      const pendingInput = probePendingInputBuffer(paneId, pendingInputText);
+      pendingInputProbeAvailable = pendingInputProbeAvailable || pendingInput.available === true;
+      if (pendingInput.pending) {
+        return {
+          accepted: false,
+          signal: 'input_buffer_pending',
+          outputTransitionObserved,
+          promptTransitionObserved,
+          pendingInputObserved: true,
+          pendingInputProbeAvailable,
+          pendingInputLine: pendingInput.lineText.slice(-160),
+        };
+      }
+
+      if (promptWasReady && !isPromptReady(paneId)) {
+        promptTransitionObserved = true;
+        if (requireOutputTransition && !outputTransitionObserved) {
+          await sleep(SUBMIT_ACCEPT_POLL_MS);
+          continue;
+        }
+        return {
+          accepted: true,
+          signal: outputTransitionObserved ? 'prompt_and_output_transition' : 'prompt_transition',
+          outputTransitionObserved,
+          promptTransitionObserved,
+          pendingInputProbeAvailable,
+        };
+      }
+
+      await sleep(SUBMIT_ACCEPT_POLL_MS);
+    }
+
+    if (requireOutputTransition && promptTransitionObserved && !outputTransitionObserved) {
+      return {
+        accepted: false,
+        signal: 'prompt_transition_without_output',
+        outputTransitionObserved,
+        promptTransitionObserved,
+        pendingInputProbeAvailable,
+      };
+    }
+
+    // If prompt was not ready at baseline, prompt transition cannot be observed.
+    // In that case, treat output transition as sufficient acceptance signal.
+    if ((allowOutputTransitionOnly || !promptWasReady) && outputTransitionObserved) {
+      if (!acceptOutputTransitionWithoutPrompt) {
+        return {
+          accepted: false,
+          signal: 'output_transition_without_prompt_disallowed',
+          outputTransitionObserved,
+          promptTransitionObserved,
+          pendingInputProbeAvailable,
+        };
+      }
+      return {
+        accepted: true,
+        signal: allowOutputTransitionOnly ? 'output_transition_allowed' : 'output_transition_prompt_unavailable',
+        outputTransitionObserved,
+        promptTransitionObserved,
+        pendingInputProbeAvailable,
+      };
+    }
+
+    return {
+      accepted: false,
+      signal: outputTransitionObserved ? 'output_transition_only' : 'no_acceptance_signal',
+      outputTransitionObserved,
+      promptTransitionObserved,
+      pendingInputProbeAvailable,
+    };
+  }
+
+  function shouldTreatOutputTransitionAsAcceptedUnverified(verifyResult = {}) {
+    return verifyResult?.outputTransitionObserved === true
+      && verifyResult?.pendingInputProbeAvailable === true
+      && verifyResult?.pendingInputObserved !== true;
+  }
+
+  function getBackoffStartMs() {
+    return Math.max(100, Number(QUEUE_RETRY_MS) || 0, Number(QUEUE_DEFER_BACKOFF_START_MS) || 100);
+  }
+
+  function getBackoffMaxMs() {
+    return Math.max(getBackoffStartMs(), Number(QUEUE_DEFER_BACKOFF_MAX_MS) || 2000);
+  }
+
+  function getBackoffMultiplier() {
+    const parsed = Number(QUEUE_DEFER_BACKOFF_MULTIPLIER);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 2;
+  }
+
+  function nextDeferredRetryDelayMs(paneId) {
+    const id = String(paneId);
+    const startMs = getBackoffStartMs();
+    const maxMs = getBackoffMaxMs();
+    const multiplier = getBackoffMultiplier();
+    const delayMs = queueDeferBackoffMs.get(id) ?? startMs;
+    const nextMs = Math.min(maxMs, Math.round(delayMs * multiplier));
+    queueDeferBackoffMs.set(id, nextMs);
+    return delayMs;
+  }
+
+  function emitDeferredSummaryIfNeeded(paneId, nextState = null) {
+    const id = String(paneId);
+    const state = queueDeferLogState.get(id);
+    if (!state) return;
+
+    if (state.suppressedCount > 0) {
+      const elapsedMs = Math.max(0, Date.now() - state.startedAt);
+      const suffix = nextState ? ` (state -> ${nextState})` : ' (state -> resumed)';
+      log.info(
+        `processQueue ${id}`,
+        `Pane defer repeats suppressed: ${state.reason} repeated ${state.suppressedCount}x over ${elapsedMs}ms${suffix}`
+      );
+    }
+
+    queueDeferLogState.delete(id);
+  }
+
+  function clearDeferredState(paneId) {
+    const id = String(paneId);
+    emitDeferredSummaryIfNeeded(id);
+    queueDeferBackoffMs.delete(id);
+  }
+
+  function noteDeferredState(paneId, reason, delayMs) {
+    const id = String(paneId);
+    const state = queueDeferLogState.get(id);
+    if (!state) {
+      log.info(`processQueue ${id}`, `Pane deferred - ${reason}; retry in ${delayMs}ms (backoff)`);
+      queueDeferLogState.set(id, { reason, suppressedCount: 0, startedAt: Date.now() });
+      return;
+    }
+
+    if (state.reason === reason) {
+      state.suppressedCount += 1;
+      queueDeferLogState.set(id, state);
+      return;
+    }
+
+    emitDeferredSummaryIfNeeded(id, reason);
+    log.info(`processQueue ${id}`, `Pane deferred - ${reason}; retry in ${delayMs}ms (backoff)`);
+    queueDeferLogState.set(id, { reason, suppressedCount: 0, startedAt: Date.now() });
+  }
+
+  function scheduleDeferredRetry(paneId, reason) {
+    const delayMs = nextDeferredRetryDelayMs(paneId);
+    noteDeferredState(paneId, reason, delayMs);
+    setTimeout(() => processIdleQueue(paneId), delayMs);
+  }
+
+  function getInjectionQueueMaxItems() {
+    return Number.isFinite(INJECTION_QUEUE_MAX_ITEMS) && INJECTION_QUEUE_MAX_ITEMS > 0
+      ? INJECTION_QUEUE_MAX_ITEMS
+      : 200;
+  }
+
+  function getInjectionQueueMaxBytes() {
+    return Number.isFinite(INJECTION_QUEUE_MAX_BYTES) && INJECTION_QUEUE_MAX_BYTES > 0
+      ? INJECTION_QUEUE_MAX_BYTES
+      : (512 * 1024);
+  }
+
+  function getQueueItemBytes(item) {
+    const msg = item && typeof item === 'object' ? item.message : item;
+    if (typeof msg !== 'string') return 0;
+    return Buffer.byteLength(msg, 'utf8');
+  }
+
+  function getQueueBytes(queue = []) {
+    return queue.reduce((total, item) => total + getQueueItemBytes(item), 0);
+  }
+
+  function notifyQueueItemComplete(item, result) {
+    if (!item || typeof item !== 'object' || typeof item.onComplete !== 'function') return;
+    try {
+      item.onComplete(result);
+    } catch (err) {
+      log.error('Terminal', 'queue onComplete failed', err);
+    }
+  }
+
+  function failQueueItem(item, reason = 'queue_cleared') {
+    notifyQueueItemComplete(item, { success: false, verified: false, reason });
+  }
+
+  function clearPaneQueue(paneId, reason = 'queue_cleared') {
+    const id = String(paneId);
+    const queue = messageQueue[id];
+    const activeCodexToken = codexActiveQueueTokens.get(id);
+    if (!Array.isArray(queue) || queue.length === 0) {
+      if (activeCodexToken || codexPendingRecoveryAttempts.has(id)) {
+        nextCodexPaneGeneration(id);
+      }
+      clearDeferredState(id);
+      compactionDeferStart.delete(id);
+      paneInjectionInFlight.delete(id);
+      codexPendingRecoveryAttempts.delete(id);
+      codexActiveQueueTokens.delete(id);
+      codexAwaitingSubmitPanes.delete(id);
+      if (activeCodexToken && !activeCodexToken.bypassesLock) {
+        setInjectionInFlight(false);
+      }
+      return 0;
+    }
+
+    const droppedItems = queue.splice(0, queue.length);
+    droppedItems.forEach(item => failQueueItem(item, reason));
+    delete messageQueue[id];
+    nextCodexPaneGeneration(id);
+    clearDeferredState(id);
+    compactionDeferStart.delete(id);
+    paneInjectionInFlight.delete(id);
+    codexPendingRecoveryAttempts.delete(id);
+    codexActiveQueueTokens.delete(id);
+    codexAwaitingSubmitPanes.delete(id);
+    if (activeCodexToken && !activeCodexToken.bypassesLock) {
+      setInjectionInFlight(false);
+    }
+    bus.updateState(id, { activity: 'idle' });
+    bus.emit('queue.depth.changed', {
+      paneId: id,
+      payload: { depth: 0, cleared: droppedItems.length, reason },
+      source: EVENT_SOURCE,
+    });
+    return droppedItems.length;
+  }
+
+  function toNonEmptyString(value) {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  function formatLocalClockPrefix(now = new Date()) {
+    const hours = String(now.getHours()).padStart(2, '0');
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    return `[${hours}:${minutes} local]`;
+  }
+
+  function prependVisibleTimestamp(message, now = new Date()) {
+    const text = typeof message === 'string' ? message : String(message ?? '');
+    if (!text) return text;
+    if (/^\[\d{2}:\d{2} local\]\s/.test(text)) return text;
+    return `${formatLocalClockPrefix(now)} ${text}`;
+  }
+
+  function normalizeTraceContext(traceContext = null) {
+    const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+    const traceId = toNonEmptyString(ctx.traceId) || toNonEmptyString(ctx.correlationId) || null;
+    const parentEventId = toNonEmptyString(ctx.parentEventId) || toNonEmptyString(ctx.causationId) || null;
+    const eventId = toNonEmptyString(ctx.eventId) || null;
+    if (!traceId && !parentEventId && !eventId) return null;
+    return {
+      ...ctx,
+      traceId,
+      parentEventId,
+      eventId,
+      correlationId: traceId,
+      causationId: parentEventId,
+    };
+  }
+
+  function isHmSendFastTraceContext(traceContext = null) {
+    const ctx = (traceContext && typeof traceContext === 'object') ? traceContext : {};
+    const messageId = toNonEmptyString(ctx.messageId);
+    const traceId = toNonEmptyString(ctx.traceId) || toNonEmptyString(ctx.correlationId);
+    return Boolean(
+      (messageId && messageId.startsWith('hm-'))
+      || (traceId && traceId.startsWith('hm-'))
+    );
+  }
+
+  function normalizeBoolean(value, fallback = false) {
+    return typeof value === 'boolean' ? value : fallback;
+  }
+
+  function normalizeModeLabel(value, fallback = 'claude-pty') {
+    const normalized = toNonEmptyString(value);
+    return normalized || fallback;
+  }
+
+  function normalizeEnterMethod(value, fallback = 'trusted') {
+    const normalized = toNonEmptyString(value);
+    if (normalized === 'none' || normalized === 'pty' || normalized === 'trusted') {
+      return normalized;
+    }
+    return fallback;
+  }
+
+  function resolveLegacyCapabilities(paneId) {
+    const runtimeKey = resolveInjectionRuntimeKey(paneId, {
+      isCodexPane,
+      isGeminiPane,
+      fallback: 'claude',
+    });
+    return getRuntimeInjectionCapabilityDefault(runtimeKey, {
+      isDarwin: IS_DARWIN,
+      codexEnterDelayMs: CODEX_ENTER_DELAY_MS,
+      codexVerifySubmitAccepted: !IS_DARWIN,
+      geminiEnterDelayMs: GEMINI_ENTER_DELAY_MS,
+      claudeEnterDelayMs: CLAUDE_ENTER_DELAY_MS,
+    });
+  }
+
+  function normalizeCapabilities(raw, fallbackCaps, paneId) {
+    const id = String(paneId);
+    const source = (raw && typeof raw === 'object') ? raw : fallbackCaps;
+    const mode = 'pty';
+    const fallbackEnterMethod = fallbackCaps.enterMethod || 'pty';
+    const enterMethod = normalizeEnterMethod(source.enterMethod, fallbackEnterMethod);
+    const requiresFocusForEnter = normalizeBoolean(
+      source.requiresFocusForEnter,
+      enterMethod === 'trusted'
+    );
+    const bypassGlobalLock = normalizeBoolean(
+      source.bypassGlobalLock,
+      !requiresFocusForEnter
+    );
+
+    return {
+      paneId: id,
+      mode,
+      modeLabel: normalizeModeLabel(source.modeLabel, fallbackCaps.modeLabel || 'generic-pty'),
+      appliedMethod: normalizeModeLabel(source.appliedMethod, fallbackCaps.appliedMethod || 'generic-pty'),
+      submitMethod: normalizeModeLabel(
+        source.submitMethod,
+        fallbackCaps.submitMethod || (enterMethod === 'trusted' ? 'sendTrustedEnter' : (enterMethod === 'pty' ? 'pty-enter' : 'none'))
+      ),
+      bypassGlobalLock,
+      applyCompactionGate: normalizeBoolean(source.applyCompactionGate, !bypassGlobalLock),
+      requiresFocusForEnter,
+      enterMethod,
+      enterDelayMs: Number.isFinite(Number(source.enterDelayMs))
+        ? Math.max(0, Number(source.enterDelayMs))
+        : (Number.isFinite(Number(fallbackCaps.enterDelayMs))
+          ? Math.max(0, Number(fallbackCaps.enterDelayMs))
+          : SAFE_DEFAULT_ENTER_DELAY_MS),
+      sanitizeMultiline: normalizeBoolean(source.sanitizeMultiline, false),
+      clearLineBeforeWrite: normalizeBoolean(source.clearLineBeforeWrite, true),
+      useChunkedWrite: normalizeBoolean(source.useChunkedWrite, true),
+      verifySubmitAccepted: normalizeBoolean(source.verifySubmitAccepted, false),
+      deferSubmitWhilePaneActive: normalizeBoolean(source.deferSubmitWhilePaneActive, false),
+      scaleEnterDelayByPayload: normalizeBoolean(
+        source.scaleEnterDelayByPayload,
+        normalizeBoolean(
+          fallbackCaps.scaleEnterDelayByPayload,
+          enterMethod === 'trusted'
+        )
+      ),
+      typingGuardWhenBypassing: normalizeBoolean(source.typingGuardWhenBypassing, bypassGlobalLock),
+      sanitizeTransform: normalizeModeLabel(source.sanitizeTransform, fallbackCaps.sanitizeTransform || 'sanitize-multiline'),
+      enterFailureReason: normalizeModeLabel(source.enterFailureReason, fallbackCaps.enterFailureReason || 'enter_failed'),
+      displayName: normalizeModeLabel(source.displayName, fallbackCaps.displayName || fallbackCaps.modeLabel || 'Pane'),
+    };
+  }
+
+  function getPaneInjectionCapabilities(paneId) {
+    const fallbackCaps = resolveLegacyCapabilities(paneId);
+    if (typeof getPaneCapabilities !== 'function') {
+      return fallbackCaps;
+    }
+
+    try {
+      const runtimeCaps = getPaneCapabilities(String(paneId));
+      if (!runtimeCaps || typeof runtimeCaps !== 'object') {
+        return fallbackCaps;
+      }
+      return normalizeCapabilities(runtimeCaps, fallbackCaps, paneId);
+    } catch (err) {
+      log.warn(`processQueue ${paneId}`, `Failed to resolve pane capabilities, using fallback: ${err.message}`);
+      return fallbackCaps;
+    }
+  }
+
+  // IDLE QUEUE: Process queued messages for a pane.
+  // Messages arrive here from the throttle queue (daemon-handlers.js
+  // processThrottleQueue → terminal.sendToPane). For Claude panes, the only
+  // gates are injectionInFlight (focus mutex) and userInputFocused (composing
+  // guard). No idle/busy timing — messages send immediately like user input.
+  function processIdleQueue(paneId) {
+    const id = String(paneId);
+    const queue = messageQueue[paneId];
+    if (!queue || queue.length === 0) {
+      clearDeferredState(id);
+      compactionDeferStart.delete(id);
+      paneInjectionInFlight.delete(id);
+      codexPendingRecoveryAttempts.delete(id);
+      codexActiveQueueTokens.delete(id);
+      codexAwaitingSubmitPanes.delete(id);
+      return;
+    }
+    const capabilities = getPaneInjectionCapabilities(id);
+    const isCodexRuntime = isCodexInjectionCapability(capabilities);
+    const peekItem = queue[0];
+    const peekTraceContext = normalizeTraceContext(peekItem && typeof peekItem === 'object' ? peekItem.traceContext : null);
+    const hmSendFastEnter = Boolean(
+      (peekItem && typeof peekItem === 'object' && peekItem.hmSendFastEnter === true)
+      || isHmSendFastTraceContext(peekTraceContext)
+    );
+    const bypassesLock = capabilities.bypassGlobalLock || hmSendFastEnter;
+
+    if (paneInjectionInFlight.has(id)) {
+      scheduleDeferredRetry(paneId, 'pane injection in flight');
+      return;
+    }
+
+    // Compaction gate: never inject while compaction is confirmed on this pane.
+    // Only applies to Claude panes — Codex/Gemini don't do Claude-style compaction.
+    // This closes the Item 20 failure mode where queued messages were submitted
+    // into compaction output and appeared delivered despite being swallowed.
+    // Safety valve: if gate has been stuck for > MAX_COMPACTION_DEFER_MS, force-clear
+    // as a false positive (real compaction lasts 5-15s, never indefinitely).
+    const paneState = (typeof bus.getState === 'function') ? bus.getState(id) : null;
+    if (capabilities.applyCompactionGate && paneState?.gates?.compacting === 'confirmed') {
+      if (!compactionDeferStart.has(id)) {
+        compactionDeferStart.set(id, Date.now());
+      }
+      const deferDuration = Date.now() - compactionDeferStart.get(id);
+      if (deferDuration < MAX_COMPACTION_DEFER_MS) {
+        scheduleDeferredRetry(paneId, 'compaction gate active (confirmed)');
+        return;
+      }
+      log.warn(`processQueue ${id}`, `Compaction gate stuck ${deferDuration}ms — forcing clear (false positive safety)`);
+      bus.updateState(id, { gates: { compacting: 'none' } });
+      compactionDeferStart.delete(id);
+    } else {
+      compactionDeferStart.delete(id);
+    }
+
+    // Gate 1: injectionInFlight — focus mutex for Claude panes.
+    // Codex/Gemini bypass (focus-free paths).
+    if (!bypassesLock && getInjectionInFlight()) {
+      scheduleDeferredRetry(paneId, 'injection in flight');
+      return;
+    }
+    if (bypassesLock && getInjectionInFlight()) {
+      log.debug(`processQueue ${id}`, `${capabilities.displayName} pane bypassing global lock`);
+    }
+
+    // Gate 2: userInputFocused — defer while user is actively composing in UI input.
+    // Focus alone does not block; terminal.js reports true only for recent activity.
+    // Codex/Gemini bypass (PTY writes, no focus steal).
+    if (!bypassesLock && typeof userInputFocused === 'function' && userInputFocused()) {
+      scheduleDeferredRetry(paneId, 'user input focused (composing)');
+      return;
+    }
+
+    if (bypassesLock && capabilities.typingGuardWhenBypassing) {
+      const paneLastTypedAt = (lastTypedTime && lastTypedTime[id]) || 0;
+      const paneRecentlyTyped = paneLastTypedAt && (Date.now() - paneLastTypedAt) < TYPING_GUARD_MS;
+      if (userIsTyping() || paneRecentlyTyped) {
+        scheduleDeferredRetry(paneId, 'typing guard active');
+        return;
+      }
+    }
+
+    if (isCodexRuntime) {
+      const activeToken = codexActiveQueueTokens.get(id);
+      const activeItem = activeToken?.item;
+      if (activeItem && activeItem !== peekItem) {
+        scheduleDeferredRetry(paneId, 'Codex active queue item is not at queue head');
+        return;
+      }
+
+      const retainedInputText = activeItem && activeItem === peekItem
+        ? (typeof activeItem === 'string' ? activeItem : activeItem?.message || '')
+        : '';
+      const pendingProbe = probePendingInputBuffer(id, retainedInputText);
+      const awaitingSubmit = codexAwaitingSubmitPanes.has(id) && activeItem === peekItem;
+      const recoveryGeneration = activeToken?.generation || (codexPaneGenerations.get(id) || 0);
+
+      // An applied payload stays at the head until its collapsed paste marker
+      // has genuinely disappeared. Merely observing renderer output is not a
+      // submit signal for Codex.
+      if (awaitingSubmit && pendingProbe.available === true && pendingProbe.pending === false) {
+        queue.shift();
+        clearCodexRecoveryAttempts(id, recoveryGeneration);
+        codexActiveQueueTokens.delete(id);
+        codexAwaitingSubmitPanes.delete(id);
+        clearDeferredState(id);
+        log.info(
+          `processQueue ${id}`,
+          'Codex pending composer resolved on its own (self_cleared; no recovery Enter)'
+        );
+        notifyQueueItemComplete(peekItem, {
+          success: true,
+          verified: true,
+          signal: 'codex_pending_composer_cleared',
+          resolution: 'self_cleared',
+        });
+        bus.emit('queue.depth.changed', {
+          paneId: id,
+          payload: { depth: queue.length },
+          source: EVENT_SOURCE,
+        });
+        if (queue.length > 0) {
+          setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+        }
+        return;
+      }
+
+      if (pendingProbe.pending) {
+        const usedAttempts = getCodexRecoveryAttempts(id, recoveryGeneration);
+        const maxAttempts = Math.max(1, Number(CODEX_PENDING_RECOVERY_MAX_ATTEMPTS) || 2);
+        if (usedAttempts >= maxAttempts) {
+          scheduleDeferredRetry(paneId, 'Codex composer still pending after bounded Enter recovery');
+          return;
+        }
+
+        paneInjectionInFlight.add(id);
+        bus.updateState(id, { activity: 'recovering-submit' });
+        void recoverPendingCodexComposer(id, retainedInputText, recoveryGeneration).then((recoveryResult) => {
+          const recoveryIsCurrent = codexPaneGenerations.get(id) === recoveryGeneration
+            && (!activeToken || codexActiveQueueTokens.get(id) === activeToken);
+          if (!recoveryIsCurrent) {
+            log.info(`processQueue ${id}`, 'Ignoring stale Codex recovery completion');
+            return;
+          }
+          paneInjectionInFlight.delete(id);
+          bus.updateState(id, { activity: 'idle' });
+
+          if (
+            recoveryResult.cleared
+            && codexAwaitingSubmitPanes.has(id)
+            && codexActiveQueueTokens.get(id) === activeToken
+            && queue[0] === peekItem
+          ) {
+            queue.shift();
+            codexActiveQueueTokens.delete(id);
+            codexAwaitingSubmitPanes.delete(id);
+            notifyQueueItemComplete(peekItem, {
+              success: true,
+              verified: true,
+              signal: 'codex_pending_composer_recovered',
+            });
+            bus.emit('queue.depth.changed', {
+              paneId: id,
+              payload: { depth: queue.length },
+              source: EVENT_SOURCE,
+            });
+          }
+
+          if (queue.length > 0) {
+            setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+          }
+        }).catch((err) => {
+          const recoveryIsCurrent = codexPaneGenerations.get(id) === recoveryGeneration
+            && (!activeToken || codexActiveQueueTokens.get(id) === activeToken);
+          if (!recoveryIsCurrent) {
+            log.info(`processQueue ${id}`, 'Ignoring stale Codex recovery failure');
+            return;
+          }
+          paneInjectionInFlight.delete(id);
+          bus.updateState(id, { activity: 'idle' });
+          log.error(`processQueue ${id}`, `Codex pending-composer recovery failed: ${err?.message || err}`);
+          scheduleDeferredRetry(paneId, 'Codex pending-composer recovery failed');
+        });
+        return;
+      }
+
+      if (awaitingSubmit) {
+        // If the renderer cannot expose the composer, do not guess that the
+        // payload cleared and do not paste the next item over it.
+        scheduleDeferredRetry(paneId, 'Codex submit pending; composer state unavailable');
+        return;
+      }
+
+      clearCodexRecoveryAttempts(id, recoveryGeneration);
+    }
+
+    clearDeferredState(id);
+
+    // Codex keeps the active item at queue head until submit is observed. This
+    // makes the queue itself the no-stack boundary. Other runtimes retain the
+    // existing dequeue-before-send behavior.
+    const item = isCodexRuntime ? queue[0] : queue.shift();
+    let codexItemToken = null;
+    if (isCodexRuntime) {
+      codexItemToken = {
+        item,
+        generation: nextCodexPaneGeneration(id),
+        bypassesLock,
+      };
+      codexActiveQueueTokens.set(id, codexItemToken);
+    }
+    const queuedMessage = typeof item === 'string' ? item : item.message;
+    const verifySubmitAcceptedOverride = item && typeof item === 'object'
+      ? item.verifySubmitAccepted
+      : undefined;
+    const startupInjectionOverride = item && typeof item === 'object'
+      ? item.startupInjection
+      : undefined;
+    const acceptOutputTransitionOnlyOverride = item && typeof item === 'object'
+      ? item.acceptOutputTransitionOnly
+      : undefined;
+    const hmSendFastEnterOverride = item && typeof item === 'object'
+      ? item.hmSendFastEnter
+      : undefined;
+    const preferClipboardPasteForLongMessageOverride = item && typeof item === 'object'
+      ? item.preferClipboardPasteForLongMessage
+      : undefined;
+    const clipboardPasteThresholdBytesOverride = item && typeof item === 'object'
+      ? item.clipboardPasteThresholdBytes
+      : undefined;
+    const injectMeta = item && typeof item === 'object' && item.meta && typeof item.meta === 'object'
+      ? { ...item.meta }
+      : null;
+    const itemTraceContext = normalizeTraceContext(item && typeof item === 'object' ? item.traceContext : null);
+    const itemCorrId = itemTraceContext?.traceId
+      || itemTraceContext?.correlationId
+      || (item && typeof item === 'object' && item.correlationId)
+      || bus.getCurrentCorrelation();
+    const itemCausationId = itemTraceContext?.parentEventId || itemTraceContext?.causationId || undefined;
+
+    bus.emit('inject.mode.selected', {
+      paneId: id,
+      payload: {
+        mode: capabilities.modeLabel,
+        enterMethod: capabilities.enterMethod,
+        verifySubmitAccepted: typeof verifySubmitAcceptedOverride === 'boolean'
+          ? verifySubmitAcceptedOverride
+          : capabilities.verifySubmitAccepted,
+        startupInjection: Boolean(startupInjectionOverride),
+        acceptOutputTransitionOnly: Boolean(acceptOutputTransitionOnlyOverride),
+        hmSendFastEnter: Boolean(hmSendFastEnterOverride || isHmSendFastTraceContext(itemTraceContext)),
+        useChunkedWrite: capabilities.useChunkedWrite,
+        visibility: injectMeta?.visibility || null,
+      },
+      correlationId: itemCorrId,
+      causationId: itemCausationId,
+      source: EVENT_SOURCE,
+    });
+
+    bus.emit('queue.depth.changed', {
+      paneId: id,
+      payload: { depth: isCodexRuntime ? Math.max(0, queue.length - 1) : queue.length },
+      correlationId: itemCorrId,
+      causationId: itemCausationId,
+      source: EVENT_SOURCE,
+    });
+
+    bus.updateState(id, { activity: 'injecting' });
+
+    if (bypassesLock) {
+      log.debug(`Terminal ${paneId}`, `${capabilities.displayName} pane: immediate send`);
+    } else {
+      log.info(`Terminal ${id}`, `${capabilities.modeLabel} pane: immediate send`);
+      setInjectionInFlight(true);
+    }
+    paneInjectionInFlight.add(id);
+
+    doSendToPane(paneId, queuedMessage, (result) => {
+      if (isCodexRuntime && codexActiveQueueTokens.get(id) !== codexItemToken) {
+        log.info(`processQueue ${id}`, 'Ignoring stale Codex completion after queue clear or replacement');
+        return;
+      }
+      paneInjectionInFlight.delete(id);
+      if (!bypassesLock) {
+        setInjectionInFlight(false);
+      }
+      bus.updateState(id, { activity: 'idle' });
+      const codexComposerStillPending = isCodexRuntime
+        && result?.success !== true
+        && result?.applied === true
+        && result?.pendingInputObserved === true;
+
+      if (codexComposerStillPending) {
+        codexAwaitingSubmitPanes.add(id);
+        log.warn(`processQueue ${id}`, 'Codex payload remains in composer; retaining queue head for Enter-only recovery');
+      } else {
+        if (isCodexRuntime) {
+          if (queue[0] === item) {
+            queue.shift();
+          }
+          clearCodexRecoveryAttempts(id, codexItemToken.generation);
+          codexActiveQueueTokens.delete(id);
+          codexAwaitingSubmitPanes.delete(id);
+          bus.emit('queue.depth.changed', {
+            paneId: id,
+            payload: { depth: queue.length },
+            correlationId: itemCorrId,
+            causationId: itemCausationId,
+            source: EVENT_SOURCE,
+          });
+        }
+        notifyQueueItemComplete(item, result);
+      }
+      if (queue.length > 0) {
+        setTimeout(() => processIdleQueue(paneId), QUEUE_RETRY_MS);
+      }
+    }, itemTraceContext || {
+      traceId: itemCorrId || null,
+      parentEventId: itemCausationId || null,
+      correlationId: itemCorrId || null,
+      causationId: itemCausationId || null,
+      eventId: itemTraceContext?.eventId || null,
+    }, {
+      verifySubmitAccepted: verifySubmitAcceptedOverride,
+      startupInjection: startupInjectionOverride,
+      acceptOutputTransitionOnly: acceptOutputTransitionOnlyOverride,
+      hmSendFastEnter: hmSendFastEnterOverride,
+      preferClipboardPasteForLongMessage: preferClipboardPasteForLongMessageOverride,
+      clipboardPasteThresholdBytes: clipboardPasteThresholdBytesOverride,
+      meta: injectMeta,
+      isStillCurrent: isCodexRuntime
+        ? () => codexActiveQueueTokens.get(id) === codexItemToken
+        : undefined,
+    });
+  }
+
+  // Actually send message to pane (internal - use sendToPane for idle detection)
+  // Triggers actual DOM keyboard events on xterm textarea with bypass marker
+  // Includes diagnostic logging and focus steal prevention (save/restore user focus)
+  async function doSendToPane(paneId, message, onComplete, traceContext = null, behaviorOverrides = {}) {
+    let completed = false;
+    // Late-bound focus-restore hook: assigned once the target textarea is
+    // known, invoked on EVERY completion (success, failure, timeout, early
+    // return) so no exit path can leave user focus on an injected pane.
+    let restoreFocusHook = () => {};
+    const finish = (result) => {
+      if (completed) return;
+      completed = true;
+      try {
+        restoreFocusHook();
+      } catch (err) {
+        log.warn('Terminal', `Focus restore on finish failed: ${err?.message || err}`);
+      }
+      if (onComplete) {
+        try {
+          onComplete(result);
+        } catch (err) {
+          log.error('Terminal', 'onComplete failed', err);
+        }
+      }
+    };
+    // Safety timer releases injectionInFlight lock if callbacks are missed
+    // Uses let so it can be replaced with a longer timer during Enter+verify phase
+    let safetyTimerId = setTimeout(() => {
+      // Timeout doesn't mean failure - message may still be delivered
+      // Return success:true so delivery ack is sent, but mark as unverified
+      bus.emit('inject.timeout', {
+        paneId: id,
+        payload: { timeoutMs: INJECTION_LOCK_TIMEOUT_MS },
+        source: EVENT_SOURCE,
+      });
+      finish({ success: true, verified: false, status: 'submit_unverified_timeout', reason: 'timeout' });
+    }, INJECTION_LOCK_TIMEOUT_MS);
+    const finishWithClear = (result) => {
+      clearTimeout(safetyTimerId);
+      finish(result || { success: true });
+    };
+
+    const rawText = prependVisibleTimestamp(message.replace(/\r$/, ''));
+    const id = String(paneId);
+    const capabilities = getPaneInjectionCapabilities(id);
+    const isCodexCapability = isCodexInjectionCapability(capabilities);
+    const injectionStillCurrent = () => (
+      typeof behaviorOverrides.isStillCurrent !== 'function'
+      || behaviorOverrides.isStillCurrent() === true
+    );
+    const shouldVerifySubmitAccepted = (typeof behaviorOverrides.verifySubmitAccepted === 'boolean')
+      ? behaviorOverrides.verifySubmitAccepted
+      : capabilities.verifySubmitAccepted;
+    const isStartupInjection = Boolean(behaviorOverrides.startupInjection);
+    const allowOutputTransitionOnly = Boolean(behaviorOverrides.acceptOutputTransitionOnly);
+    const injectMeta = (behaviorOverrides.meta && typeof behaviorOverrides.meta === 'object')
+      ? { ...behaviorOverrides.meta }
+      : null;
+    const normalizedTraceContext = normalizeTraceContext(traceContext);
+    const hmSendFastEnter = Boolean(behaviorOverrides.hmSendFastEnter)
+      || isHmSendFastTraceContext(normalizedTraceContext);
+    const promptKind = hmSendFastEnter ? getPromptKind(id) : 'unknown';
+    const text = hmSendFastEnter ? formatHmSendForPrompt(rawText, promptKind) : rawText;
+    const corrId = normalizedTraceContext?.traceId
+      || normalizedTraceContext?.correlationId
+      || bus.getCurrentCorrelation()
+      || undefined;
+    let currentParentEventId = normalizedTraceContext?.parentEventId
+      || normalizedTraceContext?.causationId
+      || normalizedTraceContext?.eventId
+      || null;
+    const createKernelMeta = () => {
+      const eventId = `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      const kernelMeta = {
+        eventId,
+        correlationId: corrId,
+        traceId: corrId,
+        parentEventId: currentParentEventId || undefined,
+        causationId: currentParentEventId || undefined,
+        source: EVENT_SOURCE,
+      };
+      if (injectMeta) {
+        kernelMeta.meta = { ...injectMeta };
+      }
+      currentParentEventId = eventId;
+      return kernelMeta;
+    };
+    const assertPtyWriteResult = (result, label) => {
+      if (result && result.success === false) {
+        throw new Error(result.error || `${label} returned failure`);
+      }
+    };
+    const writeCodexPasteTerminatorBeforeEnter = async (method) => {
+      const shouldTerminatePaste = isCodexCapability
+        || (typeof isCodexPane === 'function' && isCodexPane(id));
+      if (!shouldTerminatePaste) {
+        return;
+      }
+      try {
+        assertPtyWriteResult(
+          await window.squidrun.pty.write(id, '\u001b[201~', createKernelMeta()),
+          'pty.write bracketed paste terminator'
+        );
+        bus.emit('inject.paste.terminated', {
+          paneId: id,
+          payload: { method },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+      } catch (err) {
+        log.warn(`doSendToPane ${id}`, `Codex paste-end pre-Enter write failed (continuing): ${err?.message || err}`);
+      }
+    };
+
+    const paneEl = document.querySelector(`.pane[data-pane-id="${id}"]`);
+    let textarea = paneEl ? paneEl.querySelector('.xterm-helper-textarea') : null;
+
+    // The hm-send fast path submits via PTY writes end to end - it needs no
+    // DOM focus and no textarea. Only the legacy trusted-Enter path (DOM
+    // keyboard dispatch) works through the textarea.
+    const willUseTrustedEnter = capabilities.requiresFocusForEnter && !hmSendFastEnter && !isCodexCapability;
+
+    if (willUseTrustedEnter && !textarea) {
+      log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: textarea not found, skipping injection`);
+      bus.emit('inject.failed', {
+        paneId: id,
+        payload: { reason: 'missing_textarea' },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      finishWithClear({ success: false, reason: 'missing_textarea' });
+      return;
+    }
+
+    // FOCUS-STEAL GUARANTEE (S463, Operator's typing): programmatic injection
+    // must never move USER focus. If injection focuses the pane textarea,
+    // every completion path restores the user's prior focus - and when the
+    // prior focus is gone (body / detached element), the stolen focus is
+    // RELEASED via blur rather than left on the terminal, so keystrokes never
+    // silently land in an injected pane. If the user re-focused something
+    // themselves mid-injection, their choice wins and no restore happens.
+    const savedFocus = document.activeElement;
+    let focusMovedByInjection = false;
+    const restoreSavedFocus = () => {
+      if (!focusMovedByInjection || !textarea) return;
+      if (document.activeElement !== textarea) return; // user moved on - respect it
+      if (
+        savedFocus
+        && savedFocus !== textarea
+        && document.body.contains(savedFocus)
+        && typeof savedFocus.focus === 'function'
+      ) {
+        try {
+          savedFocus.focus();
+          return;
+        } catch {
+          // Fall through to blur - never keep stolen focus.
+        }
+      }
+      try {
+        textarea.blur?.();
+      } catch {
+        // Ignore.
+      }
+    };
+    const scheduleFocusRestore = () => {
+      if (!focusMovedByInjection) return;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => restoreSavedFocus());
+      } else {
+        setTimeout(() => restoreSavedFocus(), 0);
+      }
+    };
+    restoreFocusHook = restoreSavedFocus;
+
+    const normalizedText = String(text || '');
+    const longMessageBytes = Math.max(1, Number(CLAUDE_LONG_MESSAGE_BYTES) || 1024);
+    const rawPayloadBytes = Buffer.byteLength(normalizedText, 'utf8');
+    const isLongPayload = rawPayloadBytes > longMessageBytes;
+    const modeFingerprint = `${String(capabilities.displayName || '').toLowerCase()} ${String(capabilities.modeLabel || '').toLowerCase()}`.trim();
+    const isCodexOrGeminiPane = modeFingerprint.includes('codex') || modeFingerprint.includes('gemini');
+    const preserveMultilineForLongRuntimePayload = isLongPayload && isCodexOrGeminiPane;
+    const shouldSanitizeMultiline = capabilities.sanitizeMultiline && !preserveMultilineForLongRuntimePayload;
+
+    const payloadText = shouldSanitizeMultiline
+      ? normalizedText.replace(/[\r\n]/g, ' ').trimEnd()
+      : normalizedText;
+    const payloadBytes = Buffer.byteLength(payloadText, 'utf8');
+    const preferClipboardPasteForLongMessage = behaviorOverrides.preferClipboardPasteForLongMessage === true;
+    const clipboardPasteThresholdBytes = Number.isFinite(Number(behaviorOverrides.clipboardPasteThresholdBytes))
+      ? Math.max(1, Number(behaviorOverrides.clipboardPasteThresholdBytes))
+      : longMessageBytes;
+    const shouldAttemptClipboardPaste = preferClipboardPasteForLongMessage
+      && payloadBytes >= clipboardPasteThresholdBytes
+      && typeof window?.squidrun?.pty?.clipboardPasteText === 'function';
+    // Focus ONLY when a DOM-level operation genuinely needs it: the trusted
+    // Enter dispatch, or a clipboard paste (which inserts at the focused
+    // element). The hm-send fast path is pure PTY and never focuses.
+    if ((willUseTrustedEnter || shouldAttemptClipboardPaste) && textarea) {
+      textarea.focus();
+      focusMovedByInjection = true;
+    }
+    const enterDelayMs = computeScaledEnterDelayMs(capabilities.enterDelayMs, payloadBytes, capabilities);
+    const hmSendFastChunkThresholdBytes = Math.max(
+      64,
+      Number(HM_SEND_FAST_CHUNK_THRESHOLD_BYTES) || (IS_DARWIN ? 1024 : 256)
+    );
+    const forceChunkedWriteForHmSendFastPath = hmSendFastEnter && payloadBytes >= hmSendFastChunkThresholdBytes;
+    const preferChunkedWrite = capabilities.useChunkedWrite || forceChunkedWriteForHmSendFastPath;
+
+    // Defer before writing to avoid counting our own echoed input as "active output".
+    const isLongClaudeMessage = capabilities.enterMethod === 'trusted' && payloadBytes >= longMessageBytes;
+    let deferResult = { waitedMs: 0, forcedExpire: false };
+    if (capabilities.deferSubmitWhilePaneActive) {
+      const deferMaxWaitMs = isLongClaudeMessage
+        ? Math.max(SUBMIT_DEFER_MAX_WAIT_MS, Number(SUBMIT_DEFER_MAX_WAIT_LONG_MS) || 5000)
+        : SUBMIT_DEFER_MAX_WAIT_MS;
+      deferResult = await deferSubmitWhilePaneActive(id, deferMaxWaitMs);
+    }
+    const deferForcedExpire = !!deferResult?.forcedExpire;
+
+    if (shouldSanitizeMultiline && payloadText !== normalizedText.trimEnd()) {
+      bus.emit('inject.transform.applied', {
+        paneId: id,
+        payload: {
+          transform: capabilities.sanitizeTransform || 'sanitize-multiline',
+          originalLen: normalizedText.length,
+          sanitizedLen: payloadText.length,
+        },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+    }
+
+    let payloadApplied = false;
+    try {
+      let appliedInjectionMethod = capabilities.appliedMethod;
+      let usedClipboardPaste = false;
+
+      if (shouldAttemptClipboardPaste) {
+        const pasteResult = await window.squidrun.pty.clipboardPasteText(payloadText);
+        if (pasteResult?.success !== false) {
+          usedClipboardPaste = true;
+          appliedInjectionMethod = 'clipboard-paste-text';
+          log.info(
+            `doSendToPane ${id}`,
+            `${capabilities.modeLabel} pane: used clipboard paste for ${payloadBytes}-byte payload`
+          );
+        } else {
+          log.warn(
+            `doSendToPane ${id}`,
+            `${capabilities.modeLabel} pane: clipboard paste failed (${pasteResult?.error || 'unknown'}), falling back to PTY write`
+          );
+        }
+      }
+
+      // Pre-PTY fingerprint helper: captures head/tail/length of every
+      // payload reaching a pty.write / writeChunked call inside doSendToPane.
+      // Consumed by the truncation trace diagnostic — if the receiving agent
+      // reports a clipped head, grep supervisor logs for `pre-PTY fingerprint`
+      // to confirm what this process actually handed to the PTY. Intentionally
+      // covers ALL three write call sites in this function (unchunked fast
+      // path, chunked fallback single-write, and the preferChunkedWrite=false
+      // else-branch) — previously only the chunked branch logged.
+      const logPrePtyFingerprint = (branch) => {
+        const first32 = payloadText.slice(0, 32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        const last32 = payloadText.slice(-32).replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+        log.info(
+          `doSendToPane ${id}`,
+          `${capabilities.modeLabel} pane: pre-PTY fingerprint branch=${branch} textLen=${payloadText.length} first32="${first32}" last32="${last32}"`
+        );
+      };
+      if (!usedClipboardPaste && preferChunkedWrite) {
+        const chunkThresholdBytes = Math.max(
+          1024,
+          Number(CLAUDE_CHUNK_THRESHOLD_BYTES) || DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES
+        );
+        const shouldChunkWrite = forceChunkedWriteForHmSendFastPath || payloadBytes >= chunkThresholdBytes;
+
+        if (!shouldChunkWrite) {
+          logPrePtyFingerprint('chunked-preferred-below-threshold');
+          assertPtyWriteResult(
+            await window.squidrun.pty.write(id, payloadText, createKernelMeta()),
+            'pty.write'
+          );
+        } else {
+          logPrePtyFingerprint('chunked-or-forced');
+
+          // The \x1b[H (cursor-home) prefix was historically prepended to
+          // payloads so the escape arrived in the same PTY write, preventing
+          // split-chunk rendering of the escape as literal "[H" text.
+          //
+          // In practice it caused silent head-truncation: \x1b[H moves the
+          // cursor to the top of Claude Code CLI's input viewport, and the
+          // subsequent bytes overwrite the visible buffer — any payload that
+          // wraps past the visible area loses its head (see d0f2183). A prior
+          // fix gated this suppression at >=1024 bytes, but truncation also
+          // occurs below that threshold once line-wrap pushes the wrapped
+          // payload past the visible viewport (reproduced on a ~700-byte
+          // user prompt). Match the pane-host-renderer.js path (line 588-593)
+          // which unconditionally disables the home-reset for IPC-reassembled
+          // messages: always skip \x1b[H here too, regardless of size. The
+          // theoretical split-chunk failure mode is visible ("[H" in the
+          // pane) rather than silent, and has never been reported in the
+          // wild; silent head-truncation is the worse failure.
+          const writeText = payloadText;
+
+          if (typeof window.squidrun?.pty?.writeChunked !== 'function') {
+            log.warn(`doSendToPane ${id}`, 'writeChunked API unavailable, falling back to single PTY write');
+            assertPtyWriteResult(
+              await window.squidrun.pty.write(id, writeText, createKernelMeta()),
+              'pty.write fallback'
+            );
+          } else {
+            const chunkMin = Math.max(1, Number(CLAUDE_CHUNK_MIN_SIZE) || 1024);
+            const chunkMax = Math.max(chunkMin, Number(CLAUDE_CHUNK_MAX_SIZE) || 8192);
+            const claudeChunkSize = Math.max(chunkMin, Math.min(chunkMax, Number(CLAUDE_CHUNK_SIZE) || 2048));
+            const hmSendChunkSize = Math.max(
+              1,
+              Number(HM_SEND_FAST_CHUNK_SIZE_BYTES) || (IS_DARWIN ? claudeChunkSize : 256)
+            );
+            const hmSendYieldEveryChunks = Math.max(
+              0,
+              Number.isFinite(Number(HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS))
+                ? Number(HM_SEND_FAST_CHUNK_YIELD_EVERY_CHUNKS)
+                : (IS_DARWIN ? 0 : 1)
+            );
+            const chunkSize = forceChunkedWriteForHmSendFastPath ? hmSendChunkSize : claudeChunkSize;
+            const yieldEveryChunks = forceChunkedWriteForHmSendFastPath
+              ? hmSendYieldEveryChunks
+              : ((Math.max(0, Number(CLAUDE_CHUNK_YIELD_MS) || 0) > 0) ? 1 : 0);
+            const chunkOptions = { chunkSize, yieldEveryChunks };
+            if (forceChunkedWriteForHmSendFastPath) {
+              chunkOptions.waitForWriteAck = true;
+            }
+            const chunkResult = await window.squidrun.pty.writeChunked(
+              id,
+              writeText,
+              chunkOptions,
+              createKernelMeta()
+            );
+            if (chunkResult && chunkResult.success === false) {
+              throw new Error(chunkResult.error || 'writeChunked returned failure');
+            }
+          }
+        }
+      } else if (!usedClipboardPaste) {
+        logPrePtyFingerprint('no-chunked-preference');
+        assertPtyWriteResult(
+          await window.squidrun.pty.write(id, payloadText, createKernelMeta()),
+          'pty.write'
+        );
+      }
+
+      bus.emit('inject.applied', {
+        paneId: id,
+        payload: { method: appliedInjectionMethod, textLen: payloadText.length },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      payloadApplied = true;
+    } catch (err) {
+      if (capabilities.displayName === 'Gemini') {
+        log.error(`doSendToPane ${id}`, 'Gemini PTY write failed:', err);
+      } else {
+        log.error(`doSendToPane ${id}`, 'PTY write failed:', err);
+      }
+      bus.emit('inject.failed', {
+        paneId: id,
+        payload: { reason: 'pty_write_failed', error: String(err) },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      finishWithClear({ success: false, reason: 'pty_write_failed' });
+      return;
+    }
+
+    if (!injectionStillCurrent()) {
+      finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+      return;
+    }
+
+    if (hmSendFastEnter) {
+      // Wait for the CLI to finish processing the pasted text before sending Enter.
+      // Without this delay, \r arrives while the CLI is still ingesting the paste
+      // and gets swallowed or treated as a literal newline — not a submit.
+      const hmSendFastDelayFloorMs = Math.max(
+        80,
+        Number(HM_SEND_FAST_ENTER_DELAY_MS) || (IS_DARWIN ? 150 : 500)
+      );
+      const hmSendFastExtraDelayMs = payloadBytes > longMessageBytes
+        ? Math.min(600, Math.ceil(Math.max(0, payloadBytes - longMessageBytes) / 64))
+        : 0;
+      const fastPathDelayMs = Math.max(enterDelayMs, hmSendFastDelayFloorMs + hmSendFastExtraDelayMs);
+      clearTimeout(safetyTimerId);
+      safetyTimerId = setTimeout(() => {
+        finish({ success: true, verified: false, status: 'submit_unverified_timeout', reason: 'timeout' });
+      }, Math.max(
+        CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS,
+        fastPathDelayMs + (SUBMIT_ACCEPT_VERIFY_WINDOW_MS * 2) + 1500
+      ));
+      if (safetyTimerId && typeof safetyTimerId.unref === 'function') {
+        safetyTimerId.unref();
+      }
+      const outputTsBeforeEnter = getLastOutputTimestamp(id);
+      const fastPathPromptProbeAvailable = canProbePromptState(id);
+      const fastPathBaseline = {
+        outputTsBefore: outputTsBeforeEnter,
+        promptProbeAvailable: fastPathPromptProbeAvailable,
+        promptWasReady: fastPathPromptProbeAvailable ? isPromptReady(id) : false,
+      };
+      await sleep(fastPathDelayMs);
+
+      bus.emit('inject.submit.requested', {
+        paneId: id,
+        payload: { method: 'hm-send-pty-enter', attempt: 1, maxAttempts: 1, fastPath: true, delayMs: fastPathDelayMs },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+      try {
+        await writeCodexPasteTerminatorBeforeEnter('hm-send-pty-enter');
+        if (!injectionStillCurrent()) {
+          finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+          return;
+        }
+        assertPtyWriteResult(await window.squidrun.pty.write(id, '\r'), 'pty.write enter');
+      } catch (err) {
+        log.error(`doSendToPane ${id}`, 'hm-send PTY Enter failed:', err);
+        bus.emit('inject.failed', {
+          paneId: id,
+          payload: { reason: 'enter_failed', method: 'hm-send-pty-enter' },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+        markPotentiallyStuck(id);
+        finishWithClear({ success: false, reason: 'enter_failed', applied: payloadApplied });
+        return;
+      }
+
+      bus.emit('inject.submit.sent', {
+        paneId: id,
+        payload: { method: 'hm-send-pty-enter', attempt: 1, maxAttempts: 1, fastPath: true },
+        correlationId: corrId,
+        source: EVENT_SOURCE,
+      });
+
+      // macOS Claude fast-path can occasionally swallow the first Enter.
+      // If no output transition is observed, issue one guarded retry Enter.
+      const shouldRetryClaudeFastPath = IS_DARWIN
+        && String(capabilities.displayName || '').toLowerCase() === 'claude';
+      if (shouldRetryClaudeFastPath) {
+        const retryDelayMs = 350;
+        await sleep(retryDelayMs);
+        const outputTsAfterFirstEnter = getLastOutputTimestamp(id);
+        const hasOutputTransition = outputTsAfterFirstEnter > outputTsBeforeEnter;
+        if (!hasOutputTransition) {
+          try {
+            await writeCodexPasteTerminatorBeforeEnter('hm-send-pty-enter-retry');
+            if (!injectionStillCurrent()) {
+              finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+              return;
+            }
+            assertPtyWriteResult(await window.squidrun.pty.write(id, '\r'), 'pty.write enter retry');
+            bus.emit('inject.submit.sent', {
+              paneId: id,
+              payload: { method: 'hm-send-pty-enter-retry', attempt: 2, maxAttempts: 2, fastPath: true },
+              correlationId: corrId,
+              source: EVENT_SOURCE,
+            });
+            log.info(`doSendToPane ${id}`, 'Claude macOS fast-path: retried Enter after no output transition');
+          } catch (err) {
+            log.error(`doSendToPane ${id}`, 'hm-send PTY Enter retry failed:', err);
+          }
+        }
+      }
+
+      const verifyResult = await verifySubmitAccepted(id, fastPathBaseline, {
+        allowOutputTransitionOnly: true,
+        requireObservedSignal: true,
+        requireOutputTransition: true,
+        acceptOutputTransitionWithoutPrompt: false,
+        pendingInputText: text,
+      });
+      let finalVerifyResult = verifyResult;
+      const shouldRetryNoSignalFastPath = (
+        !finalVerifyResult.accepted
+        && (
+          finalVerifyResult.signal === 'no_acceptance_signal'
+          || finalVerifyResult.signal === 'prompt_probe_unavailable_no_output'
+          || finalVerifyResult.signal === 'input_buffer_pending'
+        )
+      );
+      if (shouldRetryNoSignalFastPath) {
+        const retryDelayMs = 350;
+        await sleep(retryDelayMs);
+        const retryPromptProbeAvailable = canProbePromptState(id);
+        const retryBaseline = {
+          outputTsBefore: getLastOutputTimestamp(id),
+          promptProbeAvailable: retryPromptProbeAvailable,
+          promptWasReady: retryPromptProbeAvailable ? isPromptReady(id) : false,
+        };
+        try {
+          await writeCodexPasteTerminatorBeforeEnter('hm-send-pty-enter-retry');
+          if (!injectionStillCurrent()) {
+            finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+            return;
+          }
+          assertPtyWriteResult(await window.squidrun.pty.write(id, '\r'), 'pty.write enter retry');
+          bus.emit('inject.submit.sent', {
+            paneId: id,
+            payload: { method: 'hm-send-pty-enter-retry', attempt: 2, maxAttempts: 2, fastPath: true },
+            correlationId: corrId,
+            source: EVENT_SOURCE,
+          });
+          log.info(`doSendToPane ${id}`, `hm-send fast path: retried Enter after ${finalVerifyResult.signal}`);
+          finalVerifyResult = await verifySubmitAccepted(id, retryBaseline, {
+            allowOutputTransitionOnly: true,
+            requireObservedSignal: true,
+            requireOutputTransition: true,
+            acceptOutputTransitionWithoutPrompt: false,
+            pendingInputText: text,
+          });
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'hm-send PTY Enter retry failed:', err);
+        }
+      }
+
+      if (!finalVerifyResult.accepted) {
+        const outputTransitionAcceptedUnverified = shouldTreatOutputTransitionAsAcceptedUnverified(finalVerifyResult);
+        log.warn(
+          `doSendToPane ${id}`,
+          `hm-send fast path submit remained unverified; signal=${finalVerifyResult.signal} outputTransition=${finalVerifyResult.outputTransitionObserved ? 'yes' : 'no'} promptTransition=${finalVerifyResult.promptTransitionObserved ? 'yes' : 'no'}`
+        );
+        updatePaneStatus(id, 'Working');
+        lastTypedTime[id] = Date.now();
+        lastOutputTime[id] = Date.now();
+        const strictSubmitRequired = isCodexCapability || hmSendFastEnter || isStartupInjection;
+        finishWithClear(outputTransitionAcceptedUnverified
+          ? {
+            success: true,
+            verified: false,
+            applied: payloadApplied,
+            signal: finalVerifyResult.signal,
+            status: 'accepted.unverified',
+            reason: finalVerifyResult.signal || 'output_transition_only',
+            pendingInputObserved: false,
+          }
+          : strictSubmitRequired
+          ? {
+            success: false,
+            verified: false,
+            applied: payloadApplied,
+            signal: finalVerifyResult.signal,
+            status: finalVerifyResult.pendingInputObserved === true ? 'submit_pending_input' : 'submit_not_accepted',
+            reason: finalVerifyResult.signal || 'submit_not_accepted',
+            pendingInputObserved: Boolean(finalVerifyResult.pendingInputObserved),
+          }
+          : {
+            success: true,
+            verified: false,
+            signal: 'accepted_unverified',
+            status: 'accepted.unverified',
+            reason: 'submit_not_accepted',
+          });
+        return;
+      }
+
+      log.info(
+        `doSendToPane ${id}`,
+        `hm-send fast path submit verified via ${finalVerifyResult.signal}`
+      );
+
+      updatePaneStatus(id, 'Working');
+      lastTypedTime[id] = Date.now();
+      lastOutputTime[id] = Date.now();
+      finishWithClear({
+        success: true,
+        verified: true,
+        signal: 'hm_send_fast_path',
+      });
+      return;
+    }
+
+    const submitEnter = async () => {
+      // F2: For Codex panes, write a bracketed-paste-end sequence (ESC [ 201 ~) to
+      // PTY before the Enter. If the host emulator auto-bracketed our payload as a
+      // paste burst, this closes the bracket so the subsequent Enter is interpreted
+      // as a real keystroke rather than a literal newline inside the paste body.
+      // No-op on non-Codex panes. Errors are non-fatal, the Enter attempt still runs.
+      await writeCodexPasteTerminatorBeforeEnter(capabilities.submitMethod || 'submit-enter');
+      if (!injectionStillCurrent()) {
+        return {
+          success: false,
+          method: capabilities.submitMethod || 'codex-pty-enter',
+          reason: 'stale_injection',
+        };
+      }
+      if (isCodexCapability) {
+        try {
+          assertPtyWriteResult(
+            await window.squidrun.pty.write(id, '\r', createKernelMeta()),
+            'pty.write Codex submit enter'
+          );
+          return { success: true, method: capabilities.submitMethod || 'codex-pty-enter' };
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'Codex PTY Enter failed:', err);
+          return {
+            success: false,
+            method: capabilities.submitMethod || 'codex-pty-enter',
+            reason: 'pty_enter_failed',
+          };
+        }
+      }
+      if (capabilities.enterMethod === 'trusted') {
+        return sendEnterToPane(id);
+      }
+      if (capabilities.enterMethod === 'pty') {
+        try {
+          assertPtyWriteResult(
+            await window.squidrun.pty.write(id, '\r', createKernelMeta()),
+            'pty.write submit enter'
+          );
+          return { success: true, method: capabilities.submitMethod };
+        } catch (err) {
+          log.error(`doSendToPane ${id}`, 'PTY Enter failed:', err);
+          return {
+            success: false,
+            method: capabilities.submitMethod,
+            reason: capabilities.enterFailureReason || 'enter_failed',
+          };
+        }
+      }
+      return { success: true, method: 'none' };
+    };
+
+    const submitTimerId = setTimeout(async () => {
+      if (!injectionStillCurrent()) {
+        finishWithClear({ success: false, reason: 'stale_injection', applied: payloadApplied });
+        return;
+      }
+      if (capabilities.requiresFocusForEnter) {
+        const currentPane = document.querySelector(`.pane[data-pane-id="${id}"]`);
+        textarea = currentPane ? currentPane.querySelector('.xterm-helper-textarea') : null;
+        if (!textarea) {
+          log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: textarea disappeared before Enter, aborting`);
+          restoreSavedFocus();
+          finishWithClear({ success: false, reason: 'textarea_disappeared' });
+          return;
+        }
+      }
+
+      clearTimeout(safetyTimerId);
+      safetyTimerId = setTimeout(() => {
+        finish({ success: true, verified: false, status: 'submit_unverified_timeout', reason: 'timeout' });
+      }, CLAUDE_SUBMIT_SAFETY_TIMEOUT_MS);
+      if (safetyTimerId && typeof safetyTimerId.unref === 'function') {
+        safetyTimerId.unref();
+      }
+
+      if (capabilities.requiresFocusForEnter && typeof userInputFocused === 'function' && userInputFocused()) {
+        log.info(`doSendToPane ${id}`, 'User actively composing before Enter - waiting for idle');
+        const focusWaitStart = Date.now();
+        while (userInputFocused() && (Date.now() - focusWaitStart) < 5000) {
+          await sleep(100);
+        }
+        if (userInputFocused()) {
+          log.warn(`doSendToPane ${id}`, 'User composition still active after 5s - proceeding with Enter');
+        }
+      }
+
+      let submitAccepted = null;
+      let lastSubmitVerifyResult = null;
+      const maxSubmitAttempts = shouldVerifySubmitAccepted
+        ? Math.max(
+          isStartupInjection ? 2 : 1,
+          Number(SUBMIT_ACCEPT_MAX_ATTEMPTS) || 1,
+          deferForcedExpire ? 2 : 1
+        )
+        : 1;
+
+      for (let attempt = 1; attempt <= maxSubmitAttempts; attempt += 1) {
+        const promptProbeAvailable = canProbePromptState(id);
+        const attemptBaseline = {
+          outputTsBefore: getLastOutputTimestamp(id),
+          promptProbeAvailable,
+          promptWasReady: promptProbeAvailable ? isPromptReady(id) : false,
+        };
+
+        if (capabilities.requiresFocusForEnter && textarea) {
+          const focusOk = await focusWithRetry(textarea);
+          if (focusOk) {
+            focusMovedByInjection = true;
+          }
+          if (!focusOk) {
+            log.warn(`doSendToPane ${id}`, `${capabilities.modeLabel} pane: focus failed, proceeding with Enter anyway`);
+          } else if (deferForcedExpire && attempt > 1) {
+            log.info(`doSendToPane ${id}`, 'Force-expired defer: refocus succeeded before retry Enter');
+          }
+        }
+
+        bus.emit('inject.submit.requested', {
+          paneId: id,
+          payload: { method: capabilities.submitMethod, attempt, maxAttempts: maxSubmitAttempts },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+
+        const enterResult = await submitEnter();
+        scheduleFocusRestore();
+
+        if (!enterResult.success) {
+          const enterFailureReason = enterResult.reason || 'enter_failed';
+          bus.emit('inject.failed', {
+            paneId: id,
+            payload: { reason: enterFailureReason, method: enterResult.method },
+            correlationId: corrId,
+            source: EVENT_SOURCE,
+          });
+          if (enterFailureReason !== 'stale_injection') {
+            markPotentiallyStuck(id);
+          }
+          finishWithClear({ success: false, reason: enterFailureReason, applied: payloadApplied });
+          return;
+        }
+
+        bus.emit('inject.submit.sent', {
+          paneId: id,
+          payload: { method: enterResult.method, attempt, maxAttempts: maxSubmitAttempts },
+          correlationId: corrId,
+          source: EVENT_SOURCE,
+        });
+
+        if (!shouldVerifySubmitAccepted) {
+          submitAccepted = { accepted: true, signal: 'verification_disabled' };
+          break;
+        }
+
+        const verifyResult = await verifySubmitAccepted(id, attemptBaseline, {
+          allowOutputTransitionOnly,
+          pendingInputText: text,
+        });
+        lastSubmitVerifyResult = verifyResult;
+        if (verifyResult.accepted) {
+          log.info(
+            `doSendToPane ${id}`,
+            `Submit acceptance verified via ${verifyResult.signal} (attempt ${attempt}/${maxSubmitAttempts})`
+          );
+          submitAccepted = verifyResult;
+          break;
+        }
+
+        const signalDetails = `signal=${verifyResult.signal} outputTransition=${verifyResult.outputTransitionObserved ? 'yes' : 'no'} promptTransition=${verifyResult.promptTransitionObserved ? 'yes' : 'no'}`;
+        log.warn(
+          `doSendToPane ${id}`,
+          `Submit acceptance check failed on attempt ${attempt}/${maxSubmitAttempts}; ${signalDetails}`
+        );
+
+        if (attempt < maxSubmitAttempts) {
+          if (deferForcedExpire && attempt === 1) {
+            log.warn(
+              `doSendToPane ${id}`,
+              'Force-expired defer path active - auto-retrying Enter with refocus'
+            );
+          }
+          log.warn(
+            `doSendToPane ${id}`,
+            `Submit acceptance not observed after attempt ${attempt}; retrying in ${SUBMIT_ACCEPT_RETRY_BACKOFF_MS}ms`
+          );
+          await sleep(SUBMIT_ACCEPT_RETRY_BACKOFF_MS);
+        }
+      }
+
+      let submitVerified = true;
+      if (!submitAccepted) {
+        const strictSubmitRequired = isCodexCapability || hmSendFastEnter || isStartupInjection;
+        if (strictSubmitRequired && shouldTreatOutputTransitionAsAcceptedUnverified(lastSubmitVerifyResult)) {
+          submitVerified = false;
+          submitAccepted = {
+            accepted: true,
+            signal: lastSubmitVerifyResult?.signal || 'output_transition_only',
+          };
+          log.warn(
+            `doSendToPane ${id}`,
+            `Submit acceptance saw output transition without prompt; treating as accepted.unverified to avoid duplicate fallback replay`
+          );
+        } else if (strictSubmitRequired) {
+          bus.emit('inject.failed', {
+            paneId: id,
+            payload: { reason: 'submit_not_accepted', method: capabilities.submitMethod },
+            correlationId: corrId,
+            source: EVENT_SOURCE,
+          });
+          markPotentiallyStuck(id);
+          log.warn(
+            `doSendToPane ${id}`,
+            `Submit acceptance not observed after ${maxSubmitAttempts} attempt(s); reporting submit_not_accepted`
+          );
+          const failureSignal = lastSubmitVerifyResult?.signal || 'submit_not_accepted';
+          const failureStatus = lastSubmitVerifyResult?.pendingInputObserved === true
+            ? 'submit_pending_input'
+            : 'submit_not_accepted';
+          finishWithClear({
+            success: false,
+            verified: false,
+            applied: payloadApplied,
+            signal: failureSignal,
+            status: failureStatus,
+            reason: failureSignal,
+            pendingInputObserved: Boolean(lastSubmitVerifyResult?.pendingInputObserved),
+          });
+          return;
+        }
+
+        // For non-strict runtimes, keep legacy advisory semantics.
+        submitVerified = false;
+        submitAccepted = { accepted: true, signal: 'accepted_unverified' };
+        log.warn(
+          `doSendToPane ${id}`,
+          `Submit acceptance not observed after ${maxSubmitAttempts} attempt(s); treating as accepted.unverified`
+        );
+      }
+
+      updatePaneStatus(id, 'Working');
+      lastTypedTime[id] = Date.now();
+      lastOutputTime[id] = Date.now();
+      const successResult = shouldVerifySubmitAccepted
+        ? (
+          submitVerified
+            ? { success: true, verified: true, signal: submitAccepted.signal }
+            : { success: true, verified: false, signal: submitAccepted.signal, status: 'accepted.unverified', reason: 'submit_not_accepted' }
+        )
+        : { success: true };
+      finishWithClear({
+        ...successResult,
+      });
+    }, enterDelayMs);
+    if (submitTimerId && typeof submitTimerId.unref === 'function') {
+      submitTimerId.unref();
+    }
+  }
+  // Send message to a specific pane (queues if pane is busy)
+  // options.priority = true puts message at FRONT of queue (for user messages)
+  function sendToPane(paneId, message, options = {}) {
+    const id = String(paneId);
+    const capabilities = getPaneInjectionCapabilities(id);
+    const isCodexRuntime = String(capabilities?.displayName || '').toLowerCase() === 'codex'
+      || String(capabilities?.modeLabel || '').toLowerCase().includes('codex');
+    const shouldApplyCodexExecPrompt = isCodexRuntime
+      && typeof buildCodexExecPrompt === 'function'
+      && options.startupInjection !== true;
+    let payloadMessage = message;
+    if (shouldApplyCodexExecPrompt) {
+      try {
+        payloadMessage = buildCodexExecPrompt(id, payloadMessage);
+      } catch (err) {
+        log.warn(`Terminal ${id}`, `Codex exec prompt build failed, using raw payload: ${err.message}`);
+      }
+    }
+
+    const incomingTraceContext = normalizeTraceContext(options.traceContext);
+    const corrId = incomingTraceContext?.traceId
+      || incomingTraceContext?.correlationId
+      || bus.startCorrelation();
+    const causationId = incomingTraceContext?.parentEventId
+      || incomingTraceContext?.causationId
+      || undefined;
+
+    const requestedEvent = bus.emit('inject.requested', {
+      paneId: id,
+      payload: {
+        priority: options.priority || false,
+        messageLen: payloadMessage.length,
+        visibility: options?.meta?.visibility || null,
+      },
+      correlationId: corrId,
+      causationId,
+      source: EVENT_SOURCE,
+    });
+    const requestedEventId = requestedEvent?.eventId || incomingTraceContext?.eventId || null;
+
+    if (!messageQueue[id]) {
+      messageQueue[id] = [];
+    }
+    const queue = messageQueue[id];
+
+    const queueTraceContext = {
+      traceId: corrId,
+      correlationId: corrId,
+      parentEventId: requestedEventId || causationId || null,
+      causationId: requestedEventId || causationId || null,
+      eventId: requestedEventId,
+    };
+
+    const queueItem = {
+      message: payloadMessage,
+      timestamp: Date.now(),
+      onComplete: options.onComplete,
+      priority: options.priority || false,
+      immediate: options.immediate || false,
+      hmSendFastEnter: options.hmSendFastEnter === true,
+      preferClipboardPasteForLongMessage: options.preferClipboardPasteForLongMessage === true,
+      clipboardPasteThresholdBytes: Number.isFinite(Number(options.clipboardPasteThresholdBytes))
+        ? Math.max(1, Number(options.clipboardPasteThresholdBytes))
+        : undefined,
+      correlationId: corrId,
+      traceContext: queueTraceContext,
+      verifySubmitAccepted: typeof options.verifySubmitAccepted === 'boolean'
+        ? options.verifySubmitAccepted
+        : undefined,
+      startupInjection: typeof options.startupInjection === 'boolean'
+        ? options.startupInjection
+        : undefined,
+      acceptOutputTransitionOnly: typeof options.acceptOutputTransitionOnly === 'boolean'
+        ? options.acceptOutputTransitionOnly
+        : undefined,
+      meta: (options.meta && typeof options.meta === 'object') ? { ...options.meta } : null,
+    };
+
+    const maxItems = getInjectionQueueMaxItems();
+    const maxBytes = getInjectionQueueMaxBytes();
+    const incomingBytes = getQueueItemBytes(queueItem);
+    if (incomingBytes > maxBytes) {
+      log.warn(`Terminal ${id}`, `Dropping oversize queued message (${incomingBytes} bytes > ${maxBytes} byte cap)`);
+      failQueueItem(queueItem, 'queue_oversize');
+      return;
+    }
+
+    let queueBytes = getQueueBytes(queue);
+    let droppedCount = 0;
+    while (
+      queue.length >= maxItems
+      || ((queueBytes + incomingBytes) > maxBytes && queue.length > 0)
+    ) {
+      const activeCodexItem = codexActiveQueueTokens.get(id)?.item;
+      const protectsActiveHead = Boolean(activeCodexItem && queue[0] === activeCodexItem);
+      if (protectsActiveHead && queue.length === 1) {
+        log.warn(`Terminal ${id}`, 'Dropping incoming queued message rather than evicting active Codex composer payload');
+        failQueueItem(queueItem, 'queue_overflow');
+        return;
+      }
+      const dropIndex = protectsActiveHead ? 1 : 0;
+      const [dropped] = queue.splice(dropIndex, 1);
+      queueBytes -= getQueueItemBytes(dropped);
+      droppedCount += 1;
+      failQueueItem(dropped, 'queue_overflow');
+    }
+    if (droppedCount > 0) {
+      log.warn(
+        `Terminal ${id}`,
+        `Injection queue cap reached; dropped ${droppedCount} stale message(s) `
+        + `(maxItems=${maxItems}, maxBytes=${maxBytes})`
+      );
+    }
+
+    // Priority lane: keep priority items ahead of normal items, while preserving
+    // FIFO order among priority messages to avoid rapid-send reordering.
+    if (options.priority) {
+      const activeCodexItem = codexActiveQueueTokens.get(id)?.item;
+      let insertIndex = activeCodexItem && queue[0] === activeCodexItem ? 1 : 0;
+      while (insertIndex < queue.length && queue[insertIndex]?.priority === true) {
+        insertIndex += 1;
+      }
+      queue.splice(insertIndex, 0, queueItem);
+      log.info(`Terminal ${id}`, `USER message queued with PRIORITY (lane index ${insertIndex})`);
+    } else {
+      queue.push(queueItem);
+    }
+
+    bus.emit('inject.queued', {
+      paneId: id,
+      payload: {
+        depth: queue.length,
+        priority: queueItem.priority,
+        visibility: queueItem.meta?.visibility || null,
+      },
+      correlationId: corrId,
+      causationId: queueTraceContext.parentEventId || undefined,
+      source: EVENT_SOURCE,
+    });
+    bus.emit('queue.depth.changed', {
+      paneId: id,
+      payload: { depth: queue.length },
+      correlationId: corrId,
+      causationId: queueTraceContext.parentEventId || undefined,
+      source: EVENT_SOURCE,
+    });
+
+    const reason = userIsTyping()
+      ? 'user typing'
+      : (getInjectionInFlight() ? 'injection in flight' : 'ready');
+    log.info(`Terminal ${id}`, `${reason}, queueing message`);
+
+    // Start processing idle queue
+    processIdleQueue(id);
+  }
+
+  return {
+    focusWithRetry,
+    sendEnterToPane,
+    isPromptReady,
+    processIdleQueue,
+    doSendToPane,
+    sendToPane,
+    clearPaneQueue,
+  };
+}
+
+module.exports = { createInjectionController };

@@ -1,0 +1,206 @@
+{
+  "name": "squidrun-ui",
+  "version": "0.1.34",
+  "description": "SquidRun multi-pane AI orchestration UI",
+  "homepage": "https://squidrun.com",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --no-warnings ./node_modules/jest/bin/jest.js",
+    "typecheck": "tsc -p jsconfig.json --noEmit",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch",
+    "lint": "eslint \"**/*.js\"",
+    "lint:docs": "node scripts/doc-lint.js",
+    "lint:fix": "eslint \"**/*.js\" --fix",
+    "rebuild": "electron-rebuild -f -w node-pty,better-sqlite3",
+    "rebuild:better-sqlite3": "electron-rebuild -f -o better-sqlite3",
+    "postinstall": "node scripts/postinstall-electron-rebuild.js",
+    "package": "electron-builder --publish=never",
+    "package:win": "electron-builder --win --publish=never",
+    "package:mac": "electron-builder --mac --publish=never",
+    "package:linux": "electron-builder --linux --publish=never",
+    "package:all": "electron-builder -mwl --publish=never",
+    "release": "electron-builder --publish=always",
+    "release:draft": "electron-builder --publish=always --draft",
+    "release:split": "node scripts/hm-stage-split-release.js",
+    "clean": "rimraf dist out coverage",
+    "daemon:start": "node terminal-daemon.js",
+    "daemon:stop": "node -e \"const fs=require('fs');const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),'SIGTERM');fs.unlinkSync('daemon.pid');console.log('Daemon stopped')\"",
+    "daemon:status": "node -e \"const fs=require('fs');try{const p=fs.readFileSync('daemon.pid','utf-8').trim();process.kill(parseInt(p),0);console.log('Daemon running (PID '+p+')')}catch(e){console.log('Daemon not running')}\"",
+    "doctor": "node scripts/hm-doctor.js",
+    "supervisor:start": "node supervisor-daemon.js --daemon",
+    "supervisor:once": "node supervisor-daemon.js --once",
+    "supervisor:status": "node scripts/hm-supervisor.js status",
+    "codebase:index": "node scripts/hm-codebase-index.js",
+    "codebase:index:check": "node scripts/hm-codebase-index.js --check",
+    "memory:index": "node scripts/hm-memory-index.js",
+    "memory:search": "node scripts/hm-memory-search.js",
+    "memory:extract": "node scripts/hm-memory-extract.js",
+    "memory:registry": "node scripts/hm-memory-registry.js",
+    "memory:promote": "node scripts/hm-memory-promote.js",
+    "memory:metabolism": "node scripts/hm-memory-metabolism.js",
+    "memory:api": "node scripts/hm-memory-api.js",
+    "obligations": "node scripts/hm-obligations.js"
+  },
+  "keywords": [
+    "electron",
+    "claude",
+    "ai",
+    "orchestration"
+  ],
+  "author": {
+    "name": "SquidRun",
+    "url": "https://squidrun.com"
+  },
+  "license": "MIT",
+  "build": {
+    "appId": "com.squidrun.app",
+    "productName": "SquidRun",
+    "directories": {
+      "output": "dist"
+    },
+    "npmRebuild": false,
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://squidrun.com/downloads"
+      }
+    ],
+    "files": [
+      "**/*",
+      "workspace-template/CLAUDE.md",
+      "workspace-template/ROLES.md",
+      "workspace-template/PRODUCT-GUIDE.md",
+      "workspace-template/user-profile.json",
+      "workspace-template/GEMINI.md",
+      "workspace-template/CODEX.md",
+      "workspace-template/AGENTS.md",
+      "workspace-template/.squidrun/**",
+      "!dist/**",
+      "!coverage/**",
+      "!out/**",
+      "!coverage-output.txt",
+      "!daemon.log",
+      "!daemon.pid",
+      "!session-state.json",
+      "!usage-stats.json",
+      "!**/.squidrun/app-status.json",
+      "!*.pid",
+      "!*.log"
+    ],
+    "asarUnpack": [
+      "terminal-daemon.js",
+      "config.js",
+      "profile.js",
+      "modules/**",
+      "node_modules/better-sqlite3/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**",
+      "node_modules/bindings/**",
+      "node_modules/file-uri-to-path/**",
+      "node_modules/node-pty/**",
+      "node_modules/fsevents/**"
+    ],
+    "mac": {
+      "icon": "assets/squidrun-logo.png",
+      "category": "public.app-category.developer-tools",
+      "mergeASARs": false,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "x64ArchFiles": "@(better_sqlite3.node|pty.node|spawn-helper|onnxruntime_binding.node|libonnxruntime*.dylib|sharp-darwin-*.node|libvips-cpp.42.dylib|vec0.dylib)"
+    },
+    "win": {
+      "icon": "assets/squidrun-favicon.ico",
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "icon": "assets/squidrun-logo.png",
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "maintainer": "SquidRun",
+      "category": "Development"
+    }
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
+    "@types/node": "^24.10.1",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.39.5",
+    "globals": "^17.1.0",
+    "jest": "^30.4.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@xenova/transformers": "^2.17.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
+    "axe-core": "^4.11.1",
+    "better-sqlite3": "^13.0.3",
+    "busboy": "^1.6.0",
+    "chokidar": "^3.6.0",
+    "chrome-launcher": "^1.2.1",
+    "dotenv": "^17.2.3",
+    "lighthouse": "^13.0.3",
+    "node-pty": "^1.1.0",
+    "pixelmatch": "^7.1.0",
+    "playwright": "^1.58.2",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "sharp": "0.35.3",
+    "sqlite-vec": "^0.1.9",
+    "strip-ansi": "^6.0.1",
+    "web-push": "3.6.7",
+    "ws": "^8.21.0"
+  },
+  "overrides": {
+    "protobufjs": "7.6.5",
+    "tar": "7.5.22",
+    "@hono/node-server": "1.19.17",
+    "hono": "4.13.4",
+    "express-rate-limit": "8.6.2",
+    "ip-address": "10.5.0",
+    "fast-uri": "4.1.3",
+    "sharp": "0.35.3",
+    "path-to-regexp": "8.4.2",
+    "qs": "6.15.2",
+    "flatted": "3.4.2",
+    "tmp": "0.2.7",
+    "lodash": "4.18.1",
+    "lodash-es": "4.18.1",
+    "basic-ftp": "5.3.1",
+    "@tootallnate/once": "2.0.1",
+    "minimatch@3": "3.1.5",
+    "minimatch@5": "5.1.9",
+    "minimatch@9": "9.0.9",
+    "picomatch@2": "2.3.2",
+    "picomatch@4": "4.0.4",
+    "brace-expansion@1": "1.1.18",
+    "brace-expansion@2": "2.1.4",
+    "brace-expansion@5": "5.0.9",
+    "ajv@6": "6.15.0",
+    "ajv@8": "8.20.0"
+  }
+}

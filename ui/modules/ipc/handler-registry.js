@@ -1,0 +1,159 @@
+const { registerMcpHandlers } = require('./mcp-handlers');
+const { registerMcpAutoconfigHandlers } = require('./mcp-autoconfig-handlers');
+const { registerTestExecutionHandlers } = require('./test-execution-handlers');
+const { registerPrecommitHandlers } = require('./precommit-handlers');
+const { registerTestNotificationHandlers } = require('./test-notification-handlers');
+const { registerMessageQueueHandlers } = require('./message-queue-handlers');
+const { registerPerfAuditHandlers } = require('./perf-audit-handlers');
+const { registerErrorHandlers } = require('./error-handlers');
+const { registerStateHandlers } = require('./state-handlers');
+const { registerUserProfileHandlers } = require('./user-profile-handlers');
+const { registerSharedContextHandlers } = require('./shared-context-handlers');
+const { registerFrictionHandlers } = require('./friction-handlers');
+const { registerScreenshotHandlers } = require('./screenshot-handlers');
+const { registerProjectHandlers } = require('./project-handlers');
+const { registerSmartRoutingHandlers } = require('./smart-routing-handlers');
+const { registerAutoHandoffHandlers } = require('./auto-handoff-handlers');
+const { registerAgentMetricsHandlers } = require('./agent-metrics-handlers');
+const { registerOutputValidationHandlers } = require('./output-validation-handlers');
+const { registerCompletionQualityHandlers } = require('./completion-quality-handlers');
+const { registerCheckpointHandlers } = require('./checkpoint-handlers');
+const { registerAutoNudgeHandlers } = require('./auto-nudge-handlers');
+const { registerCompletionDetectionHandlers } = require('./completion-detection-handlers');
+const { registerAgentClaimsHandlers } = require('./agent-claims-handlers');
+const { registerSessionSummaryHandlers } = require('./session-summary-handlers');
+const { registerTemplateHandlers } = require('./template-handlers');
+const { registerProcessHandlers } = require('./process-handlers');
+const { registerSessionHistoryHandlers } = require('./session-history-handlers');
+const { registerConflictDetectionHandlers } = require('./conflict-detection-handlers');
+const { registerSettingsHandlers } = require('./settings-handlers');
+const { registerPtyHandlers } = require('./pty-handlers');
+const { registerGitHandlers } = require('./git-handlers');
+const { registerGitHubHandlers } = require('./github-handlers');
+const { registerKnowledgeHandlers } = require('./knowledge-handlers');
+const { registerKnowledgeGraphHandlers } = require('./knowledge-graph-handlers');
+const { registerDebugReplayHandlers } = require('./debug-replay-handlers');
+const { registerTaskParserHandlers } = require('./task-parser-handlers');
+const { registerSchedulerHandlers } = require('./scheduler-handlers');
+const { registerRecoveryHandlers } = require('./recovery-handlers');
+const { registerPluginHandlers } = require('./plugin-handlers');
+const { registerBackupHandlers } = require('./backup-handlers');
+const { registerResourceHandlers } = require('./resource-handlers');
+const { registerWorkflowHandlers } = require('./workflow-handlers');
+const { registerTaskPoolHandlers } = require('./task-pool-handlers');
+const { registerOwnedWorkHandlers } = require('./owned-work-handlers');
+const { registerVoiceBrokerHandlers } = require('./voice-broker-handlers');
+const { registerMiraCoordinatorSnapshotHandlers } = require('./mira-coordinator-snapshot-handlers');
+const { registerMiraConversationHandlers } = require('./mira-conversation-handlers');
+const { registerMiraLocalTextUiSurfaceHandlers } = require('./mira-local-text-ui-surface-handlers');
+const { registerOracleHandlers } = require('./oracle-handlers');
+const { registerModelSwitchHandlers } = require('./model-switch-handlers');
+const { registerOrganicUIHandlers } = require('./organic-ui-handlers');
+const { registerWhisperHandlers } = require('./whisper-handlers');
+const { registerEvidenceLedgerHandlers } = require('./evidence-ledger-handlers');
+const { registerCognitiveMemoryHandlers } = require('./cognitive-memory-handlers');
+const { registerContractPromotionHandlers } = require('./contract-promotion-handlers');
+const { registerTeamMemoryHandlers } = require('./team-memory-handlers');
+const { registerTransitionLedgerHandlers } = require('./transition-ledger-handlers');
+const { registerDevicePairingHandlers } = require('./device-pairing-handlers');
+const { registerPreflightHandlers } = require('./preflight-handlers');
+const HANDLER_REREGISTER_FLAG = '__squidrunHandlerReregister';
+
+const DEFAULT_HANDLERS = [
+  registerMcpHandlers,
+  registerMcpAutoconfigHandlers,
+  registerTestExecutionHandlers,
+  registerPrecommitHandlers,
+  registerTestNotificationHandlers,
+  registerMessageQueueHandlers,
+  registerPerfAuditHandlers,
+  registerErrorHandlers,
+  registerStateHandlers,
+  registerUserProfileHandlers,
+  registerSharedContextHandlers,
+  registerFrictionHandlers,
+  registerScreenshotHandlers,
+  registerProjectHandlers,
+  registerSmartRoutingHandlers,
+  registerAutoHandoffHandlers,
+  registerAgentMetricsHandlers,
+  registerOutputValidationHandlers,
+  registerCompletionQualityHandlers,
+  registerCheckpointHandlers,
+  registerAutoNudgeHandlers,
+  registerCompletionDetectionHandlers,
+  registerAgentClaimsHandlers,
+  registerSessionSummaryHandlers,
+  registerTemplateHandlers,
+  registerProcessHandlers,
+  registerSessionHistoryHandlers,
+  registerConflictDetectionHandlers,
+  registerSettingsHandlers,
+  registerPtyHandlers,
+  registerGitHandlers,
+  registerGitHubHandlers,
+  registerKnowledgeHandlers,
+  registerKnowledgeGraphHandlers,
+  registerDebugReplayHandlers,
+  registerTaskParserHandlers,
+  registerSchedulerHandlers,
+  registerRecoveryHandlers,
+  registerPluginHandlers,
+  registerBackupHandlers,
+  registerResourceHandlers,
+  registerWorkflowHandlers,
+  registerTaskPoolHandlers,
+  registerOwnedWorkHandlers,
+  registerVoiceBrokerHandlers,
+  registerMiraCoordinatorSnapshotHandlers,
+  registerMiraConversationHandlers,
+  registerMiraLocalTextUiSurfaceHandlers,
+  registerOracleHandlers,
+  registerModelSwitchHandlers,
+  registerOrganicUIHandlers,
+  registerWhisperHandlers,
+  registerEvidenceLedgerHandlers,
+  registerCognitiveMemoryHandlers,
+  registerContractPromotionHandlers,
+  registerTeamMemoryHandlers,
+  registerTransitionLedgerHandlers,
+  registerDevicePairingHandlers,
+  registerPreflightHandlers,
+];
+
+function registerAllHandlers(registry, handlers = DEFAULT_HANDLERS) {
+  if (!registry || typeof registry.register !== 'function') {
+    throw new Error('registerAllHandlers requires a registry with register()');
+  }
+  for (const handler of handlers) {
+    registry.register(handler);
+  }
+}
+
+function unregisterAllHandlers(registry, ctx, deps) {
+  if (!registry || typeof registry.unsetup !== 'function') {
+    return;
+  }
+  registry.unsetup(ctx, deps);
+}
+
+function setupAllHandlers(registry, ctx, deps) {
+  if (!registry || typeof registry.setup !== 'function') {
+    throw new Error('setupAllHandlers requires a registry with setup()');
+  }
+
+  // Ensure we remove old ipcMain handlers/listeners before re-registering.
+  const unregisterDeps = (deps && typeof deps === 'object' && !Array.isArray(deps))
+    ? { ...deps, [HANDLER_REREGISTER_FLAG]: true }
+    : { [HANDLER_REREGISTER_FLAG]: true };
+  unregisterAllHandlers(registry, ctx, unregisterDeps);
+  registry.setup(ctx, deps);
+}
+
+module.exports = {
+  registerAllHandlers,
+  unregisterAllHandlers,
+  setupAllHandlers,
+  DEFAULT_HANDLERS,
+  HANDLER_REREGISTER_FLAG,
+};

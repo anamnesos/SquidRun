@@ -1,0 +1,710 @@
+/**
+ * Settings Manager
+ * Handles configuration and settings persistence for the main process
+ */
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawnSync } = require('child_process');
+const log = require('../logger');
+const { WORKSPACE_PATH, PROJECT_ROOT, resolveCoordPath } = require('../../config');
+const { getActiveProfileName, isMainProfile } = require('../../profile');
+const {
+  buildGeminiCommand: buildGeminiCliCommand,
+  resolveGeminiModelId,
+  hasGeminiCommand,
+  ensureGeminiModelFlag,
+  parseGeminiModelFromCommand,
+} = require('../gemini-command');
+const { normalizeClaudeModelId } = require('../cli-resume-invocation');
+
+/** @typedef {import('../../types/contracts').AppStatusPayload} AppStatusPayload */
+/** @typedef {import('../../types/contracts').AppStatusWriteOptions} AppStatusWriteOptions */
+
+const CLI_NAMES = ['claude', 'codex', 'gemini'];
+const CLI_PREFERENCES = {
+  '1': ['claude', 'codex', 'gemini'],
+  '2': ['codex', 'claude', 'gemini'],
+  '3': ['gemini', 'codex', 'claude'],
+};
+const CLI_DISCOVERY_TIMEOUT_MS = 2000;
+const CLI_VERSION_TIMEOUT_MS = 2500;
+const SETTINGS_FILE_NAME = 'settings.json';
+const PROVISIONED_SETTINGS_RELPATH = path.join('settings', SETTINGS_FILE_NAME);
+
+/**
+ * @param {unknown} value
+ * @param {number | null} [fallback]
+ * @returns {number | null}
+ */
+function asPositiveInt(value, fallback = null) {
+  const numeric = Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) return fallback;
+  return numeric;
+}
+
+function buildGeminiCommand(options = {}) {
+  return buildGeminiCliCommand({
+    preferredModel: options.preferredModel,
+    existingCommand: options.existingCommand,
+    fallbackModel: options.fallbackModel,
+  });
+}
+
+function isPlainObject(value) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stableSettingsValue(value) {
+  if (value === undefined) return '__undefined__';
+  return JSON.stringify(sortObjectDeep(value));
+}
+
+function settingsValuesEqual(left, right) {
+  return stableSettingsValue(left) === stableSettingsValue(right);
+}
+
+function pruneUnknownSettings(settings, defaultSettings) {
+  if (!isPlainObject(settings) || !isPlainObject(defaultSettings)) return {};
+  const allowed = new Set(Object.keys(defaultSettings));
+  return Object.entries(settings).reduce((acc, [key, value]) => {
+    if (allowed.has(key)) acc[key] = value;
+    return acc;
+  }, {});
+}
+
+function sortObjectDeep(value) {
+  if (Array.isArray(value)) return value.map(sortObjectDeep);
+  if (!isPlainObject(value)) return value;
+  return Object.keys(value).sort().reduce((acc, key) => {
+    acc[key] = sortObjectDeep(value[key]);
+    return acc;
+  }, {});
+}
+
+const DEFAULT_SKELETON_SIGNATURE_KEYS = Object.freeze([
+  'autoSpawn',
+  'autonomyConsentGiven',
+  'autonomyConsentChoice',
+  'operatingMode',
+  'paneCommands',
+  'paneProjects',
+]);
+
+function buildCommandForCli(cli, options = {}) {
+  if (cli === 'codex') return 'codex';
+  if (cli === 'gemini') {
+    return buildGeminiCliCommand({
+      preferredModel: options.geminiModel,
+      existingCommand: options.existingGeminiCommand,
+    });
+  }
+  return 'claude --permission-mode acceptEdits';
+}
+
+/**
+ * @param {{ isPackaged?: boolean }} [options]
+ * @returns {Record<string, unknown>}
+ */
+function createDefaultSettings({ isPackaged = false } = {}) {
+  const geminiModel = resolveGeminiModelId();
+  return {
+    autoSpawn: true,
+    autoSync: false,
+    devTools: false,
+    // THE TELEGRAM TRANSPORT ACTIVATION MODE (v7 §3 Phase L).
+    //
+    // `null` ON PURPOSE, and it must stay null. `loadSettings` prunes any key
+    // absent from these defaults, so the key has to exist here for an operator
+    // to be able to set it at all — but the DEFAULT is "nobody has said which
+    // state this install is in", which `telegram-activation-mode` refuses and
+    // the drain turns into a hold. Giving it `'legacy_settlement'` here would
+    // make every install claim to be settling legacy without anyone deciding
+    // that, and Step 3 derives a stable fence whose validity rests on the
+    // settlement having actually happened under a known writer.
+    telegramTransportActivationMode: null,
+    paneFailureAlertsEnabled: true,
+    watcherEnabled: true,
+    allowAllPermissions: false,
+    autonomyConsentGiven: false,
+    autonomyConsentChoice: 'pending',
+    autonomyConsentUpdatedAt: null,
+    costAlertEnabled: true,
+    costAlertThreshold: 5.00,
+    dryRun: false,
+    recentProjects: [],
+    stuckThreshold: 120000,
+    ptyStuckDetection: false,
+    ptyStuckThreshold: 15000,
+    hiddenPaneHostsEnabled: process.platform === 'win32',
+    operatingMode: isPackaged ? 'project' : 'developer',
+    localModelEnabled: false,
+    claudeModel: '',
+    geminiModel,
+    // Default-off: selected Codex panes preflight the Desktop-owned native pipe per PTY generation.
+    codexComputerUsePaneIds: [],
+    paneProjects: { '1': null, '2': null, '3': null },
+    paneCommands: {
+      '1': 'claude',
+      '2': 'codex',
+      '3': buildGeminiCommand({ preferredModel: geminiModel }),
+    },
+    voiceInputEnabled: false,
+    voiceAutoSend: false,
+  };
+}
+
+class SettingsManager {
+  constructor(appContext) {
+    this.ctx = appContext;
+    this.electronApp = null;
+    this.isPackaged = false;
+    this.defaultSettings = createDefaultSettings();
+    this.settingsPath = null;
+    this.appStatusPath = null;
+    this.settingsContextLogged = false;
+    this.refreshRuntimeSettingsContext('constructor');
+
+    // Deep clone defaults to prevent reference sharing
+    this.ctx.currentSettings = JSON.parse(JSON.stringify(this.defaultSettings));
+  }
+
+  resolveElectronApp() {
+    if (this.ctx && this.ctx.electronApp && typeof this.ctx.electronApp === 'object') {
+      return this.ctx.electronApp;
+    }
+    try {
+      // Keep constructor usable in non-Electron contexts (tests/scripts).
+      const { app } = require('electron');
+      return app;
+    } catch {
+      return null;
+    }
+  }
+
+  resolveSettingsPath() {
+    if (!isMainProfile(getActiveProfileName())) {
+      return resolveCoordPath(path.join('settings', SETTINGS_FILE_NAME), { forWrite: true });
+    }
+    if (this.isPackaged) {
+      const { value: userDataPath } = this.tryGetElectronPath('userData');
+      if (typeof userDataPath === 'string' && userDataPath.trim()) {
+        return path.join(userDataPath, SETTINGS_FILE_NAME);
+      }
+    }
+    return path.join(__dirname, '..', '..', SETTINGS_FILE_NAME);
+  }
+
+  resolveProvisionedSettingsPath() {
+    if (!this.isPackaged || !isMainProfile(getActiveProfileName())) return null;
+    if (typeof resolveCoordPath !== 'function') return null;
+    try {
+      return resolveCoordPath(PROVISIONED_SETTINGS_RELPATH);
+    } catch {
+      return null;
+    }
+  }
+
+  tryGetElectronPath(pathName) {
+    if (!this.electronApp || typeof this.electronApp.getPath !== 'function') {
+      return { value: null, error: 'electron_app_getPath_unavailable' };
+    }
+    try {
+      return { value: this.electronApp.getPath(pathName), error: null };
+    } catch (err) {
+      return { value: null, error: err?.message || String(err) };
+    }
+  }
+
+  buildSettingsPersistenceDiagnostics() {
+    const userDataPathResult = this.tryGetElectronPath('userData');
+    const appDataPathResult = this.tryGetElectronPath('appData');
+    const homePathResult = this.tryGetElectronPath('home');
+    let appName = null;
+    try {
+      if (this.electronApp && typeof this.electronApp.getName === 'function') {
+        appName = this.electronApp.getName();
+      } else if (this.electronApp && typeof this.electronApp.name === 'string') {
+        appName = this.electronApp.name;
+      }
+    } catch {
+      appName = null;
+    }
+    return {
+      appName,
+      isPackaged: this.isPackaged,
+      settingsPath: this.settingsPath || null,
+      userDataPath: userDataPathResult.value || null,
+      userDataPathError: userDataPathResult.error || null,
+      appDataPath: appDataPathResult.value || null,
+      appDataPathError: appDataPathResult.error || null,
+      homePath: homePathResult.value || null,
+      homePathError: homePathResult.error || null,
+      cwd: process.cwd(),
+      resourcesPath: process.resourcesPath || null,
+      appStatusPath: this.appStatusPath || null,
+      platform: process.platform,
+      nodeVersion: process.version,
+    };
+  }
+
+  resolveAppStatusPath() {
+    if (typeof resolveCoordPath === 'function') {
+      return resolveCoordPath('app-status.json', { forWrite: true });
+    }
+    return path.join(PROJECT_ROOT || path.resolve(path.join(WORKSPACE_PATH, '..')), '.squidrun', 'app-status.json');
+  }
+
+  refreshAppStatusPath() {
+    this.appStatusPath = this.resolveAppStatusPath();
+  }
+
+  refreshRuntimeSettingsContext(reason = 'runtime-refresh') {
+    this.electronApp = this.resolveElectronApp();
+    this.isPackaged = Boolean(this.electronApp && this.electronApp.isPackaged);
+    this.defaultSettings = createDefaultSettings({ isPackaged: this.isPackaged });
+    this.refreshAppStatusPath();
+
+    const nextSettingsPath = this.resolveSettingsPath();
+    const hadPath = typeof this.settingsPath === 'string' && this.settingsPath.trim().length > 0;
+    const pathChanged = !hadPath || path.resolve(this.settingsPath) !== path.resolve(nextSettingsPath);
+    this.settingsPath = nextSettingsPath;
+
+    if (!this.settingsContextLogged || pathChanged) {
+      this.settingsContextLogged = true;
+      log.info('Settings', `Persistence context resolved (${reason})`, this.buildSettingsPersistenceDiagnostics());
+    }
+  }
+
+  writeSettingsFile(payload) {
+    const serialized = JSON.stringify(payload, null, 2);
+    const tempPath = this.settingsPath + '.tmp';
+    fs.mkdirSync(path.dirname(this.settingsPath), { recursive: true });
+    fs.writeFileSync(tempPath, serialized, 'utf-8');
+    fs.renameSync(tempPath, this.settingsPath);
+  }
+
+  readSettingsJsonFile(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    return isPlainObject(parsed) ? parsed : null;
+  }
+
+  isDefaultSettingsSkeleton(payload) {
+    if (!isPlainObject(payload)) return false;
+
+    const defaultSettings = this.defaultSettings || createDefaultSettings({ isPackaged: this.isPackaged });
+    for (const key of DEFAULT_SKELETON_SIGNATURE_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) return false;
+      if (!settingsValuesEqual(payload[key], defaultSettings[key])) return false;
+    }
+
+    const defaultKeys = new Set(Object.keys(defaultSettings));
+    for (const [key, value] of Object.entries(payload)) {
+      if (!defaultKeys.has(key)) return false;
+      if (!settingsValuesEqual(value, defaultSettings[key])) return false;
+    }
+    return true;
+  }
+
+  buildProvisionedSettingsForWrite(provisionedSettings) {
+    return pruneUnknownSettings(
+      JSON.parse(JSON.stringify(provisionedSettings)),
+      this.defaultSettings || createDefaultSettings({ isPackaged: this.isPackaged })
+    );
+  }
+
+  seedPackagedSettingsFromProvisionedIfNeeded() {
+    if (!this.isPackaged || !isMainProfile(getActiveProfileName())) {
+      return { seeded: false, reason: 'not_packaged_main_profile' };
+    }
+
+    const provisionedSettingsPath = this.resolveProvisionedSettingsPath();
+    if (
+      !provisionedSettingsPath
+      || !this.settingsPath
+      || path.resolve(provisionedSettingsPath) === path.resolve(this.settingsPath)
+      || !fs.existsSync(provisionedSettingsPath)
+    ) {
+      return { seeded: false, reason: 'provisioned_settings_missing', provisionedSettingsPath };
+    }
+
+    let existingSettings = null;
+    let existingSettingsPresent = false;
+    try {
+      existingSettingsPresent = fs.existsSync(this.settingsPath);
+      existingSettings = existingSettingsPresent ? this.readSettingsJsonFile(this.settingsPath) : null;
+    } catch (err) {
+      log.warn('Settings', `Installed settings seed skipped; userData settings unreadable: ${err.message}`);
+      return { seeded: false, reason: 'user_data_settings_unreadable', error: err.message };
+    }
+
+    const trigger = !existingSettingsPresent
+      ? 'settings_absent'
+      : (this.isDefaultSettingsSkeleton(existingSettings) ? 'default_skeleton' : null);
+    if (!trigger) {
+      return { seeded: false, reason: 'user_data_settings_authoritative', provisionedSettingsPath };
+    }
+
+    let provisionedSettings = null;
+    try {
+      provisionedSettings = this.readSettingsJsonFile(provisionedSettingsPath);
+    } catch (err) {
+      log.warn('Settings', `Installed settings seed skipped; provisioned settings unreadable: ${err.message}`);
+      return { seeded: false, reason: 'provisioned_settings_unreadable', error: err.message };
+    }
+    if (!isPlainObject(provisionedSettings)) {
+      return { seeded: false, reason: 'provisioned_settings_invalid', provisionedSettingsPath };
+    }
+
+    const payload = this.buildProvisionedSettingsForWrite(provisionedSettings);
+    this.writeSettingsFile(payload);
+    log.info(
+      'Settings',
+      `Seeded packaged userData settings from provisioned data-root settings (${trigger})`,
+      {
+        settingsPath: this.settingsPath,
+        provisionedSettingsPath,
+        trigger,
+      }
+    );
+    return {
+      seeded: true,
+      trigger,
+      settingsPath: this.settingsPath,
+      provisionedSettingsPath,
+    };
+  }
+
+  createDefaultSettingsFileIfMissing() {
+    if (!this.isPackaged) return;
+    if (fs.existsSync(this.settingsPath)) return;
+    const persistedDefaults = JSON.parse(JSON.stringify(this.defaultSettings));
+    this.writeSettingsFile(persistedDefaults);
+  }
+
+  readPersistedSettingsSnapshot() {
+    try {
+      this.refreshRuntimeSettingsContext('read-persisted-settings');
+      if (!fs.existsSync(this.settingsPath)) {
+        return null;
+      }
+      return JSON.parse(fs.readFileSync(this.settingsPath, 'utf-8'));
+    } catch {
+      return null;
+    }
+  }
+
+  loadSettings() {
+    try {
+      this.refreshRuntimeSettingsContext('load-settings');
+      this.seedPackagedSettingsFromProvisionedIfNeeded();
+      this.createDefaultSettingsFileIfMissing();
+      if (fs.existsSync(this.settingsPath)) {
+        const content = fs.readFileSync(this.settingsPath, 'utf-8');
+        const loaded = pruneUnknownSettings(JSON.parse(content), this.defaultSettings);
+
+        // Migration: pre-consent builds had no autonomy consent fields.
+        // Preserve prior behavior for existing users by marking consent as resolved.
+        if (!Object.prototype.hasOwnProperty.call(loaded, 'autonomyConsentGiven')) {
+          loaded.autonomyConsentGiven = true;
+          if (typeof loaded.allowAllPermissions !== 'boolean') {
+            loaded.allowAllPermissions = false;
+          }
+          loaded.autonomyConsentChoice = loaded.allowAllPermissions ? 'enabled' : 'declined';
+          loaded.autonomyConsentUpdatedAt = null;
+        }
+        
+        // Deep merge paneCommands and paneProjects to preserve defaults for missing keys
+        const paneCommands = { ...this.defaultSettings.paneCommands, ...(loaded.paneCommands || {}) };
+        const paneProjects = { ...this.defaultSettings.paneProjects, ...(loaded.paneProjects || {}) };
+        const existingGeminiCommand = Object.values(paneCommands).find(hasGeminiCommand) || '';
+        const claudeModel = normalizeClaudeModelId(loaded.claudeModel || '');
+        const geminiModel = resolveGeminiModelId({
+          preferredModel: loaded.geminiModel,
+          existingCommand: existingGeminiCommand,
+        });
+        for (const paneId of Object.keys(paneCommands)) {
+          const command = String(paneCommands[paneId] || '').trim();
+          if (!hasGeminiCommand(command)) continue;
+          if (parseGeminiModelFromCommand(command)) continue;
+
+          paneCommands[paneId] = ensureGeminiModelFlag(command, {
+            preferredModel: geminiModel,
+            fallbackModel: geminiModel,
+          });
+        }
+        
+        Object.assign(this.ctx.currentSettings, this.defaultSettings, loaded, {
+          paneCommands,
+          paneProjects,
+          claudeModel,
+          geminiModel,
+        });
+      }
+    } catch (err) {
+      log.error('Settings', 'Error loading settings', err);
+      Object.assign(this.ctx.currentSettings, this.defaultSettings);
+    }
+    return this.ctx.currentSettings;
+  }
+
+  saveSettings(settings) {
+    try {
+      this.refreshRuntimeSettingsContext('save-settings');
+      Object.assign(this.ctx.currentSettings, settings);
+      this.ctx.currentSettings = {
+        ...this.defaultSettings,
+        ...pruneUnknownSettings(this.ctx.currentSettings, this.defaultSettings),
+      };
+
+      const persistedSettings = JSON.parse(JSON.stringify(this.ctx.currentSettings));
+      this.writeSettingsFile(persistedSettings);
+
+      const diagnostics = this.buildSettingsPersistenceDiagnostics();
+      this.writeAppStatus({
+        statusPatch: {
+          settingsPersistence: {
+            ...diagnostics,
+            saveOk: true,
+            lastSavedAt: new Date().toISOString(),
+            lastError: null,
+            lastErrorCode: null,
+            lastErrorAt: null,
+          },
+        },
+      });
+    } catch (err) {
+      const diagnostics = this.buildSettingsPersistenceDiagnostics();
+      log.error('Settings', 'Error saving settings', {
+        error: err?.message || String(err),
+        code: err?.code || null,
+        ...diagnostics,
+      });
+      this.writeAppStatus({
+        statusPatch: {
+          settingsPersistence: {
+            ...diagnostics,
+            saveOk: false,
+            lastError: err?.message || String(err),
+            lastErrorCode: err?.code || null,
+            lastErrorAt: new Date().toISOString(),
+          },
+        },
+      });
+    }
+    return this.ctx.currentSettings;
+  }
+
+  /**
+   * @returns {AppStatusPayload}
+   */
+  readAppStatus() {
+    try {
+      this.refreshAppStatusPath();
+      if (!fs.existsSync(this.appStatusPath)) return {};
+      const raw = fs.readFileSync(this.appStatusPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+      return parsed;
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * @param {AppStatusWriteOptions} [options]
+   * @returns {void}
+   */
+  writeAppStatus(options = {}) {
+    try {
+      this.refreshAppStatusPath();
+      const opts = options && typeof options === 'object' ? options : {};
+      const nowIso = new Date().toISOString();
+      const existing = this.readAppStatus();
+
+      const explicitMode = this.ctx.currentSettings.sdkMode === true
+        ? 'sdk'
+        : (this.ctx.currentSettings.dryRun ? 'dry-run' : 'pty');
+
+      let existingSession = asPositiveInt(existing.session ?? existing.session_number ?? existing.sessionNumber, null);
+      const sessionFloor = asPositiveInt(opts.sessionFloor ?? opts.sessionSeed, null);
+
+      const overrideSession = asPositiveInt(opts.session, null);
+      let session = overrideSession !== null ? overrideSession : existingSession;
+      if (opts.incrementSession === true) {
+        const baseline = Math.max(existingSession || 0, sessionFloor || 0);
+        session = baseline + 1;
+      }
+
+      /** @type {AppStatusPayload} */
+      const status = {
+        ...existing,
+        started: opts.incrementSession === true
+          ? nowIso
+          : (typeof existing.started === 'string' && existing.started.trim() ? existing.started : nowIso),
+        mode: explicitMode,
+        dryRun: this.ctx.currentSettings.dryRun || false,
+        autoSpawn: this.ctx.currentSettings.autoSpawn || false,
+        version: require('../../package.json').version || 'unknown',
+        platform: process.platform,
+        nodeVersion: process.version,
+        lastUpdated: nowIso,
+      };
+
+      if (session !== null) {
+        status.session = session;
+      } else {
+        delete status.session;
+      }
+      delete status.session_number;
+      delete status.sessionNumber;
+      delete status.currentSession;
+
+      const statusPatch = (opts.statusPatch && typeof opts.statusPatch === 'object' && !Array.isArray(opts.statusPatch))
+        ? opts.statusPatch
+        : null;
+      if (statusPatch) {
+        for (const [key, value] of Object.entries(statusPatch)) {
+          const currentValue = status[key];
+          if (
+            value
+            && typeof value === 'object'
+            && !Array.isArray(value)
+            && currentValue
+            && typeof currentValue === 'object'
+            && !Array.isArray(currentValue)
+          ) {
+            status[key] = {
+              ...currentValue,
+              ...value,
+            };
+            continue;
+          }
+          status[key] = value;
+        }
+      }
+
+      const serialized = JSON.stringify(status, null, 2);
+
+      // Primary write: coordination root (.squidrun)
+      fs.mkdirSync(path.dirname(this.appStatusPath), { recursive: true });
+      const tempPath = this.appStatusPath + '.tmp';
+      fs.writeFileSync(tempPath, serialized, 'utf-8');
+      fs.renameSync(tempPath, this.appStatusPath);
+
+      log.info('App Status', `Written${session !== null ? ` (session ${session})` : ''}`);
+    } catch (err) {
+      log.error('App Status', 'Error writing', err.message);
+    }
+  }
+
+  detectInstalledClis() {
+    const installed = { claude: false, codex: false, gemini: false };
+    const locator = process.platform === 'win32' ? 'where.exe' : 'which';
+
+    // macOS apps launched from Finder get a minimal PATH that excludes
+    // Homebrew and user-local bin dirs. Ensure common paths are included.
+    const extraPaths = process.platform === 'darwin'
+      ? ['/opt/homebrew/bin', '/usr/local/bin', path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.nvm', 'versions', 'node', 'current', 'bin')]
+      : [];
+    const spawnEnv = { ...process.env };
+    if (extraPaths.length) {
+      spawnEnv.PATH = [...extraPaths, spawnEnv.PATH || ''].join(':');
+    }
+
+    for (const cli of CLI_NAMES) {
+      let found = false;
+      try {
+        const locate = spawnSync(locator, [cli], {
+          windowsHide: true,
+          timeout: CLI_DISCOVERY_TIMEOUT_MS,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+          env: spawnEnv,
+        });
+        found = Boolean(locate && locate.status === 0 && String(locate.stdout || '').trim());
+      } catch (_) {
+        found = false;
+      }
+      if (!found) continue;
+
+      try {
+        const version = spawnSync(cli, ['--version'], {
+          windowsHide: true,
+          timeout: CLI_VERSION_TIMEOUT_MS,
+          encoding: 'utf-8',
+          stdio: 'pipe',
+          env: spawnEnv,
+        });
+        installed[cli] = Boolean(version && version.status === 0);
+      } catch (_) {
+        installed[cli] = false;
+      }
+    }
+
+    return installed;
+  }
+
+  resolvePaneCommandsFromAvailability(installed) {
+    const paneCommands = {};
+    const existingGeminiCommand = Object.values(this.ctx?.currentSettings?.paneCommands || {}).find(hasGeminiCommand) || '';
+    const geminiModel = resolveGeminiModelId({
+      preferredModel: this.ctx?.currentSettings?.geminiModel,
+      existingCommand: existingGeminiCommand,
+    });
+    for (const paneId of Object.keys(CLI_PREFERENCES)) {
+      const preferred = CLI_PREFERENCES[paneId];
+      const selectedCli = preferred.find(cli => installed[cli]) || preferred[0];
+      paneCommands[paneId] = buildCommandForCli(selectedCli, {
+        geminiModel,
+        existingGeminiCommand,
+      });
+    }
+    return paneCommands;
+  }
+
+  commandNeedsRewrite(command) {
+    // Only rewrite empty/missing commands — never override user's explicit model choice.
+    // If a CLI is uninstalled, the pane will show a spawn error (visible feedback).
+    if (typeof command !== 'string' || !command.trim()) return true;
+    return false;
+  }
+
+  autoDetectPaneCommandsOnStartup() {
+    try {
+      const installed = this.detectInstalledClis();
+      const anyInstalled = Object.values(installed).some(Boolean);
+      if (!anyInstalled) {
+        log.warn('Settings', 'CLI auto-detection found no installed CLIs; keeping existing paneCommands');
+        return { changed: false, installed, updatedPanes: [] };
+      }
+
+      const recommended = this.resolvePaneCommandsFromAvailability(installed);
+      const current = { ...(this.ctx.currentSettings.paneCommands || {}) };
+      const updatedPanes = [];
+
+      for (const paneId of Object.keys(CLI_PREFERENCES)) {
+        if (this.commandNeedsRewrite(current[paneId])) {
+          current[paneId] = recommended[paneId];
+          updatedPanes.push(paneId);
+        }
+      }
+
+      if (updatedPanes.length > 0) {
+        this.saveSettings({ paneCommands: current });
+        log.info('Settings', `CLI auto-detection updated paneCommands for panes: ${updatedPanes.join(', ')}`);
+        return { changed: true, installed, updatedPanes, paneCommands: current };
+      }
+
+      log.debug('Settings', 'CLI auto-detection found no paneCommands changes');
+      return { changed: false, installed, updatedPanes: [] };
+    } catch (err) {
+      log.warn('Settings', `CLI auto-detection failed: ${err.message}`);
+      return { changed: false, error: err.message, updatedPanes: [] };
+    }
+  }
+}
+
+module.exports = SettingsManager;

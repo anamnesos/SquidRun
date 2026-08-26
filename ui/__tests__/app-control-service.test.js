@@ -1,0 +1,422 @@
+const {
+  executeAppControlAction,
+  normalizeAction,
+} = require('../modules/main/app-control-service');
+
+describe('app-control-service', () => {
+  test('normalizeAction resolves close-window aliases', () => {
+    expect(normalizeAction('close-window')).toBe('close-app-window');
+    expect(normalizeAction('close-app-window')).toBe('close-app-window');
+    expect(normalizeAction('scroll-probe')).toBe('terminal-scroll-probe');
+    expect(normalizeAction('probe-terminal-scroll')).toBe('terminal-scroll-probe');
+    expect(normalizeAction('visual-capture')).toBe('open-visual-capture-window');
+    expect(normalizeAction('open-capture-window')).toBe('open-visual-capture-window');
+  });
+
+  test('reload-renderers reloads every live window without restarting the main process', () => {
+    const mainReload = jest.fn();
+    const sideReload = jest.fn();
+    const paneHostReload = jest.fn();
+
+    const result = executeAppControlAction({
+      getAppWindows: () => ([
+        ['main', {
+          isDestroyed: () => false,
+          webContents: { reloadIgnoringCache: mainReload },
+        }],
+        ['scoped', {
+          isDestroyed: () => false,
+          webContents: { reloadIgnoringCache: sideReload },
+        }],
+      ]),
+      getPaneHostWindows: () => ([
+        ['pane-host', {
+          isDestroyed: () => false,
+          webContents: { reloadIgnoringCache: paneHostReload },
+        }],
+      ]),
+    }, 'reload-renderers');
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'reload-renderers',
+      reloadedWindowKeys: ['main', 'scoped', 'pane-host'],
+      windowCount: 3,
+    }));
+    expect(mainReload).toHaveBeenCalledTimes(1);
+    expect(sideReload).toHaveBeenCalledTimes(1);
+    expect(paneHostReload).toHaveBeenCalledTimes(1);
+  });
+
+  test('reload-renderers only reloads a shared window once when registries overlap', () => {
+    const reload = jest.fn();
+    const sharedWindow = {
+      isDestroyed: () => false,
+      webContents: { reloadIgnoringCache: reload },
+    };
+
+    const result = executeAppControlAction({
+      getAppWindows: () => ([['main', sharedWindow]]),
+      getPaneHostWindows: () => ([['pane-host', sharedWindow]]),
+    }, 'reload-renderers');
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      reloadedWindowKeys: ['main'],
+      windowCount: 1,
+    }));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  test('restart-telegram-poller delegates to the app poller lifecycle without reloading panes', () => {
+    const restartTelegramPoller = jest.fn(() => ({
+      success: true,
+      started: true,
+      reason: 'test',
+    }));
+
+    const result = executeAppControlAction({
+      restartTelegramPoller,
+    }, 'restart-telegram-poller', { reason: 'test' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'restart-telegram-poller',
+      started: true,
+      reason: 'test',
+    }));
+    expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'test' });
+  });
+
+  test('restart-telegram-poller preserves accepted versus IPC-ready worker state', () => {
+    const restartTelegramPoller = jest.fn(() => ({
+      success: true,
+      accepted: true,
+      phase: 'standalone_lane_handoff',
+      ready: false,
+      started: false,
+      startupReason: null,
+      reason: 'readiness-test',
+    }));
+
+    const result = executeAppControlAction({
+      restartTelegramPoller,
+    }, 'restart-telegram-poller', { reason: 'readiness-test' });
+
+    expect(result).toEqual({
+      success: true,
+      action: 'restart-telegram-poller',
+      accepted: true,
+      phase: 'standalone_lane_handoff',
+      ready: false,
+      started: false,
+      startupReason: null,
+      reason: 'readiness-test',
+    });
+  });
+
+  test('restart-telegram-poller does not inspect or reload side-profile windows', () => {
+    const restartTelegramPoller = jest.fn(() => ({
+      success: true,
+      started: true,
+      reason: 'client-router-boundary',
+    }));
+    const getAppWindows = jest.fn(() => {
+      throw new Error('window reload path must not be used for Telegram restart');
+    });
+    const getPaneHostWindows = jest.fn(() => {
+      throw new Error('pane-host reload path must not be used for Telegram restart');
+    });
+
+    const result = executeAppControlAction({
+      restartTelegramPoller,
+      getAppWindows,
+      getPaneHostWindows,
+    }, 'restart-telegram-poller', { reason: 'client-router-boundary' });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'restart-telegram-poller',
+      started: true,
+      reason: 'client-router-boundary',
+    }));
+    expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'client-router-boundary' });
+    expect(getAppWindows).not.toHaveBeenCalled();
+    expect(getPaneHostWindows).not.toHaveBeenCalled();
+  });
+
+  test('restart-telegram-poller reports unavailable when the app lacks a restart hook', () => {
+    expect(executeAppControlAction({}, 'restart-telegram-poller')).toEqual(expect.objectContaining({
+      success: false,
+      action: 'restart-telegram-poller',
+      reason: 'restart_unavailable',
+    }));
+  });
+
+  test('terminal-scroll-probe is unavailable in packaged builds', () => {
+    const result = executeAppControlAction({
+      isPackaged: true,
+      getAppWindow: jest.fn(),
+    }, 'terminal-scroll-probe', {
+      windowKey: 'squid-room',
+      containerId: 'terminal-exampleapp-app',
+      op: 'dispatchKey',
+      key: 'PageUp',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'terminal-scroll-probe',
+      reason: 'terminal_scroll_probe_dev_only',
+    }));
+  });
+
+  test('terminal-scroll-probe validates explicit window, container, and op input', () => {
+    const result = executeAppControlAction({
+      isPackaged: false,
+      getAppWindow: jest.fn(),
+    }, 'terminal-scroll-probe', {
+      windowKey: '',
+      containerId: 'bad container id',
+      op: 'dispatchKey',
+      key: 'Escape',
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'terminal-scroll-probe',
+      reason: 'terminal_scroll_probe_invalid_payload',
+    }));
+    expect(result.errors).toEqual(expect.arrayContaining([
+      'windowKey_required',
+      'containerId_invalid',
+      'key_unsupported',
+    ]));
+  });
+
+  test('terminal-scroll-probe executes a fixed textarea key probe against the requested renderer window', async () => {
+    const executeJavaScript = jest.fn().mockResolvedValue({
+      success: true,
+      requestedWindowKey: 'squid-room',
+      windowKey: 'squid-room',
+      containerId: 'terminal-exampleapp-app',
+      paneId: 'exampleapp-app',
+      op: 'dispatchKey',
+      key: 'PageUp',
+      dispatchTarget: 'xterm-helper-textarea',
+      before: { viewportY: 26 },
+      after: { viewportY: 12 },
+      moved: true,
+    });
+    const getAppWindow = jest.fn(() => ({
+      isDestroyed: () => false,
+      webContents: { executeJavaScript },
+    }));
+
+    const result = await executeAppControlAction({
+      isPackaged: false,
+      getAppWindow,
+    }, 'terminal-scroll-probe', {
+      windowKey: 'squid-room',
+      containerId: 'terminal-exampleapp-app',
+      op: 'dispatchKey',
+      key: 'PageUp',
+    });
+
+    expect(getAppWindow).toHaveBeenCalledWith('squid-room');
+    expect(executeJavaScript).toHaveBeenCalledTimes(1);
+    const [script, userGesture] = executeJavaScript.mock.calls[0];
+    expect(userGesture).toBe(true);
+    // The injected script must delegate into the isolated world (where the
+    // terminal + expando live) rather than read the expando from the main world.
+    expect(script).toContain('runTerminalScrollProbe');
+    expect(script).toContain('rendererModules');
+    expect(script).toContain('"op":"dispatchKey"');
+    expect(script).toContain('"key":"PageUp"');
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'terminal-scroll-probe',
+      requestedWindowKey: 'squid-room',
+      dispatchTarget: 'xterm-helper-textarea',
+      moved: true,
+    }));
+  });
+
+  test('terminal-scroll-probe accepts selector-based dispatchSelect with an explicit value', async () => {
+    const executeJavaScript = jest.fn().mockResolvedValue({
+      success: true,
+      requestedWindowKey: 'squid-room',
+      windowKey: 'squid-room',
+      selector: '#model-selector-3',
+      op: 'dispatchSelect',
+      requestedValue: 'codex',
+      valueAfter: 'codex',
+      disabledAfter: true,
+      changeAccepted: true,
+    });
+    const getAppWindow = jest.fn(() => ({
+      isDestroyed: () => false,
+      webContents: { executeJavaScript },
+    }));
+
+    const result = await executeAppControlAction({
+      isPackaged: false,
+      getAppWindow,
+    }, 'terminal-scroll-probe', {
+      windowKey: 'squid-room',
+      selector: '#model-selector-3',
+      op: 'dispatchSelect',
+      value: 'codex',
+    });
+
+    expect(getAppWindow).toHaveBeenCalledWith('squid-room');
+    const [script, userGesture] = executeJavaScript.mock.calls[0];
+    expect(userGesture).toBe(true);
+    expect(script).toContain('"op":"dispatchSelect"');
+    expect(script).toContain('"selector":"#model-selector-3"');
+    expect(script).toContain('"value":"codex"');
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'terminal-scroll-probe',
+      selector: '#model-selector-3',
+      requestedValue: 'codex',
+      disabledAfter: true,
+    }));
+  });
+
+  test('open-live-task-audit-sidecar opens the task audit sidecar without restart', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'live-task-audit-sidecar',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'task-audit');
+
+    expect(openAppWindow).toHaveBeenCalledWith('live-task-audit-sidecar', {});
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-live-task-audit-sidecar',
+      windowKey: 'live-task-audit-sidecar',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/sidecar opened\/focused without restarting/i);
+  });
+
+  test('open-squid-room opens a main-profile surface window with auto-boot disabled', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'squid-room',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'open-squid-room');
+
+    expect(openAppWindow).toHaveBeenCalledWith('squid-room', {
+      autoBootAgents: false,
+      profileName: 'main',
+      windowTeam: 'squid-room',
+      displayOnly: true,
+      skipStartupBundle: true,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-squid-room',
+      windowKey: 'squid-room',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/main-profile surface window/i);
+  });
+
+  test('open-visual-capture-window opens a disposable non-main window without auto-booting agents', async () => {
+    const openAppWindow = jest.fn().mockResolvedValue({
+      ok: true,
+      windowKey: 'visual-capture',
+      status: 'opened',
+    });
+
+    const result = await executeAppControlAction({ openAppWindow }, 'open-visual-capture-window');
+
+    expect(openAppWindow).toHaveBeenCalledWith('visual-capture', {
+      autoBootAgents: false,
+      profileName: 'main',
+      windowTeam: 'main',
+      displayOnly: false,
+      skipStartupBundle: true,
+      title: 'SquidRun - Visual Capture',
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      action: 'open-visual-capture-window',
+      windowKey: 'visual-capture',
+      status: 'opened',
+    }));
+    expect(result.note).toMatch(/without reloading the live main renderer/i);
+  });
+
+  test('close-app-window refuses main before calling the app close hook', async () => {
+    const closeAppWindow = jest.fn();
+
+    const result = await executeAppControlAction({ closeAppWindow }, 'close-app-window', {
+      windowKey: 'main',
+    });
+
+    expect(closeAppWindow).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'close-app-window',
+      windowKey: 'main',
+      reason: 'main_window_requires_quit',
+    }));
+  });
+
+  test('close-app-window surfaces missing non-main windows without stopping the app', async () => {
+    const closeAppWindow = jest.fn().mockResolvedValue({
+      ok: false,
+      windowKey: 'squid-room',
+      reason: 'window_not_found',
+    });
+
+    const result = await executeAppControlAction({ closeAppWindow }, 'close-app-window', {
+      windowKey: 'squid-room',
+    });
+
+    expect(closeAppWindow).toHaveBeenCalledWith('squid-room');
+    expect(result).toEqual(expect.objectContaining({
+      success: false,
+      action: 'close-app-window',
+      windowKey: 'squid-room',
+      reason: 'window_not_found',
+    }));
+  });
+});
+
+describe('restart-telegram-poller with an async restart hook (Stage A)', () => {
+  const { executeAppControlAction } = require('../modules/main/app-control-service');
+
+  test('A PROMISE result is awaited and mapped', async () => {
+    const ctx = {
+      restartTelegramPoller: jest.fn().mockResolvedValue({ success: true, phase: 'ready' }),
+    };
+    const result = await executeAppControlAction(ctx, 'restart-telegram-poller', {});
+    expect(result).toMatchObject({ success: true, action: 'restart-telegram-poller', phase: 'ready' });
+  });
+
+  test('A REJECTION maps to restart_failed instead of escaping', async () => {
+    const ctx = {
+      restartTelegramPoller: jest.fn().mockRejectedValue(new Error('worker stuck')),
+    };
+    const result = await executeAppControlAction(ctx, 'restart-telegram-poller', {});
+    expect(result).toMatchObject({
+      success: false, reason: 'restart_failed', error: 'worker stuck',
+    });
+  });
+
+  test('A SYNC result still works unchanged', () => {
+    // Other actions and older hooks must not be forced async.
+    const ctx = { restartTelegramPoller: jest.fn().mockReturnValue({ success: true }) };
+    const result = executeAppControlAction(ctx, 'restart-telegram-poller', {});
+    expect(result).toMatchObject({ success: true, action: 'restart-telegram-poller' });
+    expect(typeof result.then).toBe('undefined');
+  });
+});

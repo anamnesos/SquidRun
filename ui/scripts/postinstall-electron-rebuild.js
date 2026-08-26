@@ -1,0 +1,179 @@
+#!/usr/bin/env node
+
+const path = require('path');
+const fs = require('fs');
+const { spawnSync } = require('child_process');
+
+const rootDir = path.resolve(__dirname, '..');
+
+function resolveElectronPath() {
+  try {
+    return require('electron');
+  } catch (err) {
+    throw new Error(`electron package unavailable: ${err.message}`);
+  }
+}
+
+function parseProbePayload(stdout = '', stderr = '') {
+  const lines = `${stdout || ''}\n${stderr || ''}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (const line of lines.reverse()) {
+    if (!line.startsWith('{') || !line.endsWith('}')) continue;
+    try {
+      return JSON.parse(line);
+    } catch {
+      // Keep scanning for a JSON probe line.
+    }
+  }
+  return null;
+}
+
+function probeBetterSqlite3() {
+  const electronPath = resolveElectronPath();
+  const probeScript = [
+    "const result = {",
+    "  electron: process.versions.electron || null,",
+    "  node: process.versions.node,",
+    "  modules: process.versions.modules,",
+    "};",
+    "try {",
+    "  const Database = require('better-sqlite3');",
+    "  const db = new Database(':memory:');",
+    "  result.query = db.prepare('select 1 as ok').get().ok;",
+    "  db.close();",
+    "  result.betterSqlite3Load = true;",
+    "  console.log(JSON.stringify(result));",
+    "} catch (err) {",
+    "  result.betterSqlite3Load = false;",
+    "  result.error = err && err.message ? err.message : String(err);",
+    "  console.error(JSON.stringify(result));",
+    "  process.exit(1);",
+    "}",
+  ].join('\n');
+
+  const result = spawnSync(electronPath, ['-e', probeScript], {
+    cwd: rootDir,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+    },
+    encoding: 'utf8',
+  });
+
+  const payload = parseProbePayload(result.stdout, result.stderr);
+  return {
+    ok: result.status === 0 && payload?.betterSqlite3Load === true,
+    status: result.status,
+    stdout: result.stdout || '',
+    stderr: result.stderr || '',
+    payload,
+  };
+}
+
+function resolveElectronRebuildCli(projectRoot = rootDir) {
+  const packageEntry = require.resolve('@electron/rebuild', {
+    paths: [projectRoot],
+  });
+  let packageDir = path.dirname(packageEntry);
+  let manifestPath = null;
+  while (true) {
+    const candidate = path.join(packageDir, 'package.json');
+    if (fs.existsSync(candidate)) {
+      const candidateManifest = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (candidateManifest.name === '@electron/rebuild') {
+        manifestPath = candidate;
+        break;
+      }
+    }
+    const parent = path.dirname(packageDir);
+    if (parent === packageDir) break;
+    packageDir = parent;
+  }
+  if (!manifestPath) {
+    throw new Error('could not locate the @electron/rebuild package manifest');
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const relativeCli = typeof manifest.bin === 'string'
+    ? manifest.bin
+    : manifest.bin?.['electron-rebuild'];
+  if (!relativeCli || typeof relativeCli !== 'string') {
+    throw new Error('@electron/rebuild package does not declare its CLI entrypoint');
+  }
+  return path.resolve(path.dirname(manifestPath), relativeCli);
+}
+
+function runElectronRebuild({
+  projectRoot = rootDir,
+  nodePath = process.execPath,
+  rebuildCliPath = resolveElectronRebuildCli(projectRoot),
+  spawnImpl = spawnSync,
+} = {}) {
+  return spawnImpl(nodePath, [rebuildCliPath, '-f', '-o', 'better-sqlite3'], {
+    cwd: projectRoot,
+    stdio: 'inherit',
+    shell: false,
+  });
+}
+
+function formatProbe(probe) {
+  const payload = probe?.payload || {};
+  return [
+    `electron=${payload.electron || 'unknown'}`,
+    `node=${payload.node || 'unknown'}`,
+    `modules=${payload.modules || 'unknown'}`,
+    payload.error ? `error=${payload.error}` : null,
+  ].filter(Boolean).join(' ');
+}
+
+function main() {
+  let initial;
+  try {
+    initial = probeBetterSqlite3();
+  } catch (err) {
+    // CI installs with ELECTRON_SKIP_BINARY_DOWNLOAD=1 — no Electron binary
+    // exists by design (tests mock electron; jest runs under node ABI), so an
+    // Electron-ABI rebuild is meaningless there. Skip softly when the absence
+    // was requested; stay loud everywhere else (local/packaged installs need
+    // the probe).
+    const skipRequested = process.env.ELECTRON_SKIP_BINARY_DOWNLOAD === '1'
+      || process.env.SQUIDRUN_SKIP_ELECTRON_REBUILD === '1'
+      || process.env.CI === 'true';
+    if (skipRequested && /electron package unavailable/i.test(err.message)) {
+      console.warn(`[postinstall] Electron binary absent with skip requested (${err.message}); better-sqlite3 Electron rebuild skipped.`);
+      return;
+    }
+    throw err;
+  }
+  if (initial.ok) {
+    console.log(`[postinstall] better-sqlite3 loads under Electron (${formatProbe(initial)}); rebuild skipped.`);
+    return;
+  }
+
+  console.warn(`[postinstall] better-sqlite3 Electron probe failed (${formatProbe(initial)}); rebuilding for Electron.`);
+  const rebuild = runElectronRebuild();
+  if (rebuild.status !== 0) {
+    process.exit(rebuild.status || 1);
+  }
+
+  const finalProbe = probeBetterSqlite3();
+  if (!finalProbe.ok) {
+    console.error(`[postinstall] better-sqlite3 still does not load after rebuild (${formatProbe(finalProbe)}).`);
+    process.exit(finalProbe.status || 1);
+  }
+
+  console.log(`[postinstall] better-sqlite3 rebuilt and verified under Electron (${formatProbe(finalProbe)}).`);
+}
+
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  formatProbe,
+  parseProbePayload,
+  probeBetterSqlite3,
+  resolveElectronRebuildCli,
+  runElectronRebuild,
+};

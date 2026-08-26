@@ -1,0 +1,180 @@
+﻿const fs = require('fs');
+const path = require('path');
+const { execFile } = require('child_process');
+const log = require('../logger');
+
+async function runCommand(command, args, cwd) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, {
+      cwd,
+      encoding: 'utf-8',
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30000,
+      windowsHide: true,
+    }, (err, stdout, stderr) => {
+      if (err) {
+        if (err.stdout == null) err.stdout = stdout;
+        if (err.stderr == null) err.stderr = stderr;
+        reject(err);
+        return;
+      }
+      resolve(stdout);
+    });
+  });
+}
+
+function registerPrecommitHandlers(ctx) {
+  if (!ctx || !ctx.ipcMain) {
+    throw new Error('registerPrecommitHandlers requires ctx.ipcMain');
+  }
+
+  const { ipcMain } = ctx;
+  const CI_STATUS_PATH = path.join(ctx.WORKSPACE_PATH, 'ci-status.json');
+
+  let ciEnabled = true;
+  let lastCiCheck = null;
+
+  ipcMain.handle('run-pre-commit-checks', async (event, projectPath) => {
+    const checkId = `ci-${Date.now()}`;
+    const checks = [];
+    let allPassed = true;
+
+    let testResult = { success: false, error: 'Test runner unavailable' };
+    try {
+      if (typeof ctx.runTests === 'function') {
+        testResult = await ctx.runTests(projectPath);
+      }
+    } catch {
+      testResult = { success: false, error: 'Test execution failed' };
+    }
+
+    if (testResult.results) {
+      const testsPassed = testResult.results.failed === 0;
+      checks.push({
+        name: 'tests',
+        passed: testsPassed,
+        message: testsPassed
+          ? `${testResult.results.passed} tests passed`
+          : `${testResult.results.failed} tests failed`,
+        details: testResult.results,
+      });
+      if (!testsPassed) allPassed = false;
+    }
+
+    try {
+      const stagedFiles = (await runCommand('git', ['diff', '--cached', '--name-only'], projectPath))
+        .trim()
+        .split('\n')
+        .filter(f => f);
+
+      let validationIssues = 0;
+      for (const file of stagedFiles) {
+        const filePath = path.join(projectPath, file);
+        if (fs.existsSync(filePath) && (file.endsWith('.js') || file.endsWith('.json'))) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const confidence = ctx.calculateConfidence
+            ? ctx.calculateConfidence(content)
+            : 0;
+          if (confidence < 40) {
+            validationIssues++;
+          }
+        }
+      }
+
+      checks.push({
+        name: 'validation',
+        passed: validationIssues === 0,
+        message: validationIssues === 0
+          ? `${stagedFiles.length} files validated`
+          : `${validationIssues} file(s) with low confidence`,
+      });
+      if (validationIssues > 0) allPassed = false;
+    } catch {
+      checks.push({
+        name: 'validation',
+        passed: true,
+        message: 'Skipped (not a git repo)',
+      });
+    }
+
+    try {
+      const stagedContent = await runCommand('git', ['diff', '--cached'], projectPath);
+
+      const incompletePatterns = ctx.INCOMPLETE_PATTERNS || [];
+      const hasIncomplete = incompletePatterns.some(p => p.test(stagedContent));
+      checks.push({
+        name: 'incomplete_check',
+        passed: !hasIncomplete,
+        message: hasIncomplete
+          ? 'Found TODO/FIXME markers in staged changes'
+          : 'No incomplete markers found',
+      });
+      if (hasIncomplete) allPassed = false;
+    } catch {
+      // Skip if git not available
+    }
+
+    lastCiCheck = {
+      id: checkId,
+      timestamp: new Date().toISOString(),
+      passed: allPassed,
+      checks,
+    };
+
+    fs.writeFileSync(CI_STATUS_PATH, JSON.stringify(lastCiCheck, null, 2), 'utf-8');
+
+    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      ctx.mainWindow.webContents.send('ci-check-complete', lastCiCheck);
+    }
+
+    return { success: true, ...lastCiCheck };
+  });
+
+  // Honesty audit #6 (S464): the get-ci-status handler + the permanently
+  // "CI Idle" header indicator were scaffolding no renderer ever invoked,
+  // updated, or unhid. Hard-deleted per the no-orphan rule (indicator DOM,
+  // chrome allowlist entry, handler, and its tests together).
+
+  ipcMain.handle('set-ci-enabled', (event, enabled) => {
+    ciEnabled = enabled;
+    log.info('CI', `Pre-commit checks ${enabled ? 'enabled' : 'disabled'}`);
+    return { success: true, enabled: ciEnabled };
+  });
+
+  ipcMain.handle('should-block-commit', () => {
+    if (!ciEnabled) {
+      return { success: true, block: false, reason: 'CI checks disabled' };
+    }
+
+    if (!lastCiCheck) {
+      return { success: true, block: true, reason: 'No CI check has been run' };
+    }
+
+    const checkAge = Date.now() - new Date(lastCiCheck.timestamp).getTime();
+    if (checkAge > 5 * 60 * 1000) {
+      return { success: true, block: true, reason: 'CI check is stale (> 5 minutes)' };
+    }
+
+    return {
+      success: true,
+      block: !lastCiCheck.passed,
+      reason: lastCiCheck.passed ? 'All checks passed' : 'CI checks failed',
+      lastCheck: lastCiCheck,
+    };
+  });
+}
+
+
+function unregisterPrecommitHandlers(ctx) {
+  const { ipcMain } = ctx || {};
+  if (!ipcMain) return;
+    ipcMain.removeHandler('run-pre-commit-checks');
+    ipcMain.removeHandler('get-ci-status');
+    ipcMain.removeHandler('set-ci-enabled');
+    ipcMain.removeHandler('should-block-commit');
+}
+
+registerPrecommitHandlers.unregister = unregisterPrecommitHandlers;
+module.exports = {
+  registerPrecommitHandlers,
+};

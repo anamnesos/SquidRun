@@ -1,0 +1,440 @@
+/**
+ * Tests for event-bus emissions in modules/terminal.js
+ * Verifies focus, typing, and resize events are emitted correctly.
+ */
+
+const REAL_PLATFORM = process.platform;
+
+// Mock logger
+jest.mock('../modules/logger', () => ({
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+}));
+
+// Mock event-bus
+const mockBus = {
+  emit: jest.fn(),
+  startCorrelation: jest.fn().mockReturnValue('test-corr-id'),
+  getCurrentCorrelation: jest.fn().mockReturnValue('test-corr-id'),
+  updateState: jest.fn(),
+  on: jest.fn(),
+  off: jest.fn(),
+  getState: jest.fn(),
+  reset: jest.fn(),
+  registerContract: jest.fn(),
+};
+jest.mock('../modules/event-bus', () => mockBus);
+
+// Mock contracts module (initialized by terminal.js on load)
+jest.mock('../modules/contracts', () => ({
+  init: jest.fn(),
+}));
+
+// Mock settings
+jest.mock('../modules/settings', () => ({
+  getSettings: jest.fn().mockReturnValue({ paneCommands: {} }),
+}));
+
+// Mock recovery controller
+jest.mock('../modules/terminal/recovery', () => ({
+  createRecoveryController: jest.fn().mockReturnValue({
+    potentiallyStuckPanes: new Map(),
+    clearStuckStatus: jest.fn(),
+    startStuckMessageSweeper: jest.fn(),
+    stopStuckMessageSweeper: jest.fn(),
+    sweepStuckMessages: jest.fn(),
+    interruptPane: jest.fn(),
+    restartPane: jest.fn(),
+    unstickEscalation: jest.fn(),
+    nudgePane: jest.fn(),
+    nudgeAllPanes: jest.fn(),
+    sendUnstick: jest.fn(),
+    aggressiveNudge: jest.fn(),
+    aggressiveNudgeAll: jest.fn(),
+    markPotentiallyStuck: jest.fn(),
+  }),
+}));
+
+// Mock injection controller
+const mockInjectionController = {
+  focusWithRetry: jest.fn(),
+  sendEnterToPane: jest.fn(),
+  isPromptReady: jest.fn(),
+  processIdleQueue: jest.fn(),
+  doSendToPane: jest.fn(),
+  sendToPane: jest.fn(),
+};
+
+jest.mock('../modules/terminal/injection', () => ({
+  createInjectionController: jest.fn().mockReturnValue(mockInjectionController),
+}));
+
+// Mock agent-colors
+jest.mock('../modules/terminal/agent-colors', () => ({
+  attachAgentColors: jest.fn(),
+}));
+
+// Mock config
+jest.mock('../config', () => ({
+  PANE_IDS: ['1', '2', '3'],
+  PANE_ROLES: { '1': 'Architect', '2': 'Builder', '3': 'Oracle' },
+  PANE_DISPLAY_NAMES: { '1': 'Mira', '2': 'Rook', '3': 'Vera' },
+  getPaneDisplayName: (paneId, options = {}) => {
+    const roles = { '1': 'Architect', '2': 'Builder', '3': 'Oracle' };
+    const displayNames = { '1': 'Mira', '2': 'Rook', '3': 'Vera' };
+    const role = roles[String(paneId)] || `Pane ${paneId}`;
+    const display = displayNames[String(paneId)] || role;
+    return options.includeRole === true && display !== role ? `${display} (${role})` : display;
+  },
+  WORKSPACE_PATH: '/tmp/workspace',
+  getProjectRoot: () => '/tmp/workspace',
+  setProjectRoot: jest.fn(),
+  resolveCoordPath: (relPath) => `/tmp/workspace/${String(relPath || '').replace(/^[/\\]+/, '').replace(/[/\\]+/g, '/')}`,
+}));
+
+// Mock constants
+jest.mock('../modules/constants', () => ({
+  TYPING_GUARD_MS: 300,
+  QUEUE_RETRY_MS: 100,
+  INJECTION_LOCK_TIMEOUT_MS: 1000,
+  FOCUS_RETRY_DELAY_MS: 20,
+  STARTUP_READY_TIMEOUT_MS: 5000,
+  STARTUP_IDENTITY_DELAY_MS: 3000,
+  STARTUP_IDENTITY_VERIFY_DELAY_MS: 1200,
+  STARTUP_IDENTITY_RETRY_DELAY_MS: 2000,
+  STARTUP_IDENTITY_MAX_ATTEMPTS: 3,
+  STARTUP_IDENTITY_DELAY_CODEX_MS: 6000,
+  STARTUP_READY_BUFFER_MAX: 2000,
+  GEMINI_ENTER_DELAY_MS: 75,
+}));
+
+// Mock fs
+jest.mock('fs', () => ({
+  readFileSync: jest.fn().mockReturnValue('{}'),
+  writeFileSync: jest.fn(),
+  mkdirSync: jest.fn(),
+}));
+
+// Mock path
+jest.mock('path', () => {
+  const actualPath = jest.requireActual('path');
+  return {
+    ...actualPath,
+    join: (...args) => args.join('/'),
+    resolve: (...args) => actualPath.resolve(...args),
+  };
+});
+
+// Mock xterm and addons
+jest.mock('@xterm/xterm', () => ({
+  Terminal: jest.fn().mockImplementation(() => ({
+    loadAddon: jest.fn(),
+    open: jest.fn(),
+    focus: jest.fn(),
+    blur: jest.fn(),
+    cols: 80,
+    rows: 24,
+    onData: jest.fn(),
+    onSelectionChange: jest.fn(),
+    attachCustomKeyEventHandler: jest.fn(),
+    getSelection: jest.fn(),
+    hasSelection: jest.fn(),
+    clearSelection: jest.fn(),
+    write: jest.fn(),
+    clear: jest.fn(),
+    buffer: { active: {} },
+  })),
+}), { virtual: true });
+
+jest.mock('@xterm/addon-fit', () => ({
+  FitAddon: jest.fn().mockImplementation(() => ({
+    fit: jest.fn(),
+  })),
+}), { virtual: true });
+
+jest.mock('@xterm/addon-web-links', () => ({
+  WebLinksAddon: jest.fn().mockImplementation(() => ({})),
+}), { virtual: true });
+
+jest.mock('@xterm/addon-webgl', () => ({
+  WebglAddon: jest.fn().mockImplementation(() => ({
+    onContextLoss: jest.fn(),
+  })),
+}), { virtual: true });
+
+jest.mock('@xterm/addon-search', () => ({
+  SearchAddon: jest.fn().mockImplementation(() => ({
+    findNext: jest.fn(),
+    findPrevious: jest.fn(),
+    clearDecorations: jest.fn(),
+  })),
+}), { virtual: true });
+
+describe('Terminal Events', () => {
+  let terminal;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    jest.resetModules();
+
+    // Set up minimal DOM mocking
+    global.document = {
+      getElementById: jest.fn().mockReturnValue(null),
+      querySelector: jest.fn().mockReturnValue(null),
+      querySelectorAll: jest.fn().mockReturnValue([]),
+      activeElement: null,
+      addEventListener: jest.fn(),
+      body: { contains: jest.fn().mockReturnValue(true) },
+      createElement: jest.fn().mockReturnValue({
+        id: '',
+        innerHTML: '',
+        style: {},
+        dataset: {},
+        appendChild: jest.fn(),
+        addEventListener: jest.fn(),
+      }),
+    };
+
+    global.window = {
+      squidrun: {
+        pty: {
+          create: jest.fn().mockResolvedValue(undefined),
+          write: jest.fn().mockResolvedValue({ success: true }),
+          claimStartupInjection: jest.fn().mockResolvedValue({
+            ok: true,
+            claimed: true,
+            claim: { claimId: 'startup-claim-default' },
+          }),
+          releaseStartupInjection: jest.fn().mockResolvedValue({ ok: true, released: true }),
+          clipboardWriteText: jest.fn().mockResolvedValue({ success: true }),
+          resize: jest.fn(),
+          kill: jest.fn().mockResolvedValue(undefined),
+          onData: jest.fn(),
+          onExit: jest.fn(),
+          sendTrustedEnter: jest.fn().mockResolvedValue(undefined),
+          pause: jest.fn(),
+          resume: jest.fn(),
+        },
+        claude: {
+          spawn: jest.fn().mockResolvedValue({ success: true, command: 'claude' }),
+        },
+      },
+    };
+
+    global.process = {
+      cwd: jest.fn().mockReturnValue('/tmp'),
+      env: {},
+      platform: REAL_PLATFORM,
+    };
+    global.navigator = { clipboard: { writeText: jest.fn(), readText: jest.fn() } };
+    global.ResizeObserver = jest.fn().mockImplementation(() => ({
+      observe: jest.fn(),
+      disconnect: jest.fn(),
+    }));
+    global.requestAnimationFrame = (cb) => setTimeout(cb, 0);
+
+    mockBus.emit.mockClear();
+    mockBus.updateState.mockClear();
+    Object.values(mockInjectionController).forEach((fn) => {
+      if (typeof fn === 'function' && typeof fn.mockClear === 'function') {
+        fn.mockClear();
+      }
+    });
+
+    terminal = require('../modules/terminal');
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+    delete global.document;
+    delete global.window;
+    delete global.process;
+    delete global.navigator;
+    delete global.ResizeObserver;
+    delete global.requestAnimationFrame;
+  });
+
+  // ──────────────────────────────────────────
+  // Focus events
+  // ──────────────────────────────────────────
+  describe('focus.changed event', () => {
+    test('emits focus.changed when pane focus changes', () => {
+      // focusPane is exported — we can call it directly
+      // Initial focused pane is '1'
+      terminal.focusPane('2');
+
+      const focusChanged = mockBus.emit.mock.calls.find(c => c[0] === 'focus.changed');
+      expect(focusChanged).toBeDefined();
+      expect(focusChanged[1].paneId).toBe('2');
+      expect(focusChanged[1].payload.prevPane).toBe('1');
+      expect(focusChanged[1].payload.newPane).toBe('2');
+      expect(focusChanged[1].source).toBe('terminal.js');
+    });
+
+    test('does not emit focus.changed when focusing same pane', () => {
+      // Initial focused pane is '1'
+      terminal.focusPane('1');
+
+      const focusChanged = mockBus.emit.mock.calls.find(c => c[0] === 'focus.changed');
+      expect(focusChanged).toBeUndefined();
+    });
+
+    test('emits focus.changed on successive focus changes', () => {
+      terminal.focusPane('2');
+      terminal.focusPane('3');
+
+      const focusEvents = mockBus.emit.mock.calls.filter(c => c[0] === 'focus.changed');
+      expect(focusEvents).toHaveLength(2);
+      expect(focusEvents[0][1].payload.prevPane).toBe('1');
+      expect(focusEvents[0][1].payload.newPane).toBe('2');
+      expect(focusEvents[1][1].payload.prevPane).toBe('2');
+      expect(focusEvents[1][1].payload.newPane).toBe('3');
+    });
+  });
+
+  // ──────────────────────────────────────────
+  // Resize events (resizeSinglePane is internal but called by handleResize)
+  // ──────────────────────────────────────────
+  describe('resize events', () => {
+    test('handleResize is exported and callable', () => {
+      expect(typeof terminal.handleResize).toBe('function');
+      // handleResize iterates fitAddons — with no terminals initialized, it does nothing
+      terminal.handleResize();
+    });
+  });
+
+  // ──────────────────────────────────────────
+  // Source consistency
+  // ──────────────────────────────────────────
+  describe('source consistency', () => {
+    test('focus events use source: terminal.js', () => {
+      terminal.focusPane('2');
+
+      const focusEvents = mockBus.emit.mock.calls.filter(c => c[0] === 'focus.changed');
+      for (const call of focusEvents) {
+        expect(call[1].source).toBe('terminal.js');
+      }
+    });
+  });
+
+  describe('startup identity routing', () => {
+    test('spawn startup identity uses injection controller sendToPane for Claude panes', async () => {
+      terminal.terminals.set('1', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('1');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+
+      // spawn Enter delay (100ms) + startup timeout (5000ms) + identity delay (3000ms)
+      await jest.advanceTimersByTimeAsync(8200);
+
+      const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
+        args[0] === '1'
+        && typeof args[1] === 'string'
+        && args[1].includes('# SQUIDRUN SESSION: Mira (Architect) - Started')
+      ));
+      expect(startupCall).toBeDefined();
+      expect(startupCall[2]).toEqual(expect.objectContaining({
+        priority: true,
+        immediate: true,
+        startupInjection: true,
+        verifySubmitAccepted: true,
+        onComplete: expect.any(Function),
+      }));
+    });
+
+    test('spawn startup identity does not arm when atomic claim is denied', async () => {
+      global.window.squidrun.pty.claimStartupInjection.mockResolvedValueOnce({
+        ok: true,
+        claimed: false,
+        reason: 'startup_injection_already_claimed',
+      });
+
+      terminal.terminals.set('1', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('1');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+      await jest.advanceTimersByTimeAsync(8200);
+
+      expect(global.window.squidrun.pty.claimStartupInjection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paneId: '1',
+          source: 'spawn',
+          modelType: 'claude',
+        })
+      );
+      const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
+        args[0] === '1'
+        && typeof args[1] === 'string'
+        && args[1].includes('# SQUIDRUN SESSION:')
+      ));
+      expect(startupCall).toBeUndefined();
+    });
+
+    test('spawn startup identity releases its claim after exhausted retries', async () => {
+      global.window.squidrun.pty.claimStartupInjection.mockResolvedValueOnce({
+        ok: true,
+        claimed: true,
+        claim: { claimId: 'claim-exhausted-retries' },
+      });
+      mockInjectionController.sendToPane
+        .mockImplementationOnce((id, message, options = {}) => {
+          options.onComplete?.({ success: false, reason: 'forced_failure_1' });
+        })
+        .mockImplementationOnce((id, message, options = {}) => {
+          options.onComplete?.({ success: false, reason: 'forced_failure_2' });
+        })
+        .mockImplementationOnce((id, message, options = {}) => {
+          options.onComplete?.({ success: false, reason: 'forced_failure_3' });
+        });
+
+      terminal.terminals.set('1', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('1');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+
+      // startup timeout + identity delay + two retry delays
+      await jest.advanceTimersByTimeAsync(12200);
+
+      expect(mockInjectionController.sendToPane).toHaveBeenCalledTimes(3);
+      expect(global.window.squidrun.pty.releaseStartupInjection).toHaveBeenCalledWith({
+        paneId: '1',
+        claimId: 'claim-exhausted-retries',
+        reason: 'exhausted_retries',
+      });
+    });
+
+    test('spawn startup identity routes Gemini pane through injection controller before fallback paths', async () => {
+      const runtimeSettings = require('../modules/settings');
+      runtimeSettings.getSettings.mockReturnValue({
+        paneCommands: {
+          '3': 'gemini --yolo --include-directories "/tmp/workspace"',
+        },
+      });
+
+      terminal.terminals.set('3', { write: jest.fn() });
+      const spawnPromise = terminal.spawnAgent('3');
+      await jest.advanceTimersByTimeAsync(150);
+      await spawnPromise;
+
+      // spawn Enter delay (100ms) + Gemini startup timeout (15000ms) + identity delay (1000ms)
+      await jest.advanceTimersByTimeAsync(16200);
+
+      const startupCall = mockInjectionController.sendToPane.mock.calls.find((args) => (
+        args[0] === '3'
+        && typeof args[1] === 'string'
+        && args[1].includes('# SQUIDRUN SESSION: Vera (Oracle) - Started')
+      ));
+      expect(startupCall).toBeDefined();
+      expect(startupCall[2]).toEqual(expect.objectContaining({
+        priority: true,
+        immediate: true,
+        startupInjection: true,
+        verifySubmitAccepted: true,
+        onComplete: expect.any(Function),
+      }));
+    });
+  });
+});

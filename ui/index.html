@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:* https://api.openai.com; font-src 'self'">
+  <title>SquidRun</title>
+  <link rel="icon" type="image/x-icon" href="assets/squidrun-favicon.ico">
+  <link rel="stylesheet" href="node_modules/@xterm/xterm/css/xterm.css">
+  <link rel="stylesheet" href="styles/base.css">
+  <link rel="stylesheet" href="styles/layout.css">
+  <link rel="stylesheet" href="styles/panes.css">
+  <link rel="stylesheet" href="styles/state-bar.css">
+  <!-- Room remodel v2 (S467): the whitelist stylesheet is the ONLY room
+       style source; old room styles died whole at the link swap
+       (constitution: old classes die when v2 mounts). -->
+  <link rel="stylesheet" href="styles/squid-room-v2.css">
+  <link rel="stylesheet" href="styles/settings-panel.css">
+  <link rel="stylesheet" href="styles/tabs.css">
+  <link rel="stylesheet" href="styles/tabs/comms-console.css">
+  <link rel="stylesheet" href="styles/cockpit.css">
+</head>
+<body>
+  <div class="startup-loading-overlay" id="startupLoadingOverlay" aria-live="polite">
+    <div class="startup-loading-content">
+      <svg class="startup-loading-logo" viewBox="0 0 40 40" role="img" aria-label="SquidRun logo">
+        <path d="M20 5c7.2 0 12 5.2 12 12.6 0 5.8-4.2 10.4-12 10.4S8 23.4 8 17.6C8 10.2 12.8 5 20 5Z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"/>
+        <path d="M15 29c-1.6 2-3.6 3.6-6 4.8M18 29c-.8 2.3-1.3 4.5-1.5 6.8M22 29c.8 2.3 1.3 4.5 1.5 6.8M25 29c1.6 2 3.6 3.6 6 4.8" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+        <path d="M16 17.5h.01M24 17.5h.01" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <div class="startup-loading-spinner" aria-hidden="true"></div>
+      <div class="startup-loading-copy">
+        <span class="startup-loading-text" id="startupLoadingText">Starting SquidRun...</span>
+        <span class="startup-loading-stage-text" id="startupLoadingStageText">Bootstrapping workspace…</span>
+      </div>
+    </div>
+    <div class="startup-loading-progress-shell" aria-hidden="true">
+      <div class="startup-loading-progress-track">
+        <div class="startup-loading-progress-fill" id="startupLoadingProgressFill"></div>
+      </div>
+      <div class="startup-loading-meta">
+        <span class="startup-loading-eta" id="startupLoadingEta">Estimating…</span>
+        <span class="startup-loading-percent" id="startupLoadingPercent">0%</span>
+      </div>
+      <div class="startup-loading-checks" id="startupLoadingChecks"></div>
+    </div>
+  </div>
+
+  <div class="autonomy-onboarding-overlay" id="autonomyOnboardingOverlay" aria-hidden="true">
+    <div class="autonomy-onboarding-card" role="dialog" aria-modal="true" aria-labelledby="autonomyOnboardingTitle">
+      <h2 class="autonomy-onboarding-title" id="autonomyOnboardingTitle">Autonomy Consent</h2>
+      <p class="autonomy-onboarding-copy">
+        SquidRun can optionally launch agents with permission-bypass flags. That mode reduces prompts, but agents can run
+        powerful actions without native CLI confirmation.
+      </p>
+      <p class="autonomy-onboarding-copy">
+        You can change this anytime in <strong>Settings > Permissions</strong>.
+      </p>
+      <div class="autonomy-onboarding-actions">
+        <button type="button" class="btn btn-primary" id="autonomyEnableBtn">Enable Autonomy</button>
+        <button type="button" class="btn" id="autonomyDeclineBtn">Decline (Use Native Prompts)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Command Palette (Ctrl+K) -->
+  <div class="command-palette-overlay" id="commandPaletteOverlay">
+    <div class="command-palette" id="commandPalette">
+      <input type="text" class="command-palette-input" id="commandPaletteInput"
+             placeholder="Type a command..." autocomplete="off" spellcheck="false">
+      <div class="command-palette-list" id="commandPaletteList"></div>
+      <div class="command-palette-footer">
+        <span class="shortcut"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
+        <span class="shortcut">Enter Select</span>
+        <span class="shortcut">Esc Close</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="pane-role-modal-overlay" id="paneRoleModalOverlay" aria-hidden="true">
+    <div class="pane-role-modal" role="dialog" aria-modal="true" aria-labelledby="paneRoleModalTitle">
+      <div class="pane-role-modal-header">
+        <h2 class="pane-role-modal-title" id="paneRoleModalTitle">Role Bundle</h2>
+        <button type="button" class="pane-role-modal-close" id="paneRoleModalClose" aria-label="Close role bundle">
+          <svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="pane-role-modal-subtitle" id="paneRoleModalSubtitle"></div>
+      <ul class="pane-role-modal-list" id="paneRoleModalList"></ul>
+    </div>
+  </div>
+
+  <div class="pane-role-modal-overlay profile-modal-overlay" id="profileModalOverlay" aria-hidden="true">
+    <div class="pane-role-modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileModalTitle">
+      <div class="pane-role-modal-header">
+        <h2 class="pane-role-modal-title" id="profileModalTitle">User Profile</h2>
+        <button type="button" class="pane-role-modal-close" id="profileModalClose" aria-label="Close user profile">
+          <svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="pane-role-modal-subtitle" id="profileModalSubtitle">Set your preferences so agents can tune responses to your style and experience.</div>
+      <form class="profile-modal-form" id="profileModalForm" novalidate>
+        <label class="setting-field" for="profileNameInput">
+          <span class="setting-label">Name</span>
+          <input type="text" class="settings-input" id="profileNameInput" name="name" placeholder="How should agents address you?">
+          <span class="profile-required-indicator" id="profileNameRequiredIndicator" hidden>Required for first-time setup.</span>
+          <span class="setting-description">Shown to agents during startup context restoration.</span>
+        </label>
+
+        <label class="setting-field" for="profileExperienceSelect">
+          <span class="setting-label">Experience Level</span>
+          <select class="settings-select" id="profileExperienceSelect" name="experience_level">
+            <option value="">Select experience level</option>
+          </select>
+          <div class="profile-modal-helper" id="profileExperienceHelper" data-schema-key="experience_level" aria-live="polite">Experience-level guidance appears here from profile schema.</div>
+        </label>
+
+        <label class="setting-field" for="profileCommunicationStyleSelect">
+          <span class="setting-label">Communication Style</span>
+          <select class="settings-select" id="profileCommunicationStyleSelect" name="communication_style">
+            <option value="">Select communication style</option>
+          </select>
+          <div class="profile-modal-helper" id="profileCommunicationHelper" data-schema-key="communication_style" aria-live="polite">Communication-style guidance appears here from profile schema.</div>
+        </label>
+
+        <label class="setting-field" for="profileDomainExpertiseInput">
+          <span class="setting-label">Domain Expertise</span>
+          <textarea class="settings-input profile-modal-textarea" id="profileDomainExpertiseInput" name="domain_expertise" rows="3" placeholder="Summarize your technical strengths and project context."></textarea>
+          <span class="setting-description">Freeform context used to calibrate implementation depth and assumptions.</span>
+        </label>
+
+        <label class="setting-field" for="profileNotesInput">
+          <span class="setting-label">Notes</span>
+          <textarea class="settings-input profile-modal-textarea" id="profileNotesInput" name="notes" rows="4" placeholder="Any special instructions for agent behavior or collaboration style."></textarea>
+          <span class="setting-description">Optional reminders that should persist with your profile.</span>
+        </label>
+
+        <div class="profile-modal-actions">
+          <button type="button" class="btn profile-modal-cancel" id="profileModalCancel">Cancel</button>
+          <button type="button" class="btn profile-modal-save" id="profileModalSave">Save Profile</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <header class="header" data-window-drag-region="true">
+    <div class="header-brand" aria-label="SquidRun">
+      <span class="header-brand-dot" aria-hidden="true"></span>
+      <span class="header-brand-name">SquidRun</span>
+      <span class="header-session-badge pending" id="headerSessionBadge" title="Current app session">Session --</span>
+      <span class="dry-run-indicator" id="dryRunIndicator" style="display: none;">DRY RUN</span>
+    </div>
+    <nav class="header-actions" aria-label="SquidRun controls">
+      <button class="workspace-context" id="selectProjectBtn" type="button" title="Change workspace for the team">
+        <span class="project-path no-project" id="projectPath">SquidRun home</span>
+        <span class="workspace-change">change</span>
+      </button>
+      <button class="header-chip header-chip-primary btn-team-room" id="openTeamRoomBtn" type="button" title="Open the private Team Room">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H8l-4 3z"/><path d="M8 9h8"/><path d="M8 12h5"/></svg>
+        Team Room
+      </button>
+      <button class="header-chip settings-btn" id="settingsBtn" type="button" title="Open preferences">
+        Settings
+      </button>
+      <button class="header-power" id="fullRestartBtn" type="button" aria-label="Quit SquidRun" title="Quit SquidRun. Telegram goes offline until you reopen SquidRun; messages wait meanwhile.">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <aside class="settings-panel" id="settingsPanel" aria-label="Preferences">
+    <div class="settings-shell">
+      <div class="settings-header">
+        <div>
+          <p class="settings-eyebrow">SquidRun</p>
+          <h2 class="settings-heading">Preferences</h2>
+          <p class="settings-subtitle">Everything else runs itself. If it needs your attention, it belongs here in plain English.</p>
+        </div>
+        <button class="settings-close" id="settingsCloseBtn" type="button" aria-label="Close preferences">×</button>
+      </div>
+
+      <div class="preferences-list">
+        <div class="preference-row">
+          <div class="setting-copy">
+            <span class="setting-label">Talk to us with your voice</span>
+            <span class="setting-description">Use the mic button instead of typing.</span>
+          </div>
+          <div class="toggle" id="toggleVoiceInputEnabled" data-setting="voiceInputEnabled" role="switch" aria-label="Talk to us with your voice"></div>
+        </div>
+        <div class="preference-row">
+          <div class="setting-copy">
+            <span class="setting-label">Send as soon as I stop talking</span>
+            <span class="setting-description">Turn this off when you want to read it first.</span>
+          </div>
+          <div class="toggle" id="toggleVoiceAutoSend" data-setting="voiceAutoSend" role="switch" aria-label="Send voice automatically"></div>
+        </div>
+        <div class="preference-row">
+          <div class="setting-copy">
+            <span class="setting-label">Let the team work without asking every time</span>
+            <span class="setting-description">We still stop for money, customers, and things we cannot undo.</span>
+          </div>
+          <div class="toggle" id="toggleAllowAllPermissions" data-setting="allowAllPermissions" role="switch" aria-label="Let the team work without asking every time"></div>
+        </div>
+      </div>
+
+      <details class="developer-settings">
+        <summary>Developer</summary>
+        <p class="developer-settings-copy">Rare tools and test controls. Normal use never needs these.</p>
+        <div class="developer-settings-actions">
+          <button class="developer-action" id="panelBtn" type="button">Open tools &amp; secrets</button>
+          <details class="developer-subsection" id="devicePairingDetails">
+            <summary>Devices &amp; pairing</summary>
+            <p class="developer-settings-copy">Pair another SquidRun device or inspect an existing connection.</p>
+            <div class="device-pairing-grid">
+              <div class="settings-subgrid settings-two-col">
+                <div class="setting-field device-card">
+                  <span class="setting-label">Generate a code</span>
+                  <span class="setting-description">Create a six-character code for another device.</span>
+                  <button class="btn btn-sm device-pairing-action" id="pairingInitBtn" type="button">Generate pairing code</button>
+                  <div class="device-pairing-code" id="pairingCodeDisplay">------</div>
+                  <div class="device-pairing-timer" id="pairingCountdown">Expires in --s</div>
+                </div>
+                <div class="setting-field device-card">
+                  <label class="setting-label" for="pairingJoinCodeInput">Enter a code</label>
+                  <span class="setting-description">Join using the code shown by the other device.</span>
+                  <input type="text" id="pairingJoinCodeInput" class="settings-input device-pairing-input" maxlength="6" placeholder="AB3K9X" spellcheck="false" autocomplete="off">
+                  <button class="btn btn-sm device-pairing-action" id="pairingJoinBtn" type="button">Join device</button>
+                </div>
+              </div>
+              <div class="device-pairing-status" id="pairingStatus" aria-live="polite">Pairing idle.</div>
+              <div class="setting-field device-list-wrap">
+                <div class="device-list-heading">
+                  <div>
+                    <span class="setting-label">Connected devices</span>
+                    <span class="setting-description">Current bridge connection and pairing state.</span>
+                  </div>
+                  <button class="btn btn-sm" id="refreshDevicesBtn" type="button">Refresh</button>
+                </div>
+                <div class="device-list-table-wrap">
+                  <table class="device-list-table" id="pairedDevicesTable">
+                    <thead><tr><th>Device</th><th>Status</th><th>Paired</th></tr></thead>
+                    <tbody id="pairedDevicesTableBody"><tr><td colspan="3" class="device-list-empty">No devices yet.</td></tr></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </details>
+          <label class="developer-select-row" for="operatingModeSelect">
+            <span>Workspace mode</span>
+            <select class="settings-select" id="operatingModeSelect" data-setting="operatingMode">
+              <option value="developer">SquidRun home</option>
+              <option value="project">Attached project</option>
+            </select>
+          </label>
+          <div class="preference-row developer-row">
+            <div class="setting-copy"><span class="setting-label">Open developer tools</span></div>
+            <div class="toggle" id="toggleDevTools" data-setting="devTools" role="switch" aria-label="Open developer tools"></div>
+          </div>
+          <div class="preference-row developer-row">
+            <div class="setting-copy"><span class="setting-label">Dry-run mode</span></div>
+            <div class="toggle" id="toggleDryRun" data-setting="dryRun" role="switch" aria-label="Dry-run mode"></div>
+          </div>
+        </div>
+      </details>
+      <div id="permissionsWarning" hidden></div>
+    </div>
+  </aside>
+
+  <div class="state-bar" aria-hidden="true">
+    <div class="state-bar-left"></div>
+    <div class="state-bar-right">
+      <span class="owned-work-summary idle" id="ownedWorkSummary" title="What I'm carrying for you">Carrying: idle</span>
+      <span class="session-timer" id="sessionTimer" title="Session duration">Session: 0:00</span>
+      <span class="cost-indicator" id="costIndicator" title="Estimated session cost"></span>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="terminals-section" id="terminalsSection">
+      <div class="pane-layout">
+        <div class="main-pane-container">
+          <div class="pane" data-pane-id="1">
+          <div class="pane-header">
+            <span class="pane-title">
+              <span class="pane-rail" aria-hidden="true"></span>
+              <span class="pane-name">Mira</span>
+              <span class="pane-role-label">Architect</span>
+              <span class="cli-badge" id="cli-badge-1"></span>
+              <span class="agent-task" id="task-1"></span>
+            </span>
+            <div class="pane-header-right">
+              <span class="agent-health" id="health-1" title="Last output time">-</span>
+              <details class="pane-menu" data-pane-id="1">
+                <summary aria-label="Mira controls" title="Mira controls">•••</summary>
+                <div class="pane-menu-panel">
+                  <label class="pane-menu-field" for="model-selector-1"><span>Model</span>
+                    <select class="model-selector" id="model-selector-1" data-pane-id="1" title="Switch model for this pane">
+                      <option value="claude">Claude</option><option value="claude:fable" data-claude-model="claude-fable-5">Claude Fable 5</option><option value="claude:opus" data-claude-model="opus">Claude Opus</option><option value="claude:sonnet" data-claude-model="sonnet">Claude Sonnet</option><option value="codex">Codex</option><option value="gemini">Gemini</option>
+                    </select>
+                  </label>
+                  <button type="button" class="pane-menu-action fresh-session-btn" data-pane-id="1">Start a new conversation</button>
+                  <button type="button" class="pane-menu-action kickoff-btn" data-pane-id="1">Restart agent</button>
+                  <button type="button" class="pane-menu-action interrupt-btn" data-pane-id="1">Interrupt</button>
+                  <button type="button" class="pane-menu-action unstick-btn" data-pane-id="1">Send Enter</button>
+                  <button type="button" class="pane-menu-action pane-role-info-btn" data-pane-id="1">Role details</button>
+                  <button type="button" class="pane-menu-action pane-project" id="project-1" data-pane-id="1" title="Change workspace for Mira">Change pane workspace</button>
+                  <span class="pane-menu-action lock-icon" id="lock-icon-1" data-pane-id="1" role="button" tabindex="0">Toggle input lock</span>
+                  <div class="pane-actions" aria-hidden="true"></div>
+                </div>
+              </details>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-1"></div>
+          </div>
+          <!-- Command bar - under pane 1 only -->
+          <form class="command-bar" autocomplete="off" onsubmit="return false;">
+            <textarea class="command-input" id="broadcastInput" rows="1"
+                   placeholder="Message Architect / pane 1 (Enter to send)"
+                   title="Send message to Architect pane"
+                   autocomplete="new-password" autocorrect="off" autocapitalize="off"
+                   spellcheck="false" data-lpignore="true" data-form-type="other"
+                   data-1p-ignore="true"
+                   name="broadcast-input-random-8472"
+                   readonly onfocus="this.removeAttribute('readonly');"></textarea>
+            <span class="command-delivery-status" id="commandDeliveryStatus" title="Message delivery status"></span>
+            <button type="button" class="btn voice-btn" id="voiceInputBtn" title="Toggle voice input"><svg class="cmd-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></button>
+            <button type="button" class="btn send-btn" id="broadcastBtn" title="Send message"><svg class="cmd-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+          </form>
+          <div class="mira-live-reply" id="miraLiveReply" data-state="idle" aria-live="polite" hidden></div>
+        </div>
+        <div class="side-panes-container">
+          <div class="pane" data-pane-id="2">
+          <div class="pane-header">
+            <span class="pane-title"><span class="pane-rail" aria-hidden="true"></span><span class="pane-name">Rook</span><span class="pane-role-label">Builder</span><span class="cli-badge" id="cli-badge-2"></span><span class="agent-task" id="task-2"></span></span>
+            <div class="pane-header-right">
+              <span class="agent-health" id="health-2" title="Last output time">-</span>
+              <details class="pane-menu" data-pane-id="2"><summary aria-label="Rook controls" title="Rook controls">•••</summary><div class="pane-menu-panel">
+                <label class="pane-menu-field" for="model-selector-2"><span>Model</span><select class="model-selector" id="model-selector-2" data-pane-id="2" title="Switch model for this pane"><option value="claude">Claude</option><option value="claude:fable" data-claude-model="claude-fable-5">Claude Fable 5</option><option value="claude:opus" data-claude-model="opus">Claude Opus</option><option value="claude:sonnet" data-claude-model="sonnet">Claude Sonnet</option><option value="codex">Codex</option><option value="gemini">Gemini</option></select></label>
+                <button type="button" class="pane-menu-action fresh-session-btn" data-pane-id="2">Start a new conversation</button><button type="button" class="pane-menu-action kickoff-btn" data-pane-id="2">Restart agent</button><button type="button" class="pane-menu-action interrupt-btn" data-pane-id="2">Interrupt</button><button type="button" class="pane-menu-action unstick-btn" data-pane-id="2">Send Enter</button><button type="button" class="pane-menu-action expand-btn" data-pane-id="2">Expand pane</button><button type="button" class="pane-menu-action pane-role-info-btn" data-pane-id="2">Role details</button><button type="button" class="pane-menu-action pane-project" id="project-2" data-pane-id="2" title="Change workspace for Rook">Change pane workspace</button><span class="pane-menu-action lock-icon" id="lock-icon-2" data-pane-id="2" role="button" tabindex="0">Toggle input lock</span><div class="pane-actions" aria-hidden="true"></div>
+              </div></details>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-2"></div>
+        </div>
+
+        <div class="pane" data-pane-id="3">
+          <div class="pane-header">
+            <span class="pane-title"><span class="pane-rail" aria-hidden="true"></span><span class="pane-name">Vera</span><span class="pane-role-label">Oracle</span><span class="cli-badge" id="cli-badge-3"></span><span class="agent-task" id="task-3"></span></span>
+            <div class="pane-header-right">
+              <span class="agent-health" id="health-3" title="Last output time">-</span>
+              <details class="pane-menu" data-pane-id="3"><summary aria-label="Vera controls" title="Vera controls">•••</summary><div class="pane-menu-panel">
+                <label class="pane-menu-field" for="model-selector-3"><span>Model</span><select class="model-selector" id="model-selector-3" data-pane-id="3" title="Switch model for this pane"><option value="claude">Claude</option><option value="claude:fable" data-claude-model="claude-fable-5">Claude Fable 5</option><option value="claude:opus" data-claude-model="opus">Claude Opus</option><option value="claude:sonnet" data-claude-model="sonnet">Claude Sonnet</option><option value="codex">Codex</option><option value="gemini">Gemini</option></select></label>
+                <button type="button" class="pane-menu-action fresh-session-btn" data-pane-id="3">Start a new conversation</button><button type="button" class="pane-menu-action kickoff-btn" data-pane-id="3">Restart agent</button><button type="button" class="pane-menu-action interrupt-btn" data-pane-id="3">Interrupt</button><button type="button" class="pane-menu-action unstick-btn" data-pane-id="3">Send Enter</button><button type="button" class="pane-menu-action expand-btn" data-pane-id="3">Expand pane</button><button type="button" class="pane-menu-action pane-role-info-btn" data-pane-id="3">Role details</button><button type="button" class="pane-menu-action pane-project" id="project-3" data-pane-id="3" title="Change workspace for Vera">Change pane workspace</button><span class="pane-menu-action lock-icon" id="lock-icon-3" data-pane-id="3" role="button" tabindex="0">Toggle input lock</span><div class="pane-actions" aria-hidden="true"></div>
+              </div></details>
+            </div>
+          </div>
+          <div class="pane-terminal" id="terminal-3"></div>
+        </div>
+
+        </div>
+      </div>
+
+      <section class="squid-room-surface" id="squidRoomSurface" aria-label="Squid Room" hidden>
+        <div class="squid-room-header">
+          <div>
+            <div class="squid-room-eyebrow">Squid Room</div>
+            <h2 class="squid-room-title">Apps and Arms</h2>
+          </div>
+          <button type="button" class="btn squid-room-refresh" id="squidRoomRefreshBtn" title="Refresh Squid Room state">Refresh</button>
+        </div>
+        <div class="squid-room-grid" id="squidRoomGrid">
+          <details class="squid-room-app" data-app-room-id="exampleapp" open>
+            <summary class="squid-room-app-header">
+              <div>
+                <h3 class="squid-room-app-title">ExampleApp</h3>
+                <div class="squid-room-app-status" id="squidRoomExampleAppStatus"></div>
+              </div>
+              <div class="squid-room-app-header-right">
+                <div class="squid-room-counts" id="squidRoomExampleAppCounts">
+                  <span>0 arms</span>
+                </div>
+                <button type="button" class="squid-room-app-toggle-btn" data-app-toggle="exampleapp" aria-expanded="true" aria-label="Collapse this app section" data-tooltip="Collapse this app section">
+                  <span class="squid-room-app-toggle-label">Collapse</span>
+                </button>
+              </div>
+            </summary>
+            <div class="squid-room-live-panes" id="squidRoomExampleAppLivePanes"></div>
+          </details>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="right-panel" id="rightPanel">
+      <div class="panel-tabs">
+        <!-- Primary tabs (always visible) -->
+        <button class="panel-tab" data-tab="bridge" data-tab-group="primary" title="System dashboard — agents, metrics, events">Bridge</button>
+
+        <button class="panel-tab" data-tab="comms" data-tab-group="primary" title="Agent + external comms console">
+          <svg class="tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 12h2"></path>
+            <path d="M18 12h2"></path>
+            <path d="M7 12a5 5 0 0 1 10 0"></path>
+            <path d="M9 12a3 3 0 0 1 6 0"></path>
+            <path d="M12 12v.01"></path>
+          </svg>
+          Comms
+        </button>
+        <button class="panel-tab active" data-tab="screenshots" data-tab-group="primary" title="Drag & drop images for agents to reference">Screenshots</button>
+        <button class="panel-tab" data-tab="oracle" data-tab-group="primary" title="AI image generation">Image Gen</button>
+        <button class="panel-tab" data-tab="voice" data-tab-group="primary" title="Voice broker status and controls">Voice</button>
+
+        <button class="panel-tab" data-tab="api-keys" data-tab-group="primary" title="Secrets management">Secrets</button>
+      </div>
+      <div class="panel-content">
+        <div class="tab-pane" id="tab-bridge">
+          <div class="tab-title">Bridge</div>
+          <div class="tab-description">Agent status, system metrics, event stream</div>
+          <div class="bridge-agents" id="bridgeAgents"></div>
+          <div class="bridge-metrics" id="bridgeMetrics"></div>
+          <div class="bridge-transport" id="bridgeTransport"></div>
+          <div class="bridge-stream" id="bridgeStream">
+            <div class="bridge-stream-empty">Waiting for events...</div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-comms">
+          <div class="tab-title">Comms Console</div>
+          <div class="tab-description">Live agent transport messages and external Telegram/SMS routing.</div>
+          <div class="comms-console-shell">
+            <div class="comms-console-list" id="commsConsoleList">
+              <div class="comms-console-empty">Waiting for comms traffic...</div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-pane active" id="tab-screenshots">
+          <div class="tab-title">Screenshots</div>
+          <div class="tab-description">Drag & drop images or paste from clipboard</div>
+          <div class="screenshot-dropzone" id="screenshotDropzone">
+            <div class="screenshot-dropzone-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="12" cy="13" r="3"/><path d="M5 3v2"/><path d="M19 3v2"/></svg></div>
+            <div class="screenshot-dropzone-text">Drop images here or click to browse</div>
+          </div>
+          <div class="screenshot-list" id="screenshotList">
+            <div class="screenshot-empty">No screenshots yet</div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-oracle">
+          <div class="tab-title">Image Generation</div>
+          <div class="tab-description">Generate images with AI</div>
+
+          <div class="oracle-controls">
+            <textarea id="oraclePromptInput"
+                      class="oracle-prompt-input"
+                      rows="3"
+                      placeholder="Describe the image you want to generate..."></textarea>
+            <div class="oracle-options">
+              <div class="oracle-option">
+                <label class="oracle-option-label">Style</label>
+                <select id="oracleStyleSelect" class="oracle-select">
+                  <option value="realistic_image">Realistic</option>
+                  <option value="digital_illustration">Digital Illustration</option>
+                  <option value="vector_illustration">Vector</option>
+                </select>
+              </div>
+              <div class="oracle-option">
+                <label class="oracle-option-label">Size</label>
+                <select id="oracleSizeSelect" class="oracle-select">
+                  <option value="1024x1024">Square (1024x1024)</option>
+                  <option value="1365x1024">Landscape (1365x1024)</option>
+                  <option value="1024x1365">Portrait (1024x1365)</option>
+                </select>
+              </div>
+            </div>
+            <button class="btn btn-primary" id="oracleGenerateBtn" title="Generate image">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg> Generate
+            </button>
+          </div>
+
+          <div class="oracle-results" id="oracleResults">
+            <div class="oracle-empty">Enter a prompt and click Generate to create an image</div>
+          </div>
+
+          <div class="oracle-gallery" id="oracleGallery">
+            <div class="oracle-gallery-title">All Images</div>
+            <div class="oracle-gallery-list" id="oracleGalleryList">
+              <div class="oracle-gallery-empty">No images yet</div>
+            </div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-voice">
+          <div class="tab-title">Voice Broker</div>
+          <div class="tab-description">Realtime voice ingress boundary status and controls.</div>
+          <div class="voice-broker-panel" id="voiceBrokerPanel" data-state="unavailable">
+            <div class="voice-broker-card">
+              <div class="voice-broker-status-grid">
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">State</span>
+                  <span class="voice-broker-value voice-broker-pill" id="voiceBrokerState">Unavailable</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Readiness</span>
+                  <span class="voice-broker-value" id="voiceBrokerReadiness">Checking</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Endpoint</span>
+                  <span class="voice-broker-value" id="voiceBrokerEndpoint">Checking</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Model</span>
+                  <span class="voice-broker-value" id="voiceBrokerModel">Checking</span>
+                </div>
+                <div class="voice-broker-row">
+                  <span class="voice-broker-label">Journal</span>
+                  <span class="voice-broker-value" id="voiceBrokerJournal">Checking</span>
+                </div>
+              </div>
+            </div>
+            <div class="voice-broker-controls">
+              <button type="button" class="btn btn-secondary" id="voiceBrokerRefreshBtn" title="Refresh voice broker status">Refresh</button>
+              <button type="button" class="btn btn-secondary" id="voiceBrokerStartBtn" title="Start voice broker">Start</button>
+              <button type="button" class="btn btn-secondary" id="voiceBrokerStopBtn" title="Stop voice broker">Stop</button>
+              <button type="button" class="btn btn-secondary" id="voiceBrokerRestartBtn" title="Restart voice broker">Restart</button>
+            </div>
+            <div class="voice-broker-session">
+              <div class="voice-broker-row">
+                <span class="voice-broker-label">Session</span>
+                <span class="voice-broker-value voice-session-status" id="voiceSessionStatus" data-state="idle">Idle</span>
+              </div>
+              <div class="voice-broker-controls">
+                <button type="button" class="btn btn-secondary" id="voiceSessionStartBtn" title="Connect live voice session">Connect</button>
+                <button type="button" class="btn btn-secondary" id="voicePushToTalkBtn" title="Hold to talk">Hold to Talk</button>
+                <button type="button" class="btn btn-secondary" id="voiceMuteBtn" title="Mute microphone">Mute</button>
+                <button type="button" class="btn btn-secondary" id="voiceInterruptBtn" title="Interrupt voice response">Interrupt</button>
+                <button type="button" class="btn btn-secondary" id="voiceSessionStopBtn" title="Stop live voice session">End</button>
+              </div>
+              <div class="voice-disclosure" id="voiceDisclosure">Spoken Mira replies use AI-generated voice audio. Audio may be sent to OpenAI while a voice session is active.</div>
+              <pre class="voice-session-log" id="voiceSessionLog" aria-live="polite"></pre>
+            </div>
+            <div class="voice-broker-error" id="voiceBrokerError" hidden></div>
+          </div>
+        </div>
+        <div class="tab-pane" id="tab-api-keys">
+          <div class="tab-title">Secrets</div>
+          <div class="tab-description">Manage API keys and service credentials</div>
+          <div class="api-keys-grid">
+            <div class="api-keys-field">
+              <label class="api-keys-label">Anthropic (Claude)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyAnthropic"
+                       placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyAnthropicMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">OpenAI (Codex / Image Gen)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyOpenai"
+                       placeholder="sk-..." autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyOpenaiMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Google (Gemini)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyGoogle"
+                       placeholder="AIza..." autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyGoogleMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Recraft (Image Gen)</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyRecraft"
+                       placeholder="Recraft API key" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyRecraftMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">GoDaddy API Key</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyGodaddyApiKey"
+                       placeholder="GoDaddy API key" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyGodaddyApiKeyMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">GoDaddy API Secret</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyGodaddyApiSecret"
+                       placeholder="GoDaddy API secret" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyGodaddyApiSecretMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">GitHub Token</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyGithubToken"
+                       placeholder="GitHub personal access token" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyGithubTokenMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Vercel Token</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyVercelToken"
+                       placeholder="Vercel token" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyVercelTokenMask">Not set</span>
+              </div>
+            </div>
+          </div>
+          <div class="api-keys-section-header" id="twilioSectionToggle" style="cursor: pointer; padding: 8px 0; font-weight: 600; color: var(--text-secondary); user-select: none;">
+            <span class="api-keys-section-arrow" style="margin-right: 6px; display: inline-block; transition: transform 0.2s;">&#9654;</span> Twilio SMS
+          </div>
+          <div class="api-keys-section-content" id="twilioSectionContent" style="display: none;">
+            <div class="api-keys-field">
+              <label class="api-keys-label">Twilio Account SID</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyTwilioSid"
+                       placeholder="Twilio Account SID (starts with AC)" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTwilioSidMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Twilio Auth Token</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyTwilioAuth"
+                       placeholder="Twilio Auth Token" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTwilioAuthMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Twilio Phone Number</label>
+              <div class="api-keys-input-row">
+                <input type="text" class="api-keys-input" id="apiKeyTwilioPhone"
+                       placeholder="+1xxxxxxxxxx (your Twilio number)" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTwilioPhoneMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">SMS Recipient</label>
+              <div class="api-keys-input-row">
+                <input type="text" class="api-keys-input" id="apiKeySmsRecipient"
+                       placeholder="+1xxxxxxxxxx (your phone number)" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeySmsRecipientMask">Not set</span>
+              </div>
+            </div>
+          </div>
+          <div class="api-keys-section-header" id="telegramSectionToggle" style="cursor: pointer; padding: 8px 0; font-weight: 600; color: var(--text-secondary); user-select: none;">
+            <span class="api-keys-section-arrow" style="margin-right: 6px; display: inline-block; transition: transform 0.2s;">&#9654;</span> Telegram Bot
+          </div>
+          <div class="api-keys-section-content" id="telegramSectionContent" style="display: none;">
+            <div class="api-keys-field">
+              <label class="api-keys-label">Bot Token</label>
+              <div class="api-keys-input-row">
+                <input type="password" class="api-keys-input" id="apiKeyTelegramToken"
+                       placeholder="Bot token from @BotFather" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTelegramTokenMask">Not set</span>
+              </div>
+            </div>
+            <div class="api-keys-field">
+              <label class="api-keys-label">Chat ID</label>
+              <div class="api-keys-input-row">
+                <input type="text" class="api-keys-input" id="apiKeyTelegramChatId"
+                       placeholder="Your Telegram chat ID" autocomplete="off" spellcheck="false">
+                <span class="api-keys-mask" id="apiKeyTelegramChatIdMask">Not set</span>
+              </div>
+            </div>
+          </div>
+          <div class="api-keys-actions">
+            <button class="btn btn-primary btn-sm" id="saveApiKeysBtn" title="Save secrets to .env file">Save Keys</button>
+            <span class="api-keys-status" id="apiKeyStatus"></span>
+          </div>
+          <div class="api-keys-info">Keys stored in .env (gitignored). Active immediately after save.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-bar">
+    <span id="connectionStatus">Initializing...</span>
+    <span class="voice-status" id="voiceStatus" title="Voice input status"></span>
+    <span id="heartbeatIndicator" class="heartbeat-indicator idle" style="display: none;">HB: IDLE (10m)</span>
+    <span class="status-shortcuts" data-main-window-shortcuts="true">Press Ctrl+1-4 to focus pane | Enter to send to Mira | Use /task to auto-route</span>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

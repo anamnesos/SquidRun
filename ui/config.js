@@ -1,0 +1,697 @@
+/**
+ * Shared configuration for SquidRun
+ * Used by main.js, terminal-daemon.js, and tests
+ */
+
+const path = require('path');
+const os = require('os');
+const fs = require('fs');
+const { execFileSync } = require('child_process');
+const {
+  getActiveProfileName,
+  getProfileWebSocketPort,
+  isMainProfile,
+  normalizeProfileName,
+  namespaceCoordRelPath,
+  getProfilePipePath,
+  getProfileProjectRootOverride,
+} = require('./profile');
+const {
+  DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+  resolveExplicitDataRoot,
+  resolveDataRootFromInstallManifest,
+  resolveInstalledDataRoot,
+  resolveInstalledGlobalStateRoot,
+} = require('./modules/installed-data-root');
+
+function envFlagEnabled(name, defaultValue = true) {
+  const raw = process.env[name];
+  if (typeof raw !== 'string') return defaultValue;
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) return defaultValue;
+  if (['0', 'false', 'off', 'no', 'disabled'].includes(normalized)) return false;
+  if (['1', 'true', 'on', 'yes', 'enabled'].includes(normalized)) return true;
+  return defaultValue;
+}
+
+const ACTIVE_PROFILE = getActiveProfileName();
+const PIPE_PATH = getProfilePipePath(ACTIVE_PROFILE, os.platform());
+const DEFAULT_WEBSOCKET_PORT = 9900;
+const WEBSOCKET_SETTINGS_RELPATH = path.join('settings', 'websocket.json');
+const WEBSOCKET_PORT_FIELDS = Object.freeze([
+  'webSocketPort',
+  'websocketPort',
+  'websocket_port',
+  'wsPort',
+  'port',
+]);
+
+// Workspace paths
+const LEGACY_WORKSPACE_PATH = path.join(__dirname, '..', 'workspace');
+const PROJECT_ROOT_FALLBACK = path.resolve(path.join(LEGACY_WORKSPACE_PATH, '..'));
+const PROJECT_ROOT_DISCOVERY_CWD = path.resolve(path.join(__dirname, '..'));
+
+function isPackagedRuntimePath(targetPath = '') {
+  const normalized = String(targetPath || '')
+    .replace(/\\/g, '/')
+    .toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes('/resources/app.asar')
+    || normalized.includes('/resources/app.asar.unpacked')
+    || normalized.includes('.app/contents/')
+  );
+}
+
+function discoverProjectRoot(startDir = PROJECT_ROOT_DISCOVERY_CWD) {
+  const profileRoot = getProfileProjectRootOverride(ACTIVE_PROFILE);
+  if (profileRoot) {
+    return profileRoot;
+  }
+
+  const explicitDataRoot = resolveExplicitDataRoot(process.env);
+  if (explicitDataRoot?.path) {
+    return explicitDataRoot.path;
+  }
+
+  // Explicit env var takes priority — set by .squidrun/bin/ shell launchers.
+  const envRoot = process.env.SQUIDRUN_PROJECT_ROOT;
+  if (envRoot) {
+    const resolved = path.resolve(envRoot);
+    if (fs.existsSync(resolved)) return resolved;
+  }
+  if (isPackagedRuntimePath(startDir)) {
+    return resolveInstalledDataRoot({
+      cwd: process.cwd(),
+      defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+      execPath: process.execPath,
+      homePath: os.homedir(),
+      resourcesPath: process.resourcesPath,
+      runtimePath: startDir,
+    }).path;
+  }
+  try {
+    const output = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: startDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const resolved = String(output || '').trim();
+    if (resolved) return path.resolve(resolved);
+  } catch (_) {
+    // Fall back when git is unavailable or cwd is not in a git worktree.
+  }
+  // Check if __dirname is inside .squidrun/bin/runtime — packaged bin layout.
+  const normalizedDir = startDir.replace(/\\/g, '/');
+  if (normalizedDir.includes('.squidrun/bin/runtime')) {
+    const idx = normalizedDir.indexOf('.squidrun/bin/runtime');
+    const candidate = path.resolve(normalizedDir.slice(0, idx));
+    if (fs.existsSync(path.join(candidate, '.squidrun', 'link.json'))) {
+      return candidate;
+    }
+  }
+  return PROJECT_ROOT_FALLBACK;
+}
+
+function resolveMachineGlobalStateRoot(options = {}) {
+  const env = options.env || process.env;
+  const platform = options.platform || os.platform();
+  const homePath = options.homePath || os.homedir();
+  if (platform === 'win32') {
+    return path.join(env.APPDATA || path.join(homePath, 'AppData', 'Roaming'), 'squidrun');
+  }
+  return path.join(homePath, '.config', 'squidrun');
+}
+
+function resolveGlobalStateRoot(options = {}) {
+  const env = options.env || process.env;
+  const explicitDataRoot = resolveExplicitDataRoot(env);
+  const explicitGlobalStateRoot = resolveInstalledGlobalStateRoot(explicitDataRoot);
+  if (explicitGlobalStateRoot) {
+    return explicitGlobalStateRoot;
+  }
+
+  const startDir = options.startDir || PROJECT_ROOT_DISCOVERY_CWD;
+  const runtimePath = options.runtimePath || startDir;
+  if (isPackagedRuntimePath(runtimePath) || isPackagedRuntimePath(startDir)) {
+    const installedDataRoot = resolveInstalledDataRoot({
+      cwd: options.cwd || process.cwd(),
+      defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+      env,
+      execPath: options.execPath || process.execPath,
+      homePath: options.homePath || os.homedir(),
+      installDir: options.installDir,
+      manifestPath: options.manifestPath,
+      resourcesPath: options.resourcesPath || process.resourcesPath,
+      runtimePath,
+      startDir,
+    });
+    const installedGlobalStateRoot = resolveInstalledGlobalStateRoot(installedDataRoot);
+    if (installedGlobalStateRoot) {
+      return installedGlobalStateRoot;
+    }
+  }
+
+  return resolveMachineGlobalStateRoot(options);
+}
+
+function normalizeWebSocketPort(value) {
+  const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 65535) return null;
+  return parsed;
+}
+
+function readJsonFileIfPresent(filePath, options = {}) {
+  const fsImpl = options.fs || fs;
+  try {
+    if (!filePath || !fsImpl.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fsImpl.readFileSync(filePath, 'utf8'));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getConfiguredWebSocketPort(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
+  for (const field of WEBSOCKET_PORT_FIELDS) {
+    const port = normalizeWebSocketPort(payload[field]);
+    if (port) return { port, field };
+  }
+  return null;
+}
+
+function resolveDataRootWebSocketSettings(dataRoot, options = {}) {
+  const root = normalizeProjectPath(dataRoot);
+  if (!root) return null;
+  const settingsPath = path.join(root, '.squidrun', WEBSOCKET_SETTINGS_RELPATH);
+  const settings = readJsonFileIfPresent(settingsPath, options);
+  const configured = getConfiguredWebSocketPort(settings);
+  if (!configured) return null;
+  return {
+    port: configured.port,
+    source: `settings:${settingsPath}:${configured.field}`,
+    settingsPath,
+    dataRoot: root,
+    field: configured.field,
+  };
+}
+
+function resolveManifestWebSocketPort(installResult) {
+  const configured = getConfiguredWebSocketPort(installResult?.manifest);
+  if (!configured) return null;
+  const manifestPath = installResult?.manifestPath || null;
+  return {
+    port: configured.port,
+    source: manifestPath
+      ? `manifest:${manifestPath}:${configured.field}`
+      : `manifest:${configured.field}`,
+    manifestPath,
+    dataRoot: installResult?.path || null,
+    field: configured.field,
+  };
+}
+
+function resolveInstallManifestForWebSocket(options = {}) {
+  const startDir = options.startDir || PROJECT_ROOT_DISCOVERY_CWD;
+  const runtimePath = options.runtimePath || startDir;
+  return resolveDataRootFromInstallManifest({
+    cwd: options.cwd || process.cwd(),
+    defaultDirName: DEFAULT_EXTERNAL_WORKSPACE_DIRNAME,
+    env: options.env || process.env,
+    execPath: options.execPath || process.execPath,
+    homePath: options.homePath || os.homedir(),
+    installDir: options.installDir,
+    manifestPath: options.manifestPath,
+    resourcesPath: options.resourcesPath || process.resourcesPath,
+    runtimePath,
+    startDir,
+  });
+}
+
+function resolveWebSocketPortInfo(options = {}) {
+  const env = options.env || process.env;
+  const explicitPort = Object.prototype.hasOwnProperty.call(options, 'port')
+    ? normalizeWebSocketPort(options.port)
+    : null;
+  if (explicitPort) {
+    return {
+      port: explicitPort,
+      source: 'option:port',
+    };
+  }
+
+  const explicitDataRoot = resolveExplicitDataRoot(env);
+  const explicitDataRootSettings = resolveDataRootWebSocketSettings(explicitDataRoot?.path, options);
+  if (explicitDataRootSettings) {
+    return explicitDataRootSettings;
+  }
+
+  const installResult = resolveInstallManifestForWebSocket(options);
+  const installDataRootSettings = resolveDataRootWebSocketSettings(installResult?.path, options);
+  if (installDataRootSettings) {
+    return installDataRootSettings;
+  }
+
+  const manifestPort = resolveManifestWebSocketPort(installResult);
+  if (manifestPort) {
+    return manifestPort;
+  }
+
+  const profileName = normalizeProfileName(
+    options.profileName
+    || env.SQUIDRUN_PROFILE
+    || getActiveProfileName()
+    || 'main'
+  );
+  const profilePort = getProfileWebSocketPort(profileName, DEFAULT_WEBSOCKET_PORT);
+  return {
+    port: normalizeWebSocketPort(profilePort) || DEFAULT_WEBSOCKET_PORT,
+    source: `profile:${profileName || 'main'}`,
+    profileName: profileName || 'main',
+  };
+}
+
+function resolveWebSocketPort(options = {}) {
+  return resolveWebSocketPortInfo(options).port;
+}
+
+const DEFAULT_PROJECT_ROOT = discoverProjectRoot();
+const WORKSPACE_PATH = path.join(DEFAULT_PROJECT_ROOT, '.squidrun');
+const GLOBAL_STATE_ROOT = resolveGlobalStateRoot();
+const legacyCoordFallbackWarnings = new Set();
+let activeProjectRoot = DEFAULT_PROJECT_ROOT;
+
+// Legacy pane working-directory fallback for unknown pane IDs.
+// Active pane cwd resolution now uses project root via resolvePaneCwd().
+const INSTANCE_DIRS = {
+  '1': path.join(WORKSPACE_PATH, 'instances', 'architect'),
+  '2': path.join(WORKSPACE_PATH, 'instances', 'builder'),
+  '3': path.join(WORKSPACE_PATH, 'instances', 'oracle'),
+};
+
+// Pane role names. These are the stable role labels used by logs, routing,
+// startup contracts, and tests that need the machine role to stay legible.
+const PANE_ROLES = {
+  '1': 'Architect',
+  '2': 'Builder',
+  '3': 'Oracle',
+};
+
+// User-facing names. Keep these separate from role IDs/role labels so a persona
+// name can change without breaking hm-send targets, trigger files, or routing.
+const PANE_DISPLAY_NAMES = {
+  '1': 'Mira',
+  '2': 'Rook',
+  '3': 'Vera',
+};
+
+function getPaneDisplayName(paneId, options = {}) {
+  const id = String(paneId || '');
+  const role = PANE_ROLES[id] || `Pane ${id}`;
+  const display = PANE_DISPLAY_NAMES[id] || role;
+  if (options.includeRole === true && display !== role) {
+    return `${display} (${role})`;
+  }
+  return display;
+}
+
+const PANE_ROLE_BUNDLES = {
+  '1': {
+    heading: getPaneDisplayName('1', { includeRole: true }),
+    members: [
+      PANE_DISPLAY_NAMES['1'],
+      PANE_ROLES['1'],
+      'Data Engineer',
+      'Reviewer',
+      'Release Manager',
+      'UX Researcher',
+      'Memory Steward',
+    ],
+  },
+  '2': {
+    heading: PANE_ROLES['2'],
+    members: [
+      'Frontend',
+      'Backend',
+      'DevOps',
+      'SRE',
+      'Tester',
+      'Validator',
+      'Security',
+      'Context Optimizer',
+    ],
+  },
+  '3': {
+    heading: PANE_ROLES['3'],
+    members: [
+      'Investigator',
+      'Docs',
+      'Eval/Benchmark',
+    ],
+  },
+};
+
+// Short names for space-constrained UI elements
+const SHORT_AGENT_NAMES = {
+  '1': 'Mira',
+  '2': 'Builder',
+  '3': 'Oracle',
+  'system': 'Sys',
+  'router': 'Rtr',
+  'user': 'User'
+};
+
+// Canonical role identifiers (lowercase)
+const ROLE_NAMES = ['architect', 'builder', 'oracle'];
+
+// Backward-compatible role aliases -> canonical role id
+const BACKWARD_COMPAT_ROLE_ALIASES = {
+  lead: 'architect',
+  arch: 'architect',
+  director: 'architect',
+  // Builder aliases (legacy DevOps + Infra + Backend names)
+  devops: 'builder',
+  orchestrator: 'builder',
+  infra: 'builder',
+  infrastructure: 'builder',
+  backend: 'builder',
+  'worker-b': 'builder',
+  workerb: 'builder',
+  'implementer-b': 'builder',
+  implementerb: 'builder',
+  back: 'builder',
+  // Oracle aliases (legacy Analyst / Ana names)
+  analyst: 'oracle',
+  ana: 'oracle',
+  investigator: 'oracle',
+};
+
+// Canonical role id -> pane id
+const ROLE_ID_MAP = {
+  architect: '1',
+  builder: '2',
+  oracle: '3',
+};
+
+// Deprecated export alias retained for out-of-scope runtime/tests.
+const LEGACY_ROLE_ALIASES = BACKWARD_COMPAT_ROLE_ALIASES;
+
+const BACKGROUND_BUILDER_OWNER_PANE_ID = '2';
+const BACKGROUND_BUILDER_MAX_AGENTS = 3;
+const BACKGROUND_BUILDER_SLOT_IDS = ['1', '2', '3'];
+const BACKGROUND_BUILDER_ALIAS_TO_PANE = Object.freeze({
+  'builder-bg-1': 'bg-2-1',
+  'builder-bg-2': 'bg-2-2',
+  'builder-bg-3': 'bg-2-3',
+});
+const BACKGROUND_BUILDER_PANE_TO_ALIAS = Object.freeze({
+  'bg-2-1': 'builder-bg-1',
+  'bg-2-2': 'builder-bg-2',
+  'bg-2-3': 'builder-bg-3',
+});
+const BACKGROUND_BUILDER_PANE_IDS = Object.freeze(
+  BACKGROUND_BUILDER_SLOT_IDS.map((slot) => `bg-${BACKGROUND_BUILDER_OWNER_PANE_ID}-${slot}`)
+);
+
+const PANE_IDS = Object.keys(PANE_ROLES);
+
+function normalizeBackgroundBuilderAlias(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  return BACKGROUND_BUILDER_ALIAS_TO_PANE[normalized] ? normalized : null;
+}
+
+function normalizeBackgroundBuilderPaneId(value) {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return null;
+  return BACKGROUND_BUILDER_PANE_TO_ALIAS[normalized] ? normalized : null;
+}
+
+function resolveBackgroundBuilderPaneId(target) {
+  const alias = normalizeBackgroundBuilderAlias(target);
+  if (alias) return BACKGROUND_BUILDER_ALIAS_TO_PANE[alias];
+  return normalizeBackgroundBuilderPaneId(target);
+}
+
+function resolveBackgroundBuilderAlias(target) {
+  const paneId = resolveBackgroundBuilderPaneId(target);
+  if (!paneId) return null;
+  return BACKGROUND_BUILDER_PANE_TO_ALIAS[paneId] || null;
+}
+
+function isBackgroundBuilderTarget(target) {
+  return Boolean(resolveBackgroundBuilderPaneId(target));
+}
+
+function normalizeProjectPath(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? path.resolve(trimmed) : null;
+}
+
+function getProjectRoot() {
+  return activeProjectRoot;
+}
+
+function getActiveProfile() {
+  return getActiveProfileName();
+}
+
+function getSquidrunRoot() {
+  return DEFAULT_PROJECT_ROOT;
+}
+
+function setProjectRoot(projectRoot) {
+  activeProjectRoot = normalizeProjectPath(projectRoot) || DEFAULT_PROJECT_ROOT;
+  return activeProjectRoot;
+}
+
+function resetProjectRoot() {
+  return setProjectRoot(null);
+}
+
+function getCoordRoot() {
+  return path.join(getProjectRoot(), '.squidrun');
+}
+
+function resolvePaneCwd(paneId, options = {}) {
+  const id = String(paneId);
+  const paneProjects = options.paneProjects && typeof options.paneProjects === 'object'
+    ? options.paneProjects
+    : null;
+  const projectRoot = normalizeProjectPath(
+    options.projectRoot
+    || options.activeProject
+    || options.stateProject
+  );
+
+  const paneProject = normalizeProjectPath(paneProjects ? paneProjects[id] : null);
+  if (paneProject) {
+    return paneProject;
+  }
+
+  const isKnownPane = Object.prototype.hasOwnProperty.call(PANE_ROLES, id);
+  if (isKnownPane && projectRoot) {
+    return projectRoot;
+  }
+
+  if (isKnownPane) {
+    return getProjectRoot();
+  }
+
+  const instanceDirs = options.instanceDirs && typeof options.instanceDirs === 'object'
+    ? options.instanceDirs
+    : INSTANCE_DIRS;
+  return instanceDirs[id] || null;
+}
+
+function resolveCoordRoot() {
+  return getCoordRoot();
+}
+
+function getCoordRoots(options = {}) {
+  const includeMissing = options.includeMissing === true;
+  const includeLegacy = options.includeLegacy === true;
+  const roots = [];
+  const coordRoot = getCoordRoot();
+
+  if (includeMissing || fs.existsSync(coordRoot)) {
+    roots.push(coordRoot);
+  }
+  if (includeLegacy && (includeMissing || fs.existsSync(LEGACY_WORKSPACE_PATH))) {
+    roots.push(LEGACY_WORKSPACE_PATH);
+  }
+
+  return Array.from(new Set(roots.map((root) => path.resolve(root))));
+}
+
+function normalizeCoordRelPathForPolicy(relPath = '') {
+  return String(relPath || '')
+    .replace(/[\\/]+/g, '/')
+    .replace(/^\/+/, '')
+    .toLowerCase();
+}
+
+function shouldBlockLegacyWorkspaceFallback(relPath = '') {
+  const normalized = normalizeCoordRelPathForPolicy(relPath);
+  if (!normalized) return false;
+  if (normalized === 'runtime') return true;
+  if (normalized.startsWith('runtime/')) return true;
+  if (normalized.startsWith('runtime-')) return true;
+  if (normalized.endsWith('/evidence-ledger.db') || normalized === 'evidence-ledger.db') return true;
+  return false;
+}
+
+function resolveCoordPath(relPath, options = {}) {
+  const relPathWithProfile = namespaceCoordRelPath(relPath, getActiveProfile());
+  const normalizedRelPath = String(relPathWithProfile || '')
+    .replace(/^[\\/]+/, '')
+    .replace(/[\\/]+/g, path.sep);
+
+  const forWrite = options.forWrite === true;
+  const blockLegacyWorkspaceFallback = shouldBlockLegacyWorkspaceFallback(normalizedRelPath);
+  const roots = getCoordRoots({ includeMissing: true, includeLegacy: options.includeLegacy === true });
+  const coordRoot = getCoordRoot();
+
+  if (!forWrite) {
+    for (const root of roots) {
+      if (
+        blockLegacyWorkspaceFallback
+        && path.resolve(root) === path.resolve(LEGACY_WORKSPACE_PATH)
+        && fs.existsSync(coordRoot)
+      ) {
+        const warningKey = `blocked:${normalizedRelPath}`;
+        if (!legacyCoordFallbackWarnings.has(warningKey)) {
+          legacyCoordFallbackWarnings.add(warningKey);
+          console.warn(
+            `[SquidRun][CoordPath] Legacy workspace fallback blocked for "${normalizedRelPath}". Runtime paths must resolve from coord root only.`
+          );
+        }
+        continue;
+      }
+      const candidate = path.join(root, normalizedRelPath);
+      if (fs.existsSync(candidate)) {
+        if (
+          path.resolve(root) === path.resolve(LEGACY_WORKSPACE_PATH)
+          && fs.existsSync(coordRoot)
+          && !legacyCoordFallbackWarnings.has(normalizedRelPath)
+        ) {
+          legacyCoordFallbackWarnings.add(normalizedRelPath);
+          console.warn(
+            `[SquidRun][CoordPath] Legacy workspace fallback hit for "${normalizedRelPath}" -> "${candidate}".`
+          );
+        }
+        return candidate;
+      }
+    }
+  }
+
+  const root = forWrite ? getCoordRoot() : resolveCoordRoot();
+  return path.join(root, normalizedRelPath);
+}
+
+function resolveGlobalPath(relPath, options = {}) {
+  const normalizedRelPath = String(relPath || '')
+    .replace(/^[\\/]+/, '')
+    .replace(/[\\/]+/g, path.sep);
+
+  const root = path.resolve(GLOBAL_STATE_ROOT);
+  fs.mkdirSync(root, { recursive: true });
+
+  const resolved = path.join(root, normalizedRelPath);
+  if (options.forWrite === true) {
+    fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  }
+
+  return resolved;
+}
+
+// Trigger file targets - maps filename to target pane IDs
+const TRIGGER_TARGETS = {
+  // Primary trigger names
+  'architect.txt': ['1'],
+  'builder.txt': ['2'],
+  'oracle.txt': ['3'],
+
+  // Broadcast triggers
+  'workers.txt': ['2'],                   // Builder only
+  'all.txt': ['1', '2', '3'],
+
+  // "Others" triggers - send to all EXCEPT the sender
+  'others-architect.txt': ['2', '3'],
+  'others-builder.txt': ['1', '3'],
+  'others-oracle.txt': ['1', '2'],
+};
+
+// Protocol actions (client -> daemon)
+const PROTOCOL_ACTIONS = ['spawn', 'write', 'resize', 'kill', 'list', 'attach', 'ping', 'shutdown', 'health'];
+
+// Protocol events (daemon -> client)
+const PROTOCOL_EVENTS = ['data', 'exit', 'spawned', 'list', 'attached', 'killed', 'error', 'pong', 'connected', 'shutdown', 'health'];
+
+// Slice 1 evidence ledger gate.
+// Default enabled across dev/prod; runtime degrades if DB open fails.
+const evidenceLedgerEnabled = envFlagEnabled('SQUIDRUN_EVIDENCE_LEDGER_ENABLED', true);
+
+module.exports = {
+  ACTIVE_PROFILE,
+  PIPE_PATH,
+  WORKSPACE_PATH,
+  LEGACY_WORKSPACE_PATH,
+  DEFAULT_WEBSOCKET_PORT,
+  WEBSOCKET_SETTINGS_RELPATH,
+  WEBSOCKET_PORT_FIELDS,
+  get PROJECT_ROOT() {
+    return getProjectRoot();
+  },
+  get COORD_ROOT() {
+    return getCoordRoot();
+  },
+  GLOBAL_STATE_ROOT,
+  PANE_IDS,
+  PANE_ROLES,
+  PANE_DISPLAY_NAMES,
+  PANE_ROLE_BUNDLES,
+  SHORT_AGENT_NAMES,
+  getPaneDisplayName,
+  ROLE_NAMES,
+  BACKWARD_COMPAT_ROLE_ALIASES,
+  LEGACY_ROLE_ALIASES,
+  ROLE_ID_MAP,
+  BACKGROUND_BUILDER_OWNER_PANE_ID,
+  BACKGROUND_BUILDER_MAX_AGENTS,
+  BACKGROUND_BUILDER_SLOT_IDS,
+  BACKGROUND_BUILDER_ALIAS_TO_PANE,
+  BACKGROUND_BUILDER_PANE_TO_ALIAS,
+  BACKGROUND_BUILDER_PANE_IDS,
+  normalizeBackgroundBuilderAlias,
+  normalizeBackgroundBuilderPaneId,
+  resolveBackgroundBuilderPaneId,
+  resolveBackgroundBuilderAlias,
+  isBackgroundBuilderTarget,
+  TRIGGER_TARGETS,
+  evidenceLedgerEnabled,
+  PROTOCOL_ACTIONS,
+  PROTOCOL_EVENTS,
+  getProjectRoot,
+  getActiveProfile,
+  getSquidrunRoot,
+  setProjectRoot,
+  resetProjectRoot,
+  getCoordRoot,
+  resolvePaneCwd,
+  resolveCoordRoot,
+  getCoordRoots,
+  resolveCoordPath,
+  resolveGlobalPath,
+  resolveGlobalStateRoot,
+  resolveMachineGlobalStateRoot,
+  resolveWebSocketPort,
+  resolveWebSocketPortInfo,
+  resolveDataRootWebSocketSettings,
+  discoverProjectRoot,
+  isPackagedRuntimePath,
+};
