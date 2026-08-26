@@ -226,12 +226,6 @@ function markdownEscape(value) {
     .replace(/\r?\n/g, ' ');
 }
 
-function formatBytes(value) {
-  if (value === null || value === undefined) return '-';
-  if (!Number.isFinite(Number(value))) return '-';
-  return String(Number(value));
-}
-
 function collectInventory(options = {}) {
   const projectRoot = getProjectRoot(options.projectRoot || process.cwd());
   const outputRelPath = normalizeRelPath(options.output || DEFAULT_OUTPUT);
@@ -295,9 +289,8 @@ function renderInventoryMarkdown(inventory) {
     `- Source command: \`${inventory.sourceCommand}\``,
     `- Total files listed: ${inventory.totalFiles}`,
     '- Scope: tracked files plus nonignored untracked files visible to Git',
-    '- Byte counts: tracked Git blob bytes; working-tree bytes only for untracked files',
     '- Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`',
-    '- Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.',
+    '- Freshness semantics: committed Markdown omits volatile commit identity, branch name, working-tree status, and file byte counts; use `--json` for live diagnostics.',
     '- Verify freshness: `node ui/scripts/hm-codebase-index.js --check`',
     '',
     '## Summary By Group',
@@ -319,10 +312,10 @@ function renderInventoryMarkdown(inventory) {
   for (const [group, files] of Array.from(filesByGroup.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
     lines.push(`### ${group}`);
     lines.push('');
-    lines.push('| Path | Kind | Bytes |');
-    lines.push('| --- | --- | ---: |');
+    lines.push('| Path | Kind |');
+    lines.push('| --- | --- |');
     for (const file of files) {
-      lines.push(`| \`${markdownEscape(file.path)}\` | ${markdownEscape(file.kind)} | ${formatBytes(file.bytes)} |`);
+      lines.push(`| \`${markdownEscape(file.path)}\` | ${markdownEscape(file.kind)} |`);
     }
     lines.push('');
   }

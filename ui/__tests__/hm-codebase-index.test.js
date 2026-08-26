@@ -28,7 +28,7 @@ describe('hm-codebase-index', () => {
   });
 
   test('renders deterministic Markdown inventory without volatile Git state', () => {
-    const markdown = renderInventoryMarkdown({
+    const inventory = {
       sourceCommand: 'git ls-files --cached --others --exclude-standard',
       git: { branch: 'main', head: 'abc1234' },
       totalFiles: 2,
@@ -39,17 +39,24 @@ describe('hm-codebase-index', () => {
         { path: 'AGENTS.md', group: 'root', kind: 'doc', status: '  ', bytes: 100 },
         { path: 'ui/scripts/hm-codebase-index.js', group: 'ui/scripts', kind: 'script', status: '??', bytes: 200 },
       ],
+    };
+    const markdown = renderInventoryMarkdown(inventory);
+    const changedByteCounts = renderInventoryMarkdown({
+      ...inventory,
+      files: inventory.files.map((file) => ({ ...file, bytes: file.bytes + 999 })),
     });
 
     expect(markdown).toContain('# Codebase Index');
-    expect(markdown).toContain('committed Markdown omits volatile commit identity, branch name, and working-tree status');
+    expect(markdown).toContain('committed Markdown omits volatile commit identity, branch name, working-tree status, and file byte counts');
     expect(markdown).toContain('Verify freshness: `node ui/scripts/hm-codebase-index.js --check`');
     expect(markdown).not.toContain('Git HEAD');
     expect(markdown).not.toContain('Git branch');
     expect(markdown).not.toContain('Summary By Status');
     expect(markdown).not.toContain('| Path | Kind | Status | Bytes |');
-    expect(markdown).toContain('| `AGENTS.md` | doc | 100 |');
-    expect(markdown).toContain('| `ui/scripts/hm-codebase-index.js` | script | 200 |');
+    expect(markdown).not.toContain('| Path | Kind | Bytes |');
+    expect(markdown).toContain('| `AGENTS.md` | doc |');
+    expect(markdown).toContain('| `ui/scripts/hm-codebase-index.js` | script |');
+    expect(changedByteCounts).toBe(markdown);
     expect(markdown.endsWith('\n')).toBe(true);
     expect(markdown.endsWith('\n\n')).toBe(false);
   });
