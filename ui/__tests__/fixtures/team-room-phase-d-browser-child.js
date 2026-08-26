@@ -15,6 +15,9 @@ const keyboardScreenshotPath = String(process.env.TEAM_ROOM_PHASE_D_KEYBOARD_SCR
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-phase-d-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
+if (process.env.TEAM_ROOM_TEST_FORCE_REDUCED_MOTION === '1') {
+  app.commandLine.appendSwitch('force-prefers-reduced-motion');
+}
 app.on('window-all-closed', () => {});
 
 function electronProcessIds() {
@@ -378,6 +381,12 @@ async function run() {
     checkpoint('attachments-sent', attachmentPresentation);
     await waitForRenderer(windowRef, `() => document.querySelector('#mediaLightbox')?.open
       && document.querySelector('#lightboxImage')?.naturalWidth > 0`, 12_000, 'lightbox-open');
+    windowRef.webContents.debugger.attach('1.3');
+    debuggerAttached = true;
+    await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    await waitForRenderer(windowRef, `() => !matchMedia('(prefers-reduced-motion: reduce)').matches`, 2_000, 'lightbox-normal-motion');
     const pinchZoom = await windowRef.webContents.executeJavaScript(`(() => {
       const stage = document.querySelector('#lightboxStage');
       stage.setPointerCapture = () => {};
@@ -399,10 +408,13 @@ async function run() {
         transformAfterPinch,
         transformAfterPan,
         settling: stage.dataset.settling,
+        normalMotion: !matchMedia('(prefers-reduced-motion: reduce)').matches,
         transitionDuration: getComputedStyle(document.querySelector('#lightboxImage')).transitionDuration,
       };
     })()`);
     checkpoint('lightbox-verified', pinchZoom);
+    windowRef.webContents.debugger.detach();
+    debuggerAttached = false;
     await windowRef.webContents.executeJavaScript(`document.querySelector('#mediaLightbox').close()`);
 
     const photoCounterFlow = await windowRef.webContents.executeJavaScript(`(async () => {
@@ -1095,6 +1107,7 @@ async function run() {
         && pinchScale > 1
         && pinchZoom.transformAfterPan !== pinchZoom.transformAfterPinch
         && pinchZoom.settling === 'true'
+        && pinchZoom.normalMotion === true
         && pinchZoom.transitionDuration === '0.15s'
         && paneRespawn.alreadyRunning === true
         && paneRespawn.rotated?.includes('builder')

@@ -550,6 +550,42 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     }));
   });
 
+  test('accepts sustained 35-wide operator ingress without resetting a connection', async () => {
+    runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
+    const started = await runtime.start();
+    expect(started.ok).toBe(true);
+    const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', {
+      ttlMs: 60 * 60 * 1000,
+    });
+    expect(paired.ok).toBe(true);
+    const cookie = `squidrun_team_room=${paired.token}`;
+    const serverErrors = [];
+    runtime.server.on('clientError', (error) => serverErrors.push({
+      code: error?.code || null,
+      message: error?.message || String(error),
+    }));
+
+    for (let round = 1; round <= 10; round += 1) {
+      const responses = await Promise.all(Array.from({ length: 35 }, (_unused, offset) => {
+        const index = ((round - 1) * 35) + offset + 1;
+        return request(started.origin, '/api/messages', {
+          method: 'POST',
+          cookie,
+          origin: started.origin,
+          body: {
+            body: `Ingress burst message ${index}.`,
+            clientNonce: `ingress-burst-${index}`,
+          },
+        });
+      }));
+      expect(responses.every((response) => response.statusCode === 201 && response.payload?.ok === true)).toBe(true);
+    }
+
+    expect(runtime.store.listMessages()
+      .filter((message) => message.body.startsWith('Ingress burst message '))).toHaveLength(350);
+    expect(serverErrors).toEqual([]);
+  }, 30_000);
+
   test('keeps message posting live but records unavailable push transport as a failure', async () => {
     const pushManager = { init: jest.fn(() => { throw new Error('offline'); }) };
     runtime = new TeamRoomRuntime({

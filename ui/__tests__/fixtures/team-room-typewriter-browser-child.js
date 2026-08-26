@@ -16,6 +16,9 @@ const { createTeamRoomWindow } = require('../../modules/main/team-room-window');
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-typewriter-browser-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
+if (process.env.TEAM_ROOM_TEST_FORCE_REDUCED_MOTION === '1') {
+  app.commandLine.appendSwitch('force-prefers-reduced-motion');
+}
 
 function bindings(appGeneration) {
   return {
@@ -158,10 +161,16 @@ async function run() {
       windowOptions: { width: 900, height: 720, minWidth: 320, minHeight: 480 },
     });
     windowRef = created.window;
+    windowRef.webContents.debugger.attach('1.3');
+    debuggerAttached = true;
+    await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
     windowRef.webContents.on('console-message', (_event, level, message) => {
       if (Number(level) >= 2) consoleErrors.push(String(message));
     });
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
+      && !matchMedia('(prefers-reduced-motion: reduce)').matches
       && document.querySelector('.message-item[data-message-id="${historyReply.message.messageId}"]')?.innerText.includes(${JSON.stringify(historyBody)})`, 12_000, 'initial-history');
     const history = await windowRef.webContents.executeJavaScript(`(() => {
       const item = document.querySelector('.message-item[data-message-id="${historyReply.message.messageId}"]');
@@ -199,8 +208,6 @@ async function run() {
         && item?.querySelector('.message-body')?.innerText === ${JSON.stringify(skipBody)};
     }`, 2_000, 'agent-skip');
 
-    windowRef.webContents.debugger.attach('1.3');
-    debuggerAttached = true;
     await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
     });
@@ -219,7 +226,9 @@ async function run() {
       } : null;
     }`, 8_000, 'reduced-motion-agent');
 
-    await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
     await waitForRenderer(windowRef, `() => !matchMedia('(prefers-reduced-motion: reduce)').matches`, 2_000, 'reduce-motion-off');
     const boundedRoot = await postOperator('Give me the long answer at normal motion.', 'typewriter-bounded-root');
     const boundedBody = `Long answer: ${'the cadence accelerates instead of making Operator wait. '.repeat(80)}`.trim();

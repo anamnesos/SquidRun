@@ -14,9 +14,29 @@ const outputPath = path.resolve(String(process.env.TEAM_ROOM_WINDOW_PERFORMANCE_
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-window-performance-'));
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
+if (process.env.TEAM_ROOM_TEST_FORCE_REDUCED_MOTION === '1') {
+  app.commandLine.appendSwitch('force-prefers-reduced-motion');
+}
 app.on('window-all-closed', () => {});
+let currentStage = 'module_loaded';
+let diagnosticsActive = true;
+const transportErrors = [];
+const processEvents = [];
+
+function recordProcessEvent(type, details = {}) {
+  if (!diagnosticsActive) return;
+  processEvents.push({
+    type,
+    stage: currentStage,
+    atMs: Date.now(),
+    ...details,
+  });
+}
+
+app.on('child-process-gone', (_event, details) => recordProcessEvent('child-process-gone', details));
 
 function writeProgress(stage) {
+  currentStage = stage;
   if (!outputPath) return;
   fs.writeFileSync(outputPath, `${JSON.stringify({
     complete: false,
@@ -52,7 +72,7 @@ function bindings(appGeneration) {
   };
 }
 
-function requestJson(origin, route, options = {}) {
+function requestJsonOnce(origin, route, options = {}) {
   return new Promise((resolve, reject) => {
     const body = options.body === undefined ? null : Buffer.from(JSON.stringify(options.body), 'utf8');
     const request = http.request(new URL(route, origin), {
@@ -75,6 +95,30 @@ function requestJson(origin, route, options = {}) {
     if (body) request.write(body);
     request.end();
   });
+}
+
+async function requestJson(origin, route, options = {}) {
+  const maxAttempts = Math.max(1, Number(options.maxAttempts) || 1);
+  const transientCodes = new Set(['ECONNRESET', 'ECONNREFUSED']);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await requestJsonOnce(origin, route, options);
+    } catch (error) {
+      transportErrors.push({
+        label: options.label || route,
+        stage: currentStage,
+        attempt,
+        code: error?.code || null,
+        message: error?.message || String(error),
+      });
+      if (!transientCodes.has(error?.code) || attempt === maxAttempts) {
+        error.message = `${error.message} [${options.label || route}; stage=${currentStage}; attempt=${attempt}/${maxAttempts}]`;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 75 * attempt));
+    }
+  }
+  throw new Error(`team_room_window_performance_request_exhausted:${options.label || route}`);
 }
 
 async function waitForRenderer(windowRef, predicate, timeoutMs = 15_000, label = 'renderer') {
@@ -109,7 +153,9 @@ function runtimeOptions() {
 }
 
 async function seedMessages(origin, cookie, count) {
-  const batchSize = 35;
+  // This fixture measures renderer behavior, not localhost ingress saturation.
+  // Keep setup traffic realistic and retry-safe without weakening end-state checks.
+  const batchSize = 8;
   for (let start = 1; start <= count; start += batchSize) {
     const indexes = Array.from(
       { length: Math.min(batchSize, count - start + 1) },
@@ -123,14 +169,16 @@ async function seedMessages(origin, cookie, count) {
         body: `Performance history message ${index}. Preserve this reading position while the window changes.`,
         clientNonce: `window-performance-seed-${index}`,
       },
+      maxAttempts: 3,
+      label: `seed-${index}`,
     })));
-    const failed = results.find((result) => result.statusCode !== 201);
+    const failed = results.find((result) => ![200, 201].includes(result.statusCode) || result.payload?.ok !== true);
     if (failed) throw new Error(`team_room_window_performance_seed_failed:${failed.statusCode}`);
   }
 }
 
 async function postLiveMessages(origin, cookie, count) {
-  const batchSize = 35;
+  const batchSize = 8;
   for (let start = 1; start <= count; start += batchSize) {
     const indexes = Array.from(
       { length: Math.min(batchSize, count - start + 1) },
@@ -144,8 +192,10 @@ async function postLiveMessages(origin, cookie, count) {
         body: `Performance live message ${index}. Keep explicitly loaded history on screen.`,
         clientNonce: `window-performance-live-${index}`,
       },
+      maxAttempts: 3,
+      label: `live-${index}`,
     })));
-    const failed = results.find((result) => result.statusCode !== 201);
+    const failed = results.find((result) => ![200, 201].includes(result.statusCode) || result.payload?.ok !== true);
     if (failed) throw new Error(`team_room_window_performance_live_post_failed:${failed.statusCode}`);
   }
 }
@@ -299,17 +349,27 @@ async function run() {
   writeProgress('runtime_starting');
   const runtime = new TeamRoomRuntime(runtimeOptions());
   let windowRef = null;
+  let rendererPid = null;
   let result = null;
   const consoleErrors = [];
   try {
     const started = await runtime.start();
     if (!started.ok) throw new Error(started.reason);
+    runtime.server.on('clientError', (error) => recordProcessEvent('http-client-error', {
+      code: error?.code || null,
+      message: error?.message || String(error),
+    }));
+    runtime.server.on('error', (error) => recordProcessEvent('http-server-error', {
+      code: error?.code || null,
+      message: error?.message || String(error),
+    }));
     writeProgress('runtime_started');
     const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', {
       ttlMs: 24 * 60 * 60 * 1000,
     });
     if (!paired.ok) throw new Error(paired.reason);
     const cookie = `squidrun_team_room=${paired.token}`;
+    writeProgress('messages_seeding');
     await seedMessages(started.origin, cookie, 875);
     writeProgress('messages_seeded');
 
@@ -330,13 +390,31 @@ async function run() {
       },
     });
     windowRef = created.window;
+    rendererPid = windowRef.webContents.getOSProcessId();
     writeProgress('window_created');
+    windowRef.webContents.on('render-process-gone', (_event, details) => recordProcessEvent('render-process-gone', {
+      rendererPid,
+      ...details,
+    }));
+    windowRef.webContents.on('unresponsive', () => recordProcessEvent('renderer-unresponsive', {
+      rendererPid,
+    }));
+    windowRef.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (isMainFrame && Number(errorCode) !== -3) {
+        recordProcessEvent('did-fail-load', { errorCode, errorDescription, validatedURL, isMainFrame });
+      }
+    });
+    windowRef.webContents.debugger.attach('1.3');
+    await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
     windowRef.webContents.on('console-message', (_event, level, message) => {
       if (Number(level) >= 2) consoleErrors.push(String(message));
     });
     windowRef.setOpacity(0);
     windowRef.showInactive();
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
+      && !matchMedia('(prefers-reduced-motion: reduce)').matches
       && document.querySelectorAll('.message-item').length === 150`, 15_000, 'initial-history');
     writeProgress('recent_history_rendered');
 
@@ -587,7 +665,9 @@ async function run() {
         && anchorStable(duplicateBefore, duplicateAfter)
         && duplicateAfter.bottomGap > 3
         && duplicateAfter.latestLabel === 'Latest'
-        && consoleErrors.length === 0,
+        && consoleErrors.length === 0
+        && transportErrors.length === 0
+        && processEvents.length === 0,
       electron: process.versions.electron,
       node: process.versions.node,
       dependencyRoot: process.env.NODE_PATH || '',
@@ -605,7 +685,10 @@ async function run() {
       localSend,
       duplicate: { statusCode: duplicate.statusCode, before: duplicateBefore, after: duplicateAfter },
       consoleErrors,
+      transportErrors,
+      processEvents,
       mainPid: process.pid,
+      rendererPid,
       smokeRoot,
     };
   } catch (error) {
@@ -613,11 +696,19 @@ async function run() {
       complete: true,
       ok: false,
       reason: error?.stack || String(error),
+      stage: currentStage,
+      electron: process.versions.electron,
+      node: process.versions.node,
       consoleErrors,
+      transportErrors,
+      processEvents,
       mainPid: process.pid,
+      rendererPid,
       smokeRoot,
     };
   } finally {
+    diagnosticsActive = false;
+    currentStage = 'cleanup_started';
     const processPids = electronProcessIds();
     try { await runtime.stop(); } catch {}
     try { if (windowRef?.webContents.debugger.isAttached()) windowRef.webContents.debugger.detach(); } catch {}
