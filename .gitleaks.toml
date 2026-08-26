@@ -8,7 +8,7 @@ useDefault = true
 [allowlist]
 description = "Reviewed non-secret test values and identifiers"
 regexes = [
-  '''VISIBLE_PRESENCE_A0_PROOF_KEY''',
+  '''^VISIBLE_PRESENCE_A0_PROOF_KEY$''',
   '''sk-1234567890abcdefghijklmnop''',
   '''ghp_1234567890abcdefghijklmnop''',
   '''sk-testsecret12345678901234567890''',
