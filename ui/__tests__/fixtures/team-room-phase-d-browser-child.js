@@ -56,7 +56,7 @@ function bindings(appGeneration, builderLaunchId) {
   };
 }
 
-function requestJson(origin, route, options = {}) {
+function requestJsonOnce(origin, route, options = {}) {
   return new Promise((resolve, reject) => {
     const body = options.body === undefined ? null : Buffer.from(JSON.stringify(options.body), 'utf8');
     const request = http.request(new URL(route, origin), {
@@ -81,6 +81,23 @@ function requestJson(origin, route, options = {}) {
     if (body) request.write(body);
     request.end();
   });
+}
+
+async function requestJson(origin, route, options = {}) {
+  const transientCodes = new Set(['ECONNRESET', 'ECONNREFUSED']);
+  const maxAttempts = Math.max(1, Number(options.restartAttempts) || 1);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await requestJsonOnce(origin, route, options);
+    } catch (error) {
+      if (!transientCodes.has(error?.code) || attempt === maxAttempts) {
+        error.message = `${error.message} [${options.label || route}; attempt ${attempt}/${maxAttempts}]`;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 75));
+    }
+  }
+  throw new Error(`phase_d_request_exhausted:${options.label || route}`);
 }
 
 async function waitForRenderer(windowRef, predicate, timeoutMs = 12_000, label = 'unnamed') {
@@ -132,7 +149,7 @@ async function run() {
     if (!firstStart.ok) throw new Error(firstStart.reason);
     checkpoint('runtime-started', { origin: firstStart.origin });
     const fixedPort = runtime.server.address().port;
-    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', {
+    const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', {
       ttlMs: 30 * 24 * 60 * 60 * 1000,
     });
     if (!paired.ok) throw new Error(paired.reason);
@@ -268,6 +285,8 @@ async function run() {
     const restartCatchup = await requestJson(secondStart.origin, '/api/messages', {
       method: 'POST', cookie, origin: secondStart.origin,
       body: { body: 'Server restart catch-up is authoritative.', clientNonce: 'phase-d-server-restart-catchup' },
+      restartAttempts: 3,
+      label: 'server-restart-catchup',
     });
     if (restartCatchup.statusCode !== 201) throw new Error('phase_d_restart_catchup_post_failed');
     await waitForRenderer(windowRef, `() => document.querySelector('#connectionDot')?.dataset.state === 'connected'
@@ -527,7 +546,12 @@ async function run() {
     const outboxRestart = await runtime.start();
     checkpoint('outbox-runtime-restarted', { ok: outboxRestart.ok, origin: outboxRestart.origin });
     if (!outboxRestart.ok || outboxRestart.origin !== firstStart.origin) throw new Error('phase_d_outbox_restart_failed');
-    const outboxHealth = await requestJson(outboxRestart.origin, '/api/config', { cookie, origin: outboxRestart.origin });
+    const outboxHealth = await requestJson(outboxRestart.origin, '/api/config', {
+      cookie,
+      origin: outboxRestart.origin,
+      restartAttempts: 3,
+      label: 'outbox-runtime-health',
+    });
     checkpoint('outbox-runtime-healthy', { statusCode: outboxHealth.statusCode, ok: outboxHealth.payload.ok });
     if (outboxHealth.statusCode !== 200 || !outboxHealth.payload.ok) throw new Error('phase_d_outbox_restart_health_failed');
     await new Promise((resolve) => setTimeout(resolve, 180));

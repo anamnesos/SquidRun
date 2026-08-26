@@ -113,7 +113,7 @@ describe('owned-work-continue-broker', () => {
     }));
   });
 
-  test('turns JAMES ACTION NONE into auto-continue after internal gates', () => {
+  test('turns OPERATOR ACTION NONE into auto-continue after internal gates', () => {
     const nowMs = Date.parse('2026-05-21T15:10:00Z');
     queue.writeQueue({
       agents: {
@@ -145,7 +145,7 @@ describe('owned-work-continue-broker', () => {
     const decision = broker.buildWorkflowContinuationDecision({
       reportText: [
         'Internal gate: Oracle review before commit.',
-        'JAMES ACTION: NONE',
+        'OPERATOR ACTION: NONE',
       ].join('\n'),
       continueCard,
       trigger: 'post-commit',
@@ -156,10 +156,10 @@ describe('owned-work-continue-broker', () => {
       ok: true,
       decision: 'auto_continue_after_internal_gate',
       autoContinue: true,
-      jamesActionRequired: false,
-      jamesActionLine: 'JAMES ACTION: NONE',
-      internalReviewGateStopsJames: false,
-      internalCommitGateStopsJames: false,
+      operatorActionRequired: false,
+      operatorActionLine: 'OPERATOR ACTION: NONE',
+      internalReviewGateStopsOperator: false,
+      internalCommitGateStopsOperator: false,
     }));
     expect(decision.nextAction).toEqual(expect.objectContaining({
       action: 'continue_owned_work',
@@ -168,21 +168,21 @@ describe('owned-work-continue-broker', () => {
     }));
   });
 
-  test('stops for James only when the action line says DO THIS', () => {
+  test('stops for Operator only when the action line says DO THIS', () => {
     const decision = broker.buildWorkflowContinuationDecision({
       reportText: [
         'Internal gate is clear.',
-        'JAMES ACTION: DO THIS: test the new channel on your phone',
+        'OPERATOR ACTION: DO THIS: test the new channel on your phone',
       ].join('\n'),
       generatedAtMs: Date.parse('2026-05-21T15:15:00Z'),
     });
 
     expect(decision).toEqual(expect.objectContaining({
       ok: true,
-      decision: 'james_action_required',
+      decision: 'operator_action_required',
       autoContinue: false,
-      jamesActionRequired: true,
-      jamesActionLine: 'JAMES ACTION: DO THIS: test the new channel on your phone',
+      operatorActionRequired: true,
+      operatorActionLine: 'OPERATOR ACTION: DO THIS: test the new channel on your phone',
       requiredAction: 'test the new channel on your phone',
     }));
     expect(decision.nextAction).toBeUndefined();
@@ -190,7 +190,7 @@ describe('owned-work-continue-broker', () => {
 
   test('uses the map-backed next step when no owned-work card is due', () => {
     const decision = broker.buildWorkflowContinuationDecision({
-      reportText: 'JAMES ACTION: NONE',
+      reportText: 'OPERATOR ACTION: NONE',
       continueCard: { hasNextAction: false, counts: { due: 0 } },
       nextMapBackedStep: 'Open the next product-usefulness lane.',
       trigger: 'post-commit',
@@ -200,7 +200,7 @@ describe('owned-work-continue-broker', () => {
       ok: true,
       decision: 'auto_continue_after_internal_gate',
       autoContinue: true,
-      jamesActionRequired: false,
+      operatorActionRequired: false,
     }));
     expect(decision.nextAction).toEqual({
       action: 'continue_map_backed_step',
@@ -217,8 +217,8 @@ describe('owned-work-continue-broker', () => {
     });
     const duplicate = broker.buildWorkflowContinuationDecision({
       reportText: [
-        'JAMES ACTION: NONE',
-        'JAMES ACTION: NONE',
+        'OPERATOR ACTION: NONE',
+        'OPERATOR ACTION: NONE',
       ].join('\n'),
     });
 
@@ -226,15 +226,15 @@ describe('owned-work-continue-broker', () => {
       ok: false,
       decision: 'internal_report_needs_action_line_fix',
       autoContinue: false,
-      jamesActionRequired: false,
-      reason: 'missing_james_action_line',
+      operatorActionRequired: false,
+      reason: 'missing_operator_action_line',
     }));
     expect(duplicate).toEqual(expect.objectContaining({
       ok: false,
       decision: 'internal_report_needs_action_line_fix',
       autoContinue: false,
-      jamesActionRequired: false,
-      reason: 'multiple_james_action_lines',
+      operatorActionRequired: false,
+      reason: 'multiple_operator_action_lines',
     }));
   });
 });

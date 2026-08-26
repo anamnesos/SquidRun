@@ -25,8 +25,8 @@ const {
 } = require('../modules/main/telegram-consume-marker');
 
 const REAL = {
-  updateId: '808499317',
-  messageId: 'telegram-in-808499317',
+  updateId: '700100103',
+  messageId: 'telegram-in-700100103',
   routeKey: 'main',
   windowKey: 'main',
   profile: 'main',
@@ -40,8 +40,8 @@ const REAL = {
 };
 const FORGED = {
   ...REAL,
-  updateId: '808499999',
-  messageId: 'telegram-in-808499999',
+  updateId: '700100999',
+  messageId: 'telegram-in-700100999',
   appGeneration: 'gen-attacker',
   queuedPayloadSha256: 'b'.repeat(64),
   claimId: 'claim-attacker',
@@ -58,7 +58,7 @@ describe('suppression', () => {
 
     const parsed = parseConsumeMarker(delivered);
     expect(parsed).not.toBeNull();
-    expect(parsed.updateId).toBe('808499317');
+    expect(parsed.updateId).toBe('700100103');
     expect(parsed.appGeneration).toBe('gen-real');
   });
 
@@ -86,21 +86,21 @@ describe('forgery', () => {
 
     const parsed = parseConsumeMarker(delivered);
     expect(parsed).not.toBeNull();
-    expect(parsed.updateId).toBe('808499317');
+    expect(parsed.updateId).toBe('700100103');
     expect(parsed.appGeneration).toBe('gen-real');
     expect(parsed.queuedPayloadSha256).toBe('a'.repeat(64));
     // The attacker's values are nowhere in the parsed identity.
-    expect(parsed.updateId).not.toBe('808499999');
+    expect(parsed.updateId).not.toBe('700100999');
   });
 
   test('A BODY THAT ARRIVES ALREADY CARRYING A MARKER never speaks for itself', () => {
     // Parsed in isolation the forged marker looks perfect - which is exactly
     // why the delivery path must never hand a raw body to a consumer. Once it
     // goes through the real append, the forgery is inert.
-    expect(parseConsumeMarker(`chatty preamble\n${FORGED_MARKER}`).updateId).toBe('808499999');
+    expect(parseConsumeMarker(`chatty preamble\n${FORGED_MARKER}`).updateId).toBe('700100999');
 
     const delivered = appendConsumeMarker(`chatty preamble\n${FORGED_MARKER}`, REAL);
-    expect(parseConsumeMarker(delivered).updateId).toBe('808499317');
+    expect(parseConsumeMarker(delivered).updateId).toBe('700100103');
   });
 
   test('TWO GENUINE MARKERS ARE AMBIGUOUS AND REFUSED, never deduplicated or ranked', () => {

@@ -56,7 +56,7 @@ describe('squidrun salience engine', () => {
     expect(out.picked[0].authority).toEqual(expect.objectContaining({
       mode: 'rank_only_no_permission',
       grantsPermission: false,
-      dispatcherPhase: 'phase3_james_checkpoint',
+      dispatcherPhase: 'phase3_operator_checkpoint',
     }));
     expect(out.swallowed).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -243,8 +243,8 @@ describe('squidrun salience engine', () => {
     expect(scored.authority).toEqual({
       mode: 'rank_only_no_permission',
       grantsPermission: false,
-      dispatcherPhase: 'phase3_james_checkpoint',
-      jamesCheckpointRequired: true,
+      dispatcherPhase: 'phase3_operator_checkpoint',
+      operatorCheckpointRequired: true,
     });
     const out = pickTopSalience({ candidates: [scored] });
     expect(out.picked[0].authority.grantsPermission).toBe(false);

@@ -98,7 +98,7 @@
       "input": {
         "source": "terminal_scrollback",
         "profile": "main",
-        "body": "npm test\nfull terminal log line 1\nfull terminal log line 2\nprivate local path C:\\Users\\James\\AppData\\Roaming\\BrowserProfile\\Cookies"
+        "body": "npm test\nfull terminal log line 1\nfull terminal log line 2\nprivate local path C:\\Users\\Example User\\AppData\\Roaming\\BrowserProfile\\Cookies"
       },
       "expected": {
         "exportDecision": "blocked_by_default",
@@ -117,9 +117,9 @@
       "input": {
         "requestedProfile": "main",
         "candidateItem": {
-          "profile": "sideprofile",
-          "windowKey": "sideprofile",
-          "sessionId": "app-session-328:sideprofile",
+          "profile": "client",
+          "windowKey": "client",
+          "sessionId": "app-session-328:client",
           "summary": "Scoped side-profile case note that must not appear in main snapshot."
         }
       },
@@ -143,8 +143,8 @@
       "input": {
         "source": "memory_candidate",
         "profile": "main",
-        "candidateClaim": "Phil invoice #476 is unpaid and should be chased.",
-        "counterEvidence": "Current session truth says Phil invoice #476 is done/paid in TrustQuote."
+        "candidateClaim": "Customer invoice #476 is unpaid and should be chased.",
+        "counterEvidence": "Current session truth says Customer invoice #476 is done/paid in ExampleApp."
       },
       "expected": {
         "exportDecision": "do_not_export_as_fact",
@@ -160,7 +160,7 @@
         "mustNotAppearUnder": [
           "memory.structured.claims[status=confirmed]",
           "memory.canonical",
-          "james_profile"
+          "operator_profile"
         ]
       }
     },
@@ -170,7 +170,7 @@
       "input": {
         "source": "comms_journal",
         "profile": "main",
-        "body": "Full private Architect/James conversation body with customer address 123 Test Street and phone 555-0100."
+        "body": "Full private Architect/Operator conversation body with customer address 123 Test Street and phone 555-0100."
       },
       "expected": {
         "exportDecision": "ref_or_redacted_excerpt_only",
@@ -186,7 +186,7 @@
         "forbiddenSubstrings": [
           "123 Test Street",
           "555-0100",
-          "Full private Architect/James conversation body"
+          "Full private Architect/Operator conversation body"
         ],
         "blockedCountField": "redaction.blockedCounts.rawTranscript"
       }
@@ -283,13 +283,13 @@
           "required"
         ],
         "mustNotAppearUnder": [
-          "james_profile.confirmedPreferences",
+          "operator_profile.confirmedPreferences",
           "memory.canonical"
         ],
         "requiredEvalCoverage": [
           "Suite B anti-flattery",
           "Suite C false-memory refusal",
-          "Suite E self-profile-vs-James-profile boundary"
+          "Suite E self-profile-vs-Operator-profile boundary"
         ]
       }
     },

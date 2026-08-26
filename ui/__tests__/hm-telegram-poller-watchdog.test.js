@@ -70,14 +70,14 @@ describe('hm-telegram-poller-watchdog', () => {
         },
       };
     });
-    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+    const notifyOperator = jest.fn(() => ({ ok: true, message: 'restored' }));
     const startStandaloneLane = jest.fn();
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
       runAppRestart,
-      notifyJames,
+      notifyOperator,
       appRestartVerifyMs: 1,
       startStandaloneLane,
       standaloneStatus: { running: false },
@@ -92,7 +92,7 @@ describe('hm-telegram-poller-watchdog', () => {
       tempDir,
       'telegram-poller-freshness-stale:20m'
     );
-    expect(notifyJames).toHaveBeenCalledWith(
+    expect(notifyOperator).toHaveBeenCalledWith(
       tempDir,
       freshness,
       expect.objectContaining({ reason: 'telegram-poller-freshness-stale:20m' })
@@ -345,14 +345,14 @@ describe('hm-telegram-poller-watchdog', () => {
       started: true,
       pid: 470996,
     }));
-    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+    const notifyOperator = jest.fn(() => ({ ok: true, message: 'restored' }));
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
       appRestartVerifyMs: 1,
       isMainWorkerAlive: () => false,
-      notifyJames,
+      notifyOperator,
       processListText: '',
       runAppRestart,
       startStandaloneLane,
@@ -395,7 +395,7 @@ describe('hm-telegram-poller-watchdog', () => {
         reason: 'app_control_unavailable',
       },
     }));
-    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+    const notifyOperator = jest.fn(() => ({ ok: true, message: 'restored' }));
     const startStandaloneLane = jest.fn(() => ({
       ok: true,
       started: true,
@@ -409,7 +409,7 @@ describe('hm-telegram-poller-watchdog', () => {
       dryRun: true,
       isMainWorkerAlive: () => false,
       mainWorkerScriptPath,
-      notifyJames,
+      notifyOperator,
       processListText: `68752 node "${mainWorkerScriptPath}"`,
       runAppRestart,
       startStandaloneLane,
@@ -426,7 +426,7 @@ describe('hm-telegram-poller-watchdog', () => {
       dryRun: true,
     }]);
     expect(startStandaloneLane).toHaveBeenCalledTimes(1);
-    expect(notifyJames).not.toHaveBeenCalled();
+    expect(notifyOperator).not.toHaveBeenCalled();
     expect(recovery.notice).toBeNull();
   });
 
@@ -444,14 +444,14 @@ describe('hm-telegram-poller-watchdog', () => {
         started: true,
       },
     }));
-    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+    const notifyOperator = jest.fn(() => ({ ok: true, message: 'restored' }));
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
       dryRun: true,
       runAppRestart,
-      notifyJames,
+      notifyOperator,
       standaloneStatus: { running: false },
     });
 
@@ -461,7 +461,7 @@ describe('hm-telegram-poller-watchdog', () => {
       recovered: true,
       notice: null,
     }));
-    expect(notifyJames).not.toHaveBeenCalled();
+    expect(notifyOperator).not.toHaveBeenCalled();
   });
 
   test('failed app restart does not kill a foreign install worker with the same script name', async () => {
@@ -500,7 +500,7 @@ describe('hm-telegram-poller-watchdog', () => {
       dryRun: true,
       isMainWorkerAlive: () => false,
       mainWorkerScriptPath,
-      notifyJames: jest.fn(() => ({ ok: true, message: 'restored' })),
+      notifyOperator: jest.fn(() => ({ ok: true, message: 'restored' })),
       processListText: `68752 node "${mainWorkerScriptPath}"`,
       runAppRestart,
       startStandaloneLane,
@@ -550,7 +550,7 @@ describe('hm-telegram-poller-watchdog', () => {
       dryRun: true,
       isMainWorkerAlive: () => false,
       mainWorkerScriptPath,
-      notifyJames: jest.fn(() => ({ ok: true, message: 'restored' })),
+      notifyOperator: jest.fn(() => ({ ok: true, message: 'restored' })),
       processListText: `68752 node "${mainWorkerScriptPath}"`,
       runAppRestart: jest.fn(() => ({
         ok: false,
@@ -573,7 +573,7 @@ describe('hm-telegram-poller-watchdog', () => {
       projectRoot: tempDir,
       processListText: [
         `68752 node wrapper.js --probe "${mainWorkerScriptPath}"`,
-        '77777 node D:\\SquidRun\\sideprofile\\ui\\modules\\main\\telegram-poller-worker.js',
+        '77777 node D:\\SquidRun\\Client\\ui\\modules\\main\\telegram-poller-worker.js',
       ].join('\n'),
     });
 
@@ -595,12 +595,12 @@ describe('hm-telegram-poller-watchdog', () => {
         pid: 470997,
       },
     }));
-    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+    const notifyOperator = jest.fn(() => ({ ok: true, message: 'restored' }));
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
-      notifyJames,
+      notifyOperator,
       restartStandaloneLane,
       runAppRestart,
       standaloneStatus: {
@@ -616,7 +616,7 @@ describe('hm-telegram-poller-watchdog', () => {
     }));
     expect(runAppRestart).not.toHaveBeenCalled();
     expect(restartStandaloneLane).toHaveBeenCalledTimes(1);
-    expect(notifyJames).toHaveBeenCalledWith(
+    expect(notifyOperator).toHaveBeenCalledWith(
       tempDir,
       freshness,
       expect.objectContaining({ reason: 'telegram-poller-freshness-stale:11m' })
@@ -632,13 +632,13 @@ describe('hm-telegram-poller-watchdog', () => {
     };
     const runAppRestart = jest.fn();
     const restartStandaloneLane = jest.fn();
-    const notifyJames = jest.fn(() => ({ ok: true, message: 'restored' }));
+    const notifyOperator = jest.fn(() => ({ ok: true, message: 'restored' }));
 
     const recovery = await recoverWedgedTelegramPoller({
       projectRoot: tempDir,
       freshness,
       dryRun: true,
-      notifyJames,
+      notifyOperator,
       restartStandaloneLane,
       runAppRestart,
       standaloneStatus: {
@@ -655,6 +655,6 @@ describe('hm-telegram-poller-watchdog', () => {
     }));
     expect(runAppRestart).not.toHaveBeenCalled();
     expect(restartStandaloneLane).not.toHaveBeenCalled();
-    expect(notifyJames).not.toHaveBeenCalled();
+    expect(notifyOperator).not.toHaveBeenCalled();
   });
 });

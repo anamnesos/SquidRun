@@ -29,12 +29,12 @@ describe('the tell shadow runner', () => {
     const statusPath = path.join(tempDir, 'status.json');
     const nowMs = Date.parse('2026-06-22T19:00:00.000Z');
     const signal = {
-      type: 'trustquote:invoice-aging',
+      type: 'exampleapp:invoice-aging',
       id: 'jobs:invoice-1:invoice-aging',
       source: 'live',
       observedAtMs: nowMs,
       rawRefs: {
-        system: 'trustquote',
+        system: 'exampleapp',
         collection: 'jobs',
         docId: 'invoice-1',
         businessId: 'biz-1',
@@ -55,7 +55,7 @@ describe('the tell shadow runner', () => {
       tickId: 'tick-1',
       ledgerPath,
       statusPath,
-      fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+      fetchExampleAppReadOnlySignals: jest.fn(async () => ({
         ok: true,
         source: 'live',
         checkedAt: new Date(nowMs).toISOString(),
@@ -69,11 +69,11 @@ describe('the tell shadow runner', () => {
       evaluate: jest.fn(() => ({
         source: 'live',
         regretScore: 0.91,
-        context: 'trustquote:invoice-aging',
+        context: 'exampleapp:invoice-aging',
         speak: true,
         claim: 'Invoice is overdue.',
         whyNow: 'It is 20 days overdue.',
-        receipts: [{ label: 'Amount', value: '$36500', source: 'TrustQuote' }],
+        receipts: [{ label: 'Amount', value: '$36500', source: 'ExampleApp' }],
         verify: { invoiceDocId: 'invoice-1', amount: 36500, dueMs: signal.facts.dueMs },
         proposedAction: { text: 'Draft reminder', reversible: true, executionMode: 'dry-run' },
         _winner: { kind: 'signal', key: signal.id, type: signal.type, _sig: signal },
@@ -88,7 +88,7 @@ describe('the tell shadow runner', () => {
     expect(spoke).toEqual(expect.objectContaining({
       ts: nowMs,
       type: 'spoke',
-      signalClass: 'trustquote:invoice-aging',
+      signalClass: 'exampleapp:invoice-aging',
       key: 'jobs:invoice-1:invoice-aging',
       claim: 'Invoice is overdue.',
       regretScore: 0.91,
@@ -108,17 +108,17 @@ describe('the tell shadow runner', () => {
     }));
     expect(JSON.parse(fs.readFileSync(statusPath, 'utf8')).lastTick.counts.spokeRows).toBe(1);
     const gate = evaluatePromotionGate(ledger, { nowMs: nowMs + 6 * 86400000 });
-    expect(gate.perClass['trustquote:invoice-aging'].blockers).toContain('1_unreviewed_spoke_rows');
+    expect(gate.perClass['exampleapp:invoice-aging'].blockers).toContain('1_unreviewed_spoke_rows');
   });
 
   test('writes swallowed rows with structured reasons and signal refs', async () => {
     const ledgerPath = path.join(tempDir, 'shadow.json');
     const signal = {
-      type: 'trustquote:job-margin',
+      type: 'exampleapp:job-margin',
       id: 'quotes:quote-1:job-margin',
       source: 'live',
       observedAtMs: Date.parse('2026-06-22T19:00:00.000Z'),
-      rawRefs: { system: 'trustquote', collection: 'quotes', docId: 'quote-1', businessId: 'biz-1' },
+      rawRefs: { system: 'exampleapp', collection: 'quotes', docId: 'quote-1', businessId: 'biz-1' },
       facts: {
         bidAmount: 1000,
         bidPrice: 1000,
@@ -130,7 +130,7 @@ describe('the tell shadow runner', () => {
       nowMs: signal.observedAtMs,
       ledgerPath,
       statusPath: path.join(tempDir, 'status.json'),
-      fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+      fetchExampleAppReadOnlySignals: jest.fn(async () => ({
         ok: true,
         source: 'live',
         data: { counts: { jobs: 0, quotes: 1 }, eventCount: 0, parkedCount: 0, signals: [signal] },
@@ -138,7 +138,7 @@ describe('the tell shadow runner', () => {
       evaluate: jest.fn(() => ({
         source: 'live',
         regretScore: 0,
-        context: 'trustquote:job-margin',
+        context: 'exampleapp:job-margin',
         speak: false,
         swallowed: [{
           type: 'swallowed',
@@ -156,7 +156,7 @@ describe('the tell shadow runner', () => {
     const swallowed = ledger.rows.find((row) => row.type === 'swallowed');
     expect(swallowed).toEqual(expect.objectContaining({
       type: 'swallowed',
-      signalClass: 'trustquote:job-margin',
+      signalClass: 'exampleapp:job-margin',
       key: 'quotes:quote-1:job-margin',
       reason: 'insufficient_history_for_floor',
       regretScore: 0,
@@ -181,7 +181,7 @@ describe('the tell shadow runner', () => {
       ledgerPath,
       statusPath,
       intervalMs: 1200000,
-      fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+      fetchExampleAppReadOnlySignals: jest.fn(async () => ({
         ok: true,
         source: 'live',
         data: { counts: { jobs: 2, quotes: 1 }, eventCount: 3, parkedCount: 0, signals: [] },
@@ -226,10 +226,10 @@ describe('the tell shadow runner', () => {
       ledgerPath,
       statusPath,
       intervalMs: 1200000,
-      fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+      fetchExampleAppReadOnlySignals: jest.fn(async () => ({
         ok: false,
         source: 'unverified',
-        reason: 'trustquote_firestore_read_failed',
+        reason: 'exampleapp_firestore_read_failed',
         data: { counts: { jobs: 0, quotes: 0 }, eventCount: 0, parkedCount: 0, signals: [] },
       })),
       evaluate: jest.fn(),
@@ -239,7 +239,7 @@ describe('the tell shadow runner', () => {
     expect(ledger.rows).toEqual([expect.objectContaining({
       type: 'tick_failed',
       ok: false,
-      reason: 'trustquote_firestore_read_failed',
+      reason: 'exampleapp_firestore_read_failed',
       readOnly: true,
       dryRun: true,
     })]);
@@ -256,7 +256,7 @@ describe('the tell shadow runner', () => {
     expect(normalizeIntervalMs(1000)).toBe(MIN_INTERVAL_MS);
   });
 
-  test('run loop deadlines a hung TrustQuote read and exits after writing tick_failed proof', async () => {
+  test('run loop deadlines a hung ExampleApp read and exits after writing tick_failed proof', async () => {
     jest.useFakeTimers();
     try {
       const ledgerPath = path.join(tempDir, 'shadow.json');
@@ -271,7 +271,7 @@ describe('the tell shadow runner', () => {
         pidPath,
         intervalMs: MIN_INTERVAL_MS,
         tickDeadlineMs: 25,
-        fetchTrustQuoteReadOnlySignals: jest.fn(() => new Promise(() => {})),
+        fetchExampleAppReadOnlySignals: jest.fn(() => new Promise(() => {})),
         exitProcess,
       });
 
@@ -417,11 +417,11 @@ describe('the tell shadow runner', () => {
     const baseMs = Date.parse('2026-06-22T19:00:00.000Z');
     const makeTick = (offset, key) => {
       const signal = {
-        type: 'trustquote:job-margin',
+        type: 'exampleapp:job-margin',
         id: key,
         source: 'live',
         observedAtMs: baseMs + offset,
-        rawRefs: { system: 'trustquote', collection: 'jobs', docId: key },
+        rawRefs: { system: 'exampleapp', collection: 'jobs', docId: key },
         facts: { bidAmount: offset, bidPrice: offset, historicalMargin: { floorPct: null, sampleCount: 0, jobIds: [] } },
       };
       return runShadowTick({
@@ -429,7 +429,7 @@ describe('the tell shadow runner', () => {
         ledgerPath,
         statusPath,
         maxLedgerRows: 100,
-        fetchTrustQuoteReadOnlySignals: jest.fn(async () => ({
+        fetchExampleAppReadOnlySignals: jest.fn(async () => ({
           ok: true,
           source: 'live',
           data: { counts: { jobs: 1, quotes: 0 }, eventCount: 0, parkedCount: 0, signals: [signal] },
@@ -437,11 +437,11 @@ describe('the tell shadow runner', () => {
         evaluate: jest.fn(() => ({
           source: 'live',
           regretScore: 0,
-          context: 'trustquote:job-margin',
+          context: 'exampleapp:job-margin',
           speak: false,
           swallowed: [{
             key,
-            signal: 'trustquote:job-margin',
+            signal: 'exampleapp:job-margin',
             reason: 'insufficient_history_for_floor',
             snapshot: { bidAmount: offset },
           }],
@@ -464,9 +464,9 @@ describe('the tell shadow runner', () => {
     expect(ledger.rows.filter((row) => row.type === 'tick')).toHaveLength(50);
   });
 
-  test('extracts verify refs from TrustQuote rawRefs and numbers', () => {
+  test('extracts verify refs from ExampleApp rawRefs and numbers', () => {
     const refs = verifyRefsForSignal({
-      rawRefs: { system: 'trustquote', collection: 'jobs', docId: 'job-1', businessId: 'biz' },
+      rawRefs: { system: 'exampleapp', collection: 'jobs', docId: 'job-1', businessId: 'biz' },
       facts: { jobValue: 75, tasksTotal: 2, tasksIncomplete: 1 },
     }, {});
     expect(refs.firestore[0].path).toBe('jobs/job-1');

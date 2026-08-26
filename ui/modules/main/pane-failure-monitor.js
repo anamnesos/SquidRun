@@ -2,9 +2,9 @@
 
 const { stripAnsi } = require('../ansi');
 const {
-  getTrustQuoteArmPaneIds,
-  getTrustQuoteDayToDayArmSpecs,
-} = require('../trustquote-arm-specs');
+  getExampleAppArmPaneIds,
+  getExampleAppDayToDayArmSpecs,
+} = require('../exampleapp-arm-specs');
 
 const PANE_FAILURE_ALERT_SETTING = 'paneFailureAlertsEnabled';
 const PANE_FAILURE_BUFFER_MAX = 8192;
@@ -16,13 +16,13 @@ const CORE_PANE_LABELS = new Map([
 ]);
 const MONITORED_PANE_IDS = new Set([
   ...CORE_PANE_IDS,
-  ...getTrustQuoteArmPaneIds(),
+  ...getExampleAppArmPaneIds(),
 ]);
 const WORKROOM_LABELS = new Map(
-  getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), String(spec.label)])
+  getExampleAppDayToDayArmSpecs().map((spec) => [String(spec.paneId), String(spec.label)])
 );
 const WORKROOM_COMMANDS = new Map(
-  getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), String(spec.command || '')])
+  getExampleAppDayToDayArmSpecs().map((spec) => [String(spec.paneId), String(spec.command || '')])
 );
 const ACCOUNT_REFUSAL_SIGNATURES = new Set([
   'claude_admin_usage_limit',

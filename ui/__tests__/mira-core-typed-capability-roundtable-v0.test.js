@@ -115,9 +115,9 @@ describe('typed capability roundtable context v0', () => {
     const projectRoot = tempProject();
     try {
       writeCurrentLane(projectRoot);
-      writeJson(projectRoot, path.join('.squidrun', 'handoffs-sideprofile', 'current-lane.json'), {
+      writeJson(projectRoot, path.join('.squidrun', 'handoffs-client', 'current-lane.json'), {
         status: 'active',
-        activeLane: { objective: 'sideprofile_CAPABILITY_SENTINEL should stay out' },
+        activeLane: { objective: 'CLIENT_CAPABILITY_SENTINEL should stay out' },
       });
       const sendAgentMessage = jest.fn(async () => ({ ok: true, routed: true }));
       const runLocalCheck = jest.fn(async () => ({ ok: true, decision: 'harmless_check_completed' }));
@@ -187,7 +187,7 @@ describe('typed capability roundtable context v0', () => {
       expect(rendered).toContain('CAPABILITY_MAIN_LANE_SENTINEL');
       expect(rendered).toContain('CAPABILITY_MAIN_ACTION_SENTINEL');
       expect(rendered).not.toContain('STARTUP PROSE SENTINEL');
-      expect(rendered).not.toContain('sideprofile_CAPABILITY_SENTINEL');
+      expect(rendered).not.toContain('CLIENT_CAPABILITY_SENTINEL');
       expect(rendered).not.toContain('system-capabilities.json');
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
@@ -345,14 +345,14 @@ describe('typed capability roundtable context v0', () => {
     }
   });
 
-  test('side and sideprofile scopes fail closed and do not attempt internal actions', async () => {
+  test('side and Client scopes fail closed and do not attempt internal actions', async () => {
     const cases = [
-      { profileName: 'sideprofile' },
-      { windowKey: 'sideprofile' },
-      { sourceScope: 'sideprofile' },
-      { sessionId: 'app-session-372:sideprofile' },
-      { sessionScopeId: 'app-session-372:sideprofile' },
-      { windowKey: 'main', profileName: 'sideprofile' },
+      { profileName: 'client' },
+      { windowKey: 'client' },
+      { sourceScope: 'client' },
+      { sessionId: 'app-session-372:client' },
+      { sessionScopeId: 'app-session-372:client' },
+      { windowKey: 'main', profileName: 'client' },
       { deviceId: 'PHONE' },
       { visibleIndicatorPresent: false },
     ];

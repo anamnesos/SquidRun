@@ -10,14 +10,14 @@ const controller = require('../modules/main/codex-computer-use-standalone-contro
 const PROJECT_ROOT = 'D:\\projects\\squidrun';
 const PIPE_PATH = '\\\\.\\pipe\\squidrun-terminal';
 const CLIENT_PATH =
-  'C:\\Users\\James\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs';
+  'C:\\Users\\Example User\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs';
 
 function generation(paneId) {
   return {
     schema: 'squidrun.codex_computer_use_pipe_generation.v1',
     pipePath:
       '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34',
-    configPath: 'C:\\Users\\James\\.codex\\config.toml',
+    configPath: 'C:\\Users\\Example User\\.codex\\config.toml',
     projectRoot: PROJECT_ROOT,
     paneId,
     profile: 'main',
@@ -185,7 +185,7 @@ function createHarness(overrides = {}) {
         paneId: input.paneId,
         profile: 'main',
         config: {
-          codexHome: 'C:\\Users\\James\\.codex',
+          codexHome: 'C:\\Users\\Example User\\.codex',
         },
       },
     })),
@@ -600,7 +600,7 @@ describe('standalone current-session Computer Use controller', () => {
       reason: 'explicit_codex_desktop_owner_launch_required',
     }));
     await expect(controller.runStandaloneCodexComputerUseProof(
-      activationInput({ profile: 'sideprofile' }),
+      activationInput({ profile: 'client' }),
       harness.dependencies
     )).resolves.toEqual(expect.objectContaining({
       ok: false,
@@ -770,7 +770,7 @@ describe('standalone current-session Computer Use controller', () => {
     }));
   });
 
-  test('refuses wrapper mentions and sideprofile-root daemon scripts', async () => {
+  test('refuses wrapper mentions and Client-root daemon scripts', async () => {
     const exactScript = path.join(PROJECT_ROOT, 'ui', 'terminal-daemon.js');
     const base = {
       platform: 'win32',
@@ -802,7 +802,7 @@ describe('standalone current-session Computer Use controller', () => {
     await expect(controller.probeExistingMainDaemonIdentity(base, {
       readFile,
       queryProcess: query(
-        'node.exe "D:\\SquidRun\\sideprofile\\workspace\\ui\\terminal-daemon.js"'
+        'node.exe "D:\\SquidRun\\Client\\workspace\\ui\\terminal-daemon.js"'
       ),
     })).resolves.toEqual(expect.objectContaining({
       ok: false,

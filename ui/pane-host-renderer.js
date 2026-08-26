@@ -458,7 +458,7 @@ if (typeof window !== 'undefined') {
     'submitDeferPollMs',
     DEFAULT_SUBMIT_DEFER_POLL_MS
   );
-  // Busy-pane inject hardening (James-approved 2026-06-02): when the normal
+  // Busy-pane inject hardening (Operator-approved 2026-06-02): when the normal
   // defer window expires while a non-codex (Claude/Ink) pane is still streaming,
   // a force-write drops the FRONT of the payload. Grant one extended settle pass
   // first so the truncating force-write becomes a last resort, not the common

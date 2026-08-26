@@ -5,7 +5,7 @@
  * existingBusyMin that no producer created — structurally silent forever.
  * These contracts pin the producer AND the end-to-end sight restoration.
  */
-const { buildScheduleCollisionFact } = require('../modules/main/trustquote-tell-feed');
+const { buildScheduleCollisionFact } = require('../modules/main/exampleapp-tell-feed');
 
 const DAY = 24 * 3600000;
 function evt(id, startMs, hours, jobId) {

@@ -1,207 +1,58 @@
-# Dependencies
+# Dependencies and build output
 node_modules/
 ui/node_modules/
-
-# Environment files
-.env
-.env.*
-!.env.example
-
-# Build outputs
 dist/
 out/
 build/
 coverage/
+ui/dist-*/
 *.log
+*.pid
+*.pid.lock
+*.tmp
 
-# OS files
+# Secrets and local tool configuration
+.env
+.env.*
+!.env.example
+/.claude/
+/.codex/
+/.gemini/
+/.mcp.json
+
+# SquidRun runtime state and personal workspace memory
+/.squidrun/
+/workspace/
+/memory/
+/knowledge/
+/mira/
+/ui/.squidrun/
+/ui/config/codex-computer-use-hook-trust.json
+/ui/settings.json
+/ui/session-state.json
+/ui/usage-stats.json
+/session-state.json
+
+# Generated browser, test, and media artifacts
+/.playwright-mcp/
+/test-results/
+/screenshots/
+/.cache/
+/.eslintcache
+
+# Editor and operating-system files
 .DS_Store
 Thumbs.db
-ehthumbs.db
 desktop.ini
 $RECYCLE.BIN/
-
-# Python caches
-__pycache__/
-.mypy_cache/
-*.pyc
-
-# IDE
 .vscode/
 .idea/
 .vs/
-.vscode-test/
 *.code-workspace
 *.swp
 *.swo
 
-# Claude Code local permissions (machine-specific)
-.claude/
-.gemini/
-.codex/
-.mcp.json
-.claude/settings.local.json
-
-# Electron
-ui/daemon.pid
-ui/daemon.log
-*.pid
-*.pid.lock
-
-# Runtime state (regenerated)
-workspace/*
-!workspace/knowledge/
-workspace/knowledge/*
-!workspace/knowledge/README.md
-!workspace/knowledge/architecture-decisions.md
-!workspace/knowledge/codex-desktop-restart.md
-!workspace/knowledge/consultation-schema.md
-!workspace/knowledge/exogenous-triggers-spec.md
-!workspace/knowledge/hyperliquid-rate-limit-broker-plan.md
-!workspace/knowledge/infrastructure.md
-!workspace/knowledge/mira-lab-window-workflow.md
-!workspace/knowledge/paper-trading-cycle-protocol.md
-!workspace/knowledge/projects.md
-!workspace/knowledge/recovering-lost-user-input.md
-!workspace/knowledge/runtime-environment.md
-!workspace/knowledge/trading-operations.md
-!workspace/knowledge/trustquote-field-workflow.md
-!workspace/knowledge/unlock-trading-routine.md
-!workspace/knowledge/unlock-watchlist.md
-!workspace/knowledge/workflows.md
-/knowledge/
-test-results/
-vision_test/
-25
-workspace/state.json
-workspace/console.log
-workspace/triggers/*.txt
-.hivemind/
-.squidrun/*
-ui/.squidrun/
-
-# Playwright MCP browser-automation artifacts (screenshots, downloads, recordings)
-# History contains a 204MB video at 8f8d2ee that blocks pushes to GitHub.
-.playwright-mcp/
-
-# Jest perf snapshots (large, regenerated)
-workspace/perf-jest.json
-ui/usage-stats.json
-ui/settings.json
-session-state.json
-ui/session-state.json
-*.tmp
-mira/.state-dev/
-mira/voice/review/*.jsonl
-mira/voice/review/conversation-audit-*.json
-mira/voice/review/oracle-*.json
-!mira/voice/review/.gitkeep
-
-# Instance working directories (removed S127, kept for safety)
-workspace/instances/
-
-# Agent runtime data
-workspace/message-state.json
-workspace/messages/
-workspace/history/
-workspace/memory/
-workspace/plugins/
-workspace/backups/
-workspace/rollbacks/
-workspace/backup-config.json
-workspace/oracle-history.json
-workspace/perf-profile.json
-workspace/schedules.json
-workspace/task-pool.json
-workspace/triggers/
-
-# Agent-generated reports (ephemeral)
-workspace/!!_*
-
-# Build artifacts (old reviews, investigations, designs - nuked S128)
-workspace/build/reviews/
-workspace/build/investigations/
-workspace/build/designs/
-workspace/build/integration/
-
-# Test coverage
-ui/coverage/
-ui/coverage-output.txt
-ui/dist-*/
-
-# Temp scripts and debug artifacts
-CLAUDE.scoped.md
-ROLES.scoped.md
-ui/workspace-template/CLAUDE.scoped.md
-ui/workspace-template/ROLES.scoped.md
-workspace/drafts/scoped-*
-workspace/drafts/builder-memory-gc-plan.md
-workspace/temp-scoped-*
-workspace/temp-oracle-review-scoped*
-workspace/Scoped_*
-workspace/tmp-session*
-temp-oracle-consultation-*.json
-.tmp_*.png
-captcha.png
-chatgpt-shared.png
-chess-3d*.png
-chess-current-state.png
-shorts-reference.png
-full-jest*.log
-.claude/*.lock
-workspace/tmp-*.js
-workspace/scripts/*.ps1
-workspace/inspect_dbs*.js
-workspace/inspect_claims.js
-workspace/all_claims.json
-workspace/capture.ps1
-workspace/oracle-qa.js
-workspace/oracle-test.js
-tools/check-scoped-photos.js
-tools/check-telegram-updates.js
-tools/download-scoped-photos.js
-tools/download-gmail-attachments.js
-tools/get-recent-photos.js
-tools/grab-telegram-files.js
-
-# Runtime state (regenerated each session)
-workspace/context-snapshots/
-workspace/generated-images/
-workspace/image-gen-history.json
-workspace/runtime/
-workspace/pipeline.json
-workspace/contract-stats.json
-workspace/performance-audit.md
-
-# Screenshots (user-specific)
-workspace/screenshots/
-screenshots/
-task-audit-audit-tab-*.png
-
-# Audit screens (ephemeral)
-workspace/audit-logs/
-workspace/audit-screens/
-
-# Runtime databases (regenerated)
-workspace/evidence-ledger.db
-*.db
-*.db-*
-*.sqlite
-*.sqlite3
-
-# Auto-generated handoffs (materialized from comms_journal)
-workspace/handoffs/session.md
-
-# Runtime app status
-workspace/app-status.json
-
-# Runtime logs
-workspace/logs/
-
-# Sensitive operational data (public repo — keep private)
-workspace/knowledge/session-*-handoff.md
-workspace/knowledge/case-operations.md
-
-# Generic local caches
-.cache/
-.eslintcache
+# Language caches
+__pycache__/
+.mypy_cache/
+*.pyc

@@ -33,8 +33,8 @@ describe('profile helpers', () => {
     expect(getProfilePipePath('scoped', 'win32')).toContain('squidrun-terminal-scoped');
     expect(getProfileWebSocketPort('main')).toBe(9900);
     expect(getProfileWebSocketPort('scoped')).toBe(9901);
-    expect(getProfileWebSocketPort('sideprofile')).toBe(9901);
-    expect(getProfileWebSocketPort('sideprofile')).not.toBe(10001);
+    expect(getProfileWebSocketPort('client')).toBe(9901);
+    expect(getProfileWebSocketPort('client')).not.toBe(10001);
   });
 
   test('keeps the legacy pipe for the dev/main root but gives each install its own', () => {
@@ -88,17 +88,17 @@ describe('profile helpers', () => {
 
   test('resolves durable profile-root contracts when env is absent', () => {
     const squidrunRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-profile-root-'));
-    const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'trustquote-profile-root-'));
+    const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'exampleapp-profile-root-'));
     try {
-      const configPath = getProfileProjectRootConfigPath('trustquote', squidrunRoot);
+      const configPath = getProfileProjectRootConfigPath('exampleapp', squidrunRoot);
       fs.mkdirSync(path.dirname(configPath), { recursive: true });
       fs.writeFileSync(configPath, JSON.stringify({
         version: PROFILE_ROOT_CONFIG_VERSION,
-        profile: 'trustquote',
+        profile: 'exampleapp',
         projectRoot: profileRoot,
       }, null, 2));
 
-      expect(getProfileProjectRootOverride('trustquote', {}, { squidrunRoot })).toBe(path.resolve(profileRoot));
+      expect(getProfileProjectRootOverride('exampleapp', {}, { squidrunRoot })).toBe(path.resolve(profileRoot));
     } finally {
       fs.rmSync(squidrunRoot, { recursive: true, force: true });
       fs.rmSync(profileRoot, { recursive: true, force: true });
@@ -107,18 +107,18 @@ describe('profile helpers', () => {
 
   test('filters Telegram env so Scoped traffic stays out of the main profile', () => {
     const mainEnv = buildProfileTelegramEnv({
-      TELEGRAM_CHAT_ID: 'REDACTED',
+      TELEGRAM_CHAT_ID: '7000000001',
       TELEGRAM_CHAT_ALLOWLIST: '2222222222,111111',
       TELEGRAM_AUTHORIZED_CHAT_IDS: '2222222222,222222',
     }, 'main');
-    expect(mainEnv.TELEGRAM_CHAT_ID).toBe('REDACTED');
+    expect(mainEnv.TELEGRAM_CHAT_ID).toBe('7000000001');
     expect(mainEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('111111');
     expect(mainEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('222222');
     expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('2222222222');
 
     const scopedEnv = buildProfileTelegramEnv({
       TELEGRAM_SCOPED_CHAT_ID: '2222222222',
-      TELEGRAM_CHAT_ID: 'REDACTED',
+      TELEGRAM_CHAT_ID: '7000000001',
       TELEGRAM_CHAT_ALLOWLIST: '111111',
     }, 'scoped');
     expect(scopedEnv.TELEGRAM_CHAT_ID).toBe('2222222222');
@@ -142,36 +142,36 @@ describe('profile helpers', () => {
 
   test('uses configured scoped Telegram chat id for named side profiles', () => {
     const sideEnv = buildProfileTelegramEnv({
-      TELEGRAM_SCOPED_CHAT_ID: 'REDACTED-CHAT-ID',
-      TELEGRAM_CHAT_ID: 'REDACTED',
+      TELEGRAM_SCOPED_CHAT_ID: '7000000002',
+      TELEGRAM_CHAT_ID: '7000000001',
       TELEGRAM_CHAT_ALLOWLIST: '111111',
       TELEGRAM_AUTHORIZED_CHAT_IDS: '222222',
-    }, 'sideprofile');
+    }, 'client');
 
-    expect(sideEnv.TELEGRAM_CHAT_ID).toBe('REDACTED-CHAT-ID');
+    expect(sideEnv.TELEGRAM_CHAT_ID).toBe('7000000002');
     expect(sideEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('');
     expect(sideEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('');
-    expect(sideEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('REDACTED-CHAT-ID');
+    expect(sideEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('7000000002');
 
     const mainEnv = buildProfileTelegramEnv({
-      TELEGRAM_SCOPED_CHAT_ID: 'REDACTED-CHAT-ID',
-      TELEGRAM_CHAT_ID: 'REDACTED',
-      TELEGRAM_CHAT_ALLOWLIST: 'REDACTED-CHAT-ID,111111',
-      TELEGRAM_AUTHORIZED_CHAT_IDS: 'REDACTED-CHAT-ID,222222',
+      TELEGRAM_SCOPED_CHAT_ID: '7000000002',
+      TELEGRAM_CHAT_ID: '7000000001',
+      TELEGRAM_CHAT_ALLOWLIST: '7000000002,111111',
+      TELEGRAM_AUTHORIZED_CHAT_IDS: '7000000002,222222',
     }, 'main');
 
-    expect(mainEnv.TELEGRAM_CHAT_ID).toBe('REDACTED');
+    expect(mainEnv.TELEGRAM_CHAT_ID).toBe('7000000001');
     expect(mainEnv.TELEGRAM_CHAT_ALLOWLIST).toBe('111111');
     expect(mainEnv.TELEGRAM_AUTHORIZED_CHAT_IDS).toBe('222222');
-    expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('REDACTED-CHAT-ID');
+    expect(mainEnv.TELEGRAM_SCOPED_CHAT_IDS).toBe('7000000002');
   });
 
   test('warns when a side profile falls back to the placeholder Telegram chat id', () => {
     const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const sideEnv = buildProfileTelegramEnv({
-        TELEGRAM_CHAT_ID: 'REDACTED',
-      }, 'sideprofile');
+        TELEGRAM_CHAT_ID: '7000000001',
+      }, 'client');
 
       expect(sideEnv.TELEGRAM_CHAT_ID).toBe('2222222222');
       expect(warnSpy).toHaveBeenCalledWith(

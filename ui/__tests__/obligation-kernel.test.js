@@ -76,7 +76,7 @@ describe('obligation kernel v0 O-series gates', () => {
     expect(writerSource).not.toMatch(/['"](?:who_failed|fault|blame|missed_by)['"]\s*:/);
 
     const inbound = upsert({
-      messageId: 'james-inbound-o1',
+      messageId: 'operator-inbound-o1',
       senderRole: 'user',
       targetRole: 'architect',
       channel: 'telegram',
@@ -87,7 +87,7 @@ describe('obligation kernel v0 O-series gates', () => {
     expect(inbound.ok).toBe(true);
     const rejectedCreate = store.createObligation({
       fromRowId: inbound.rowId,
-      creditor: 'james',
+      creditor: 'operator',
       obligor: 'builder',
       class: 'answer',
       staleness: 'turn',
@@ -142,7 +142,7 @@ describe('obligation kernel v0 O-series gates', () => {
       detail: { blame: 'strip me', safe: true },
       oracle_failure_count: 2,
       failureCounts: { builder: 1 },
-      trustquote_app_failures: 3,
+      exampleapp_app_failures: 3,
     });
     expect(sanitized.flagged).toBe(true);
     expect(sanitized.value).toEqual({
@@ -314,7 +314,7 @@ describe('obligation kernel v0 O-series gates', () => {
         obligation_id TEXT PRIMARY KEY,
         created_from_row_id INTEGER NOT NULL UNIQUE,
         creditor_address TEXT NOT NULL,
-        obligor_address TEXT NOT NULL CHECK (obligor_address <> 'james'),
+        obligor_address TEXT NOT NULL CHECK (obligor_address <> 'operator'),
         expected_class TEXT NOT NULL CHECK (expected_class IN ('verdict', 'ack', 'packet', 'answer', 'receipt')),
         staleness_class TEXT NOT NULL CHECK (staleness_class IN ('turn', 'beat', 'day', 'open')),
         lease_id TEXT,
@@ -506,9 +506,9 @@ describe('obligation kernel v0 O-series gates', () => {
     store = null;
   });
 
-  test('James is a creditor but never an obligor, and explicit reply metadata can fulfill his thread', () => {
+  test('Operator is a creditor but never an obligor, and explicit reply metadata can fulfill his thread', () => {
     const inbound = upsert({
-      messageId: 'james-inbound-primary',
+      messageId: 'operator-inbound-primary',
       senderRole: 'user',
       targetRole: 'architect',
       channel: 'telegram',
@@ -519,7 +519,7 @@ describe('obligation kernel v0 O-series gates', () => {
     });
     const created = store.createObligation({
       fromRowId: inbound.rowId,
-      creditor: 'james',
+      creditor: 'operator',
       obligor: 'builder',
       class: 'answer',
       staleness: 'turn',
@@ -529,7 +529,7 @@ describe('obligation kernel v0 O-series gates', () => {
       ok: true,
       status: 'created',
       obligation: {
-        creditorAddress: 'james',
+        creditorAddress: 'operator',
         obligorAddress: 'builder',
       },
     });
@@ -539,7 +539,7 @@ describe('obligation kernel v0 O-series gates', () => {
     const forbidden = store.createObligation({
       fromRowId: inbound.rowId,
       creditor: 'builder',
-      obligor: 'james',
+      obligor: 'operator',
       class: 'ack',
       staleness: 'open',
       actor: 'builder',
@@ -547,7 +547,7 @@ describe('obligation kernel v0 O-series gates', () => {
     expect(forbidden).toMatchObject({ ok: false, reason: 'obligor_address_invalid' });
 
     const reply = upsert({
-      messageId: 'james-answer-primary',
+      messageId: 'operator-answer-primary',
       senderRole: 'builder',
       targetRole: 'telegram',
       channel: 'telegram',
@@ -595,9 +595,9 @@ describe('obligation kernel v0 O-series gates', () => {
     expect(store.queryTrace(`obligation:${second.obligationId}`).events).toHaveLength(2);
   });
 
-  test('the CLI creates and lists a James-creditor obligation from an actual inbound row', () => {
+  test('the CLI creates and lists a Operator-creditor obligation from an actual inbound row', () => {
     const inbound = upsert({
-      messageId: 'james-cli-inbound',
+      messageId: 'operator-cli-inbound',
       senderRole: 'user',
       targetRole: 'architect',
       channel: 'telegram',
@@ -614,7 +614,7 @@ describe('obligation kernel v0 O-series gates', () => {
       '--db', dbPath,
       '--project-root', tempDir,
       '--from-row', String(inbound.rowId),
-      '--creditor', 'james',
+      '--creditor', 'operator',
       '--obligor', 'builder',
       '--class', 'answer',
       '--staleness', 'open',
@@ -635,7 +635,7 @@ describe('obligation kernel v0 O-series gates', () => {
     const listed = JSON.parse(list.stdout);
     expect(listed).toMatchObject({ ok: true, count: 1 });
     expect(listed.obligations[0]).toMatchObject({
-      creditorAddress: 'james',
+      creditorAddress: 'operator',
       obligorAddress: 'builder',
       status: 'open',
     });
@@ -646,7 +646,7 @@ describe('obligation kernel v0 O-series gates', () => {
       '--db', dbPath,
       '--project-root', tempDir,
       '--from-row', String(inbound.rowId),
-      '--creditor', 'james',
+      '--creditor', 'operator',
       '--obligor', 'builder',
       '--class', 'answer',
       '--staleness', 'open',

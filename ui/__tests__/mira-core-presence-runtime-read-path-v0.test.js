@@ -291,7 +291,7 @@ describe('mira core Presence Runtime Read Path v0 phase 73', () => {
     delete relationship.trust;
     delete relationship.repair;
     relationship.preferences = ['facts only'];
-    relationship.what_mira_knows_about_james = 'James likes Mira.';
+    relationship.what_mira_knows_about_operator = 'Operator likes Mira.';
     writeJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.relationship_state, relationship);
     let output = build(projectRoot);
     let validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);
@@ -300,8 +300,8 @@ describe('mira core Presence Runtime Read Path v0 phase 73', () => {
 
     projectRoot = seededProject();
     const self = readJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.self_profile);
-    self.scope.profile = 'sideprofile';
-    self.profile = 'sideprofile';
+    self.scope.profile = 'client';
+    self.profile = 'client';
     writeJson(projectRoot, EXPLICIT_DURABLE_SOURCE_PATHS.self_profile, self);
     output = build(projectRoot);
     validation = validateMiraCorePresenceRuntimeReadPathV0Output(output, contract);

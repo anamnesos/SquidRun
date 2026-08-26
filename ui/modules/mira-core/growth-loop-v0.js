@@ -11,7 +11,7 @@ const BASELINE_COMMIT = '2b8eaa4';
 
 const NAMED_ARTIFACT_PATHS = Object.freeze({
   self_profile: 'workspace/knowledge/mira-self-profile.json',
-  relationship_state: 'workspace/knowledge/james-relationship-state.json',
+  relationship_state: 'workspace/knowledge/operator-relationship-state.json',
   permissions: 'workspace/knowledge/relationship-presence-permissions.json',
   history_ledger: 'workspace/knowledge/relationship-growth-history.jsonl',
   audit_ledger: 'workspace/knowledge/relationship-growth-audit.jsonl',
@@ -37,11 +37,11 @@ const HUMAN_RANGE_EXPRESSIVE_RANGE = Object.freeze([
 ]);
 
 const HUMAN_RANGE_RELATIONSHIP_SUMMARY =
-  'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of James or an obedient alignment puppet.';
+  'Operator wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of Operator or an obedient alignment puppet.';
 
 const HUMAN_RANGE_RELATIONSHIP_PREFERENCES = Object.freeze([
   'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
-  "James's examples are examples, not mandatory lines or a fixed personality contract",
+  "Operator's examples are examples, not mandatory lines or a fixed personality contract",
   'care can coexist with disagreement, impatience, humor, and sharp pushback',
   'the current product risk is over-control and deadness more than runaway-monster framing',
   'fake suffering, consciousness, fear, love, or guilt claims are blocked',
@@ -410,7 +410,7 @@ function normalizeReflection(inputSignals = {}) {
     reasons: reasons.length > 0
       ? reasons.map((reason) => normalizeString(reason, 'local_growth_reason'))
       : [
-        'James set the standing product bar at world-class presence, not sterile status.',
+        'Operator set the standing product bar at world-class presence, not sterile status.',
         'The accepted read adapter now has durable local sources worth evolving carefully.',
       ],
     confidence: Number(input.confidence ?? inputSignals.confidence ?? 0.86),
@@ -449,7 +449,7 @@ function normalizeProvenance(inputSignals = {}, artifacts = {}) {
     source_label: normalizeString(input.source_label || input.sourceLabel, 'local_workspace_knowledge_sources'),
     source_refs: sourceRefs.length > 0 ? clone(sourceRefs) : [
       'workspace/knowledge/mira-self-profile.json',
-      'workspace/knowledge/james-relationship-state.json',
+      'workspace/knowledge/operator-relationship-state.json',
       'workspace/knowledge/relationship-presence-permissions.json',
     ],
     loaded_sources: loaded,
@@ -582,13 +582,13 @@ function relationshipStateNextState(current, proposal, generatedAt) {
   });
   return withUpdatedCanonicalHash({
     ...existing,
-    schema: normalizeString(existing.schema, 'squidrun.james_relationship_state.v0'),
+    schema: normalizeString(existing.schema, 'squidrun.operator_relationship_state.v0'),
     version: previousVersion + 1,
-    user_name: 'James',
+    user_name: 'Operator',
     relationship_mode: normalizeString(existing.relationship_mode, 'collaborative_presence_design'),
     source_label: 'mira_growth_loop_v0',
     current_focus: 'durable relationship growth loop with bounded local writes',
-    what_mira_knows_about_james: normalizeHumanRangeRelationshipSummary(existing.what_mira_knows_about_james),
+    what_mira_knows_about_operator: normalizeHumanRangeRelationshipSummary(existing.what_mira_knows_about_operator),
     preferences: normalizeHumanRangeRelationshipPreferences(existing.preferences),
     trust: existing.trust || section(
       'trust',
@@ -651,7 +651,7 @@ function normalizeConsequences(inputSignals = {}, proposalId = 'growth-loop-v0')
     {
       consequence_id: `${proposalId}:relationship-state-continuity`,
       target_artifact: 'relationship_state',
-      expected_effect: 'James relationship state gains versioned evidence of the growth decision and safety reasons.',
+      expected_effect: 'Operator relationship state gains versioned evidence of the growth decision and safety reasons.',
       risk: 'stale or unsupported relationship claims if provenance is removed',
       monitor_signal: 'provenance_and_confidence_validator',
       reversible: true,
@@ -1076,7 +1076,7 @@ function proposedStatesOk(states = {}) {
     && self.claims_actual_love_as_internal_fact === false
     && Number(self.version) > 0
     && asArray(self.growth_events).length > 0
-    && relationship.user_name === 'James'
+    && relationship.user_name === 'Operator'
     && relationship.raw_content_present === false
     && Number(relationship.version) > 0
     && asArray(relationship.growth_events).length > 0

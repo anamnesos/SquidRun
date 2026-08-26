@@ -52,11 +52,11 @@ describe('work-item-ledger', () => {
       objective: 'Implement proof-bound work items v0',
       ownerRoles: ['builder'],
       scopeIn: ['SquidRun platform plumbing'],
-      scopeOut: ['TrustQuote product code'],
+      scopeOut: ['ExampleApp product code'],
       sideEffectCaps: ['no_deploy', 'no_customer_send'],
       riskClass: 'caution',
       prodGateProfile: 'local_no_effects',
-      routeHealthRequirement: { required: true, profile: 'trustquote' },
+      routeHealthRequirement: { required: true, profile: 'exampleapp' },
       requiredProof: ['builder_code', 'oracle_verify', 'codex_browser', 'prod_gate'],
     }, {
       workItemRoot,

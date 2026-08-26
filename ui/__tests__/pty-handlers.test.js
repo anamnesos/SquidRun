@@ -319,14 +319,14 @@ describe('PTY Handlers', () => {
 
     test('can create dynamic Squid Room arm panes with command, env, and workingDir at spawn time', async () => {
       ctx.daemonClient.connected = true;
-      const workingDir = 'D:\\projects\\TrustQuote';
+      const workingDir = 'D:\\projects\\ExampleApp';
 
-      const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
+      const result = await harness.invoke('pty-create', 'exampleapp-app', workingDir, {
         paneCommand: 'codex --yolo',
         spawnCommandOnCreate: true,
         preferWorkingDir: true,
         env: {
-          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_ROLE: 'exampleapp-app',
           SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
           SQUIDRUN_PROFILE: 'main',
           SQUIDRUN_WINDOW_KEY: 'squid-room',
@@ -335,18 +335,18 @@ describe('PTY Handlers', () => {
       });
 
       expect(result).toEqual(expect.objectContaining({
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         cwd: workingDir,
         paneCommand: 'codex --yolo',
         spawnCommandOnCreate: true,
       }));
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
-        'trustquote-app',
+        'exampleapp-app',
         workingDir,
         false,
         null,
         expect.objectContaining({
-          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_ROLE: 'exampleapp-app',
           SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
           SQUIDRUN_PROFILE: 'main',
           SQUIDRUN_WINDOW_KEY: 'squid-room',
@@ -361,36 +361,36 @@ describe('PTY Handlers', () => {
 
     test('pins spawn-on-create Claude arm panes with a per-pane session id', async () => {
       ctx.daemonClient.connected = true;
-      const workingDir = 'D:\\projects\\TrustQuote';
+      const workingDir = 'D:\\projects\\ExampleApp';
       deps.reapClaudeSessionProcesses.mockResolvedValue({ ok: true, killed: [] });
 
-      const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
+      const result = await harness.invoke('pty-create', 'exampleapp-app', workingDir, {
         paneCommand: 'claude',
         spawnCommandOnCreate: true,
         preferWorkingDir: true,
         env: {
-          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_ROLE: 'exampleapp-app',
           SQUIDRUN_WINDOW_KEY: 'squid-room',
           SQUIDRUN_WORKING_DIR: workingDir,
         },
       });
 
       expect(result).toEqual(expect.objectContaining({
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         cwd: workingDir,
         spawnCommandOnCreate: true,
       }));
       expect(result.paneCommand).toMatch(/^claude --session-id [0-9a-f-]{36}$/);
       const store = loadPaneSessionIds(deps.paneSessionIdsFilePath);
-      expect(store.panes['trustquote-app']).toBeTruthy();
-      expect(result.paneCommand).toBe(`claude --session-id ${store.panes['trustquote-app']}`);
+      expect(store.panes['exampleapp-app']).toBeTruthy();
+      expect(result.paneCommand).toBe(`claude --session-id ${store.panes['exampleapp-app']}`);
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
-        'trustquote-app',
+        'exampleapp-app',
         workingDir,
         false,
         null,
         expect.objectContaining({
-          SQUIDRUN_ROLE: 'trustquote-app',
+          SQUIDRUN_ROLE: 'exampleapp-app',
           SQUIDRUN_WINDOW_KEY: 'squid-room',
           SQUIDRUN_WORKING_DIR: workingDir,
         }),
@@ -400,9 +400,9 @@ describe('PTY Handlers', () => {
         }
       );
       expect(deps.reapClaudeSessionProcesses).toHaveBeenCalledWith(
-        store.panes['trustquote-app'],
+        store.panes['exampleapp-app'],
         expect.objectContaining({
-          paneId: 'trustquote-app',
+          paneId: 'exampleapp-app',
           cwd: workingDir,
           source: 'pty-create',
         })
@@ -640,17 +640,17 @@ describe('PTY Handlers', () => {
 
     test('fresh spawn-on-create Claude panes remint only the requested pane session id', async () => {
       ctx.daemonClient.connected = true;
-      const workingDir = 'D:\\projects\\TrustQuote';
+      const workingDir = 'D:\\projects\\ExampleApp';
       fs.mkdirSync(path.dirname(deps.paneSessionIdsFilePath), { recursive: true });
       fs.writeFileSync(deps.paneSessionIdsFilePath, JSON.stringify({
         schema: 'squidrun.pane_session_ids.v0',
         panes: {
-          'trustquote-app': '11111111-1111-4111-8111-111111111111',
-          'trustquote-invoice': '22222222-2222-4222-8222-222222222222',
+          'exampleapp-app': '11111111-1111-4111-8111-111111111111',
+          'exampleapp-invoice': '22222222-2222-4222-8222-222222222222',
         },
       }, null, 2), 'utf8');
 
-      const result = await harness.invoke('pty-create', 'trustquote-app', workingDir, {
+      const result = await harness.invoke('pty-create', 'exampleapp-app', workingDir, {
         paneCommand: 'claude',
         spawnCommandOnCreate: true,
         preferWorkingDir: true,
@@ -662,8 +662,8 @@ describe('PTY Handlers', () => {
       expect(result.previousClaudeSessionId).toBe('11111111-1111-4111-8111-111111111111');
       expect(result.claudeSessionId).toMatch(UUID_RE);
       expect(result.claudeSessionId).not.toBe(result.previousClaudeSessionId);
-      expect(store.panes['trustquote-app']).toBe(result.claudeSessionId);
-      expect(store.panes['trustquote-invoice']).toBe('22222222-2222-4222-8222-222222222222');
+      expect(store.panes['exampleapp-app']).toBe(result.claudeSessionId);
+      expect(store.panes['exampleapp-invoice']).toBe('22222222-2222-4222-8222-222222222222');
       expect(result.paneCommand).toBe(`claude --session-id ${result.claudeSessionId}`);
     });
 
@@ -671,18 +671,18 @@ describe('PTY Handlers', () => {
       ctx.daemonClient.connected = true;
       ctx.currentSettings.autonomyConsentGiven = true;
       ctx.currentSettings.allowAllPermissions = true;
-      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\sideprofile\\workspace' };
+      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\Client\\workspace' };
       ctx.currentSettings.paneCommands = { '3': 'codex' };
 
-      const result = await harness.invoke('pty-create', '3', 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test', {
+      const result = await harness.invoke('pty-create', '3', 'D:\\SquidRun\\Client\\versions\\0.1.34-test', {
         spawnCommandOnCreate: true,
         paneCommand: 'codex',
       });
 
-      expect(result.cwd).toBe(path.resolve('D:\\SquidRun\\sideprofile\\workspace'));
+      expect(result.cwd).toBe(path.resolve('D:\\SquidRun\\Client\\workspace'));
       expect(ctx.daemonClient.spawn).toHaveBeenCalledWith(
         '3',
-        path.resolve('D:\\SquidRun\\sideprofile\\workspace'),
+        path.resolve('D:\\SquidRun\\Client\\workspace'),
         false,
         null,
         process.platform === 'win32'
@@ -699,24 +699,24 @@ describe('PTY Handlers', () => {
       ctx.daemonClient.connected = true;
       ctx.installedDeployment = {
         active: true,
-        dataRoot: 'D:\\SquidRun\\sideprofile',
-        source: 'manifest:D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\squidrun-install.json',
+        dataRoot: 'D:\\SquidRun\\Client',
+        source: 'manifest:D:\\SquidRun\\Client\\versions\\0.1.34-test\\squidrun-install.json',
       };
-      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\sideprofile\\workspace' };
+      ctx.currentSettings.paneProjects = { '3': 'D:\\SquidRun\\Client\\workspace' };
       ctx.currentSettings.paneCommands = { '3': 'codex' };
 
-      await harness.invoke('pty-create', '3', 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test', {
+      await harness.invoke('pty-create', '3', 'D:\\SquidRun\\Client\\versions\\0.1.34-test', {
         spawnCommandOnCreate: true,
         paneCommand: 'codex',
         env: {
-          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
         },
       });
 
       const spawnCall = ctx.daemonClient.spawn.mock.calls[0];
       expect(spawnCall[4]).toEqual(expect.objectContaining({
-        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
-        SQUIDRUN_DATA_ROOT: path.resolve('D:\\SquidRun\\sideprofile'),
+        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
+        SQUIDRUN_DATA_ROOT: path.resolve('D:\\SquidRun\\Client'),
       }));
     });
 
@@ -724,7 +724,7 @@ describe('PTY Handlers', () => {
       ctx.daemonClient.connected = true;
       ctx.installedDeployment = {
         active: false,
-        dataRoot: 'D:\\SquidRun\\sideprofile',
+        dataRoot: 'D:\\SquidRun\\Client',
         source: 'default',
       };
 
@@ -2231,7 +2231,7 @@ describe('PTY Handlers', () => {
     const generation = {
       schema: 'squidrun.codex_computer_use_pipe_generation.v1',
       pipePath,
-      configPath: 'C:\\Users\\James\\.codex\\config.toml',
+      configPath: 'C:\\Users\\Example User\\.codex\\config.toml',
       projectRoot: mainRoot,
       paneId: '3',
       profile: 'main',
@@ -2319,7 +2319,7 @@ describe('PTY Handlers', () => {
       deps.computerUseProfile = 'main';
       deps.randomUUID = jest.fn(() => 'generation-claim-3');
       deps.resolveOfficialComputerUseClientPath = jest.fn(() =>
-        'C:\\Users\\James\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs');
+        'C:\\Users\\Example User\\.codex\\plugins\\cache\\openai-bundled\\computer-use\\26.721.41059\\scripts\\computer-use-client.mjs');
       deps.armCodexComputerUseProofClaim = jest.fn(async ({ claim }) => {
         claim.proof = {
           state: 'armed',

@@ -141,7 +141,7 @@ function buildAdmissionJob(job = {}, deliveryIdentity = {}) {
     // after a restart - crash after A, retry in G+1 - recorded a different
     // source session than the row that already existed and failed
     // `source_identity_conflict` on a field that describes when we happened to
-    // be delivering, not what James sent (Oracle #10, reproduced).
+    // be delivering, not what Operator sent (Oracle #10, reproduced).
     //
     // The spool record's own session is stable across every retry, which is the
     // only property an immutable column may be built on. The claim still
@@ -313,7 +313,7 @@ async function deliverAdmittedMainTelegram(app, options = {}) {
   if (admission.replayed) {
     // delivery_started already existed for these exact bytes. Something wrote,
     // or was writing, this pane before. Re-writing on the strength of an
-    // idempotent record is how James reads the same message twice.
+    // idempotent record is how Operator reads the same message twice.
     log.warn(
       'Telegram',
       `Main admission for ${inboundMessageId} replayed an existing delivery_started; holding instead of writing again`

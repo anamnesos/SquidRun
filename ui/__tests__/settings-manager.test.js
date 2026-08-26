@@ -438,11 +438,11 @@ describe('SettingsManager packaged persistence defaults', () => {
       autonomyConsentChoice: 'enabled',
       paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
       paneProjects: {
-        '1': 'D:\\SquidRun\\sideprofile\\workspace',
-        '2': 'D:\\SquidRun\\sideprofile\\workspace',
-        '3': 'D:\\SquidRun\\sideprofile\\workspace',
+        '1': 'D:\\SquidRun\\Client\\workspace',
+        '2': 'D:\\SquidRun\\Client\\workspace',
+        '3': 'D:\\SquidRun\\Client\\workspace',
       },
-      userName: 'sideprofile',
+      userName: 'Client',
     };
 
     const ctx = {};
@@ -476,7 +476,7 @@ describe('SettingsManager packaged persistence defaults', () => {
     expect(persisted.autonomyConsentGiven).toBe(true);
     expect(persisted.paneCommands['3']).toBe('codex');
     expect(loaded.userName).toBeUndefined();
-    expect(loaded.paneProjects['1']).toBe('D:\\SquidRun\\sideprofile\\workspace');
+    expect(loaded.paneProjects['1']).toBe('D:\\SquidRun\\Client\\workspace');
   });
 
   test('seeds packaged userData settings from provisioned data-root settings when userData is default skeleton', () => {
@@ -492,11 +492,11 @@ describe('SettingsManager packaged persistence defaults', () => {
       autonomyConsentChoice: 'enabled',
       paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
       paneProjects: {
-        '1': 'D:\\SquidRun\\sideprofile\\workspace',
-        '2': 'D:\\SquidRun\\sideprofile\\workspace',
-        '3': 'D:\\SquidRun\\sideprofile\\workspace',
+        '1': 'D:\\SquidRun\\Client\\workspace',
+        '2': 'D:\\SquidRun\\Client\\workspace',
+        '3': 'D:\\SquidRun\\Client\\workspace',
       },
-      userName: 'sideprofile',
+      userName: 'Client',
     };
     fs.existsSync.mockImplementation((targetPath) => (
       String(targetPath) === manager.settingsPath
@@ -540,7 +540,7 @@ describe('SettingsManager packaged persistence defaults', () => {
       ...manager.defaultSettings,
       autonomyConsentGiven: true,
       paneCommands: { '1': 'claude', '2': 'claude', '3': 'codex' },
-      userName: 'sideprofile',
+      userName: 'Client',
     };
     fs.existsSync.mockImplementation((targetPath) => (
       String(targetPath) === manager.settingsPath

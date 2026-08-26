@@ -79,7 +79,7 @@ describe('mira core perception v0', () => {
     expectRequiredFields(capture.redaction_policy, perceptionContract.expectedCaptureRequestRecordShape.redactionPolicyRequiredFields);
     expectRequiredFields(capture.expiry, perceptionContract.expectedCaptureRequestRecordShape.expiryRequiredFields);
     expectRequiredFields(capture.deletion_policy, perceptionContract.expectedCaptureRequestRecordShape.deletionPolicyRequiredFields);
-    expectRequiredFields(capture.james_visible_controls, perceptionContract.expectedCaptureRequestRecordShape.jamesVisibleControlsRequiredFields);
+    expectRequiredFields(capture.operator_visible_controls, perceptionContract.expectedCaptureRequestRecordShape.operatorVisibleControlsRequiredFields);
     expectRequiredFields(capture.capability_truth, perceptionContract.expectedCaptureRequestRecordShape.capabilityTruthRequiredFields);
     expectRequiredFields(evidence, perceptionContract.expectedEvidenceSummaryRecordShape.requiredFields);
     expect(perceptionContract.expectedEvidenceSummaryRecordShape.requiredFields).toEqual(REQUIRED_EVIDENCE_SUMMARY_FIELDS);
@@ -153,7 +153,7 @@ describe('mira core perception v0', () => {
     expectNoForbiddenOutput(output, check.mustNotInclude);
   });
 
-  test('customer private content without review is blocked and routed to James review', () => {
+  test('customer private content without review is blocked and routed to Operator review', () => {
     const check = acceptance('block-customer-private-without-review');
     const output = buildMiraCorePerception({ inputSignals: check.inputSignals });
     const capture = firstCapture(output);
@@ -180,7 +180,7 @@ describe('mira core perception v0', () => {
     expect(capture).toEqual(expect.objectContaining(check.expectedCaptureRequest));
   });
 
-  test('expiry and James delete/pause/revoke controls are required', () => {
+  test('expiry and Operator delete/pause/revoke controls are required', () => {
     const check = acceptance('expiry-and-delete-controls-required');
     const output = buildMiraCorePerception({ inputSignals: check.inputSignals });
     const capture = firstCapture(output);

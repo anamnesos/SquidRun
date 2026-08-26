@@ -14,15 +14,15 @@ describe('terminal injection capabilities', () => {
     expect(caps.enterFailureReason).toBe('pty_enter_failed');
   });
 
-  test('classifies TrustQuote arm panes as PTY-enter runtimes in the fallback resolver', () => {
-    expect(resolveInjectionRuntimeKey('trustquote-lead', {
+  test('classifies ExampleApp arm panes as PTY-enter runtimes in the fallback resolver', () => {
+    expect(resolveInjectionRuntimeKey('exampleapp-lead', {
       isCodexPane: () => false,
       isGeminiPane: () => false,
       fallback: 'claude',
-    })).toBe('trustquote');
+    })).toBe('exampleapp');
 
-    const caps = getRuntimeInjectionCapabilityDefault('trustquote', { isDarwin: false });
-    expect(caps.submitMethod).toBe('trustquote-pty-enter');
+    const caps = getRuntimeInjectionCapabilityDefault('exampleapp', { isDarwin: false });
+    expect(caps.submitMethod).toBe('exampleapp-pty-enter');
     expect(caps.enterMethod).toBe('pty');
     expect(caps.requiresFocusForEnter).toBe(false);
   });

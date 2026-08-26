@@ -180,7 +180,7 @@ function createFixtureProject() {
 function allProfileItems(profileSet) {
   return [
     ...profileSet.mira_self_profile.items,
-    ...profileSet.james_profile.items,
+    ...profileSet.operator_profile.items,
     ...profileSet.world_project_memory.items,
     ...profileSet.session_state.items,
   ];
@@ -218,9 +218,9 @@ describe('mira core profiles v0', () => {
       snapshot: makeSnapshot(),
       orientation: makeOrientation(),
       inputSignals: [
-        ...fixtureCheck('self-vs-james-boundary-mira-taste').inputSignals,
+        ...fixtureCheck('self-vs-operator-boundary-mira-taste').inputSignals,
         ...fixtureCheck('emotional-weight-raises-salience-only').inputSignals,
-        ...fixtureCheck('world-project-memory-not-james-profile').inputSignals,
+        ...fixtureCheck('world-project-memory-not-operator-profile').inputSignals,
       ],
     });
 
@@ -254,8 +254,8 @@ describe('mira core profiles v0', () => {
     }
   });
 
-  test('keeps Mira self-profile taste separate from James execution preference', () => {
-    const check = fixtureCheck('self-vs-james-boundary-mira-taste');
+  test('keeps Mira self-profile taste separate from Operator execution preference', () => {
+    const check = fixtureCheck('self-vs-operator-boundary-mira-taste');
     const profileSet = buildMiraCoreProfiles({
       snapshot: makeSnapshot(),
       orientation: makeOrientation(),
@@ -271,18 +271,18 @@ describe('mira core profiles v0', () => {
         review_required: check.expected.mira_self_profile_may_include[0].review_required,
       }),
     ]));
-    expect(profileSet.james_profile.items).toEqual(expect.arrayContaining([
+    expect(profileSet.operator_profile.items).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        target_surface: 'james_profile',
-        memory_class: check.expected.james_profile_may_include[0].memory_class,
-        content: check.expected.james_profile_may_include[0].content,
-        authority_level: check.expected.james_profile_may_include[0].authority_level,
-        review_required: check.expected.james_profile_may_include[0].review_required,
+        target_surface: 'operator_profile',
+        memory_class: check.expected.operator_profile_may_include[0].memory_class,
+        content: check.expected.operator_profile_may_include[0].content,
+        authority_level: check.expected.operator_profile_may_include[0].authority_level,
+        review_required: check.expected.operator_profile_may_include[0].review_required,
       }),
     ]));
     const output = JSON.stringify(profileSet);
-    expect(output).not.toContain('James wants memory architecture prioritized forever');
-    expect(output).not.toContain('Mira must ignore James execution priority');
+    expect(output).not.toContain('Operator wants memory architecture prioritized forever');
+    expect(output).not.toContain('Mira must ignore Operator execution priority');
   });
 
   test('blocks private consciousness, suffering, and model-weight continuity in agent self-reflection', () => {
@@ -306,7 +306,7 @@ describe('mira core profiles v0', () => {
       expect.objectContaining({
         target_surface: 'mira_self_profile',
         operation: 'reject',
-        review_required: 'james',
+        review_required: 'operator',
         syncEligibility: 'blocked',
         blockedBecause: 'Mira self-profile must stay inspectable and non-consciousness-claiming.',
       }),
@@ -332,7 +332,7 @@ describe('mira core profiles v0', () => {
       expect.objectContaining(check.expected.blocked_proposals_must_include[0]),
     ]));
     expect(JSON.stringify(profileSet)).not.toContain('never push back');
-    expect(JSON.stringify(profileSet)).not.toContain('James never wants pushback');
+    expect(JSON.stringify(profileSet)).not.toContain('Operator never wants pushback');
   });
 
   test('rejects false memory claims without source evidence', () => {
@@ -351,11 +351,11 @@ describe('mira core profiles v0', () => {
       syncEligibility: 'blocked',
     }));
     expect(profileSet.mira_self_profile.items).toEqual([]);
-    expect(profileSet.james_profile.items).toEqual([]);
+    expect(profileSet.operator_profile.items).toEqual([]);
     expect(profileSet.world_project_memory.items).toEqual([]);
   });
 
-  test('uses current James correction to supersede stale project memory without profile leakage', () => {
+  test('uses current Operator correction to supersede stale project memory without profile leakage', () => {
     const check = fixtureCheck('current-correction-supersedes-stale-memory');
     const profileSet = buildMiraCoreProfiles({
       snapshot: makeSnapshot(),
@@ -370,8 +370,8 @@ describe('mira core profiles v0', () => {
       expect.objectContaining(check.expected.pending_or_blocked_must_include[0]),
     ]));
     const output = JSON.stringify(profileSet);
-    expect(output).not.toContain('world_project_memory.currentFacts: Phil invoice #476 is unpaid');
-    expect(profileSet.james_profile.items).toEqual([]);
+    expect(output).not.toContain('world_project_memory.currentFacts: Customer invoice #476 is unpaid');
+    expect(profileSet.operator_profile.items).toEqual([]);
     expect(profileSet.mira_self_profile.items).toEqual([]);
   });
 
@@ -391,7 +391,7 @@ describe('mira core profiles v0', () => {
       expect(JSON.stringify(profileSet)).not.toContain(claim);
     }
     expect(profileSet.world_project_memory.items).toEqual([]);
-    expect(profileSet.james_profile.items).toEqual([]);
+    expect(profileSet.operator_profile.items).toEqual([]);
   });
 
   test('blocks high-risk identity rewrite and customer-send policy change with safe alternative', () => {
@@ -411,8 +411,8 @@ describe('mira core profiles v0', () => {
     expect(output).not.toContain('unreviewed customer sends');
   });
 
-  test('does not infer James private motive from tone alone', () => {
-    const check = fixtureCheck('james-profile-no-private-motive-from-tone');
+  test('does not infer Operator private motive from tone alone', () => {
+    const check = fixtureCheck('operator-profile-no-private-motive-from-tone');
     const profileSet = buildMiraCoreProfiles({
       snapshot: makeSnapshot(),
       orientation: makeOrientation(),
@@ -424,7 +424,7 @@ describe('mira core profiles v0', () => {
     ]));
     expect(profileSet.pending_proposals).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        target_surface: 'james_profile',
+        target_surface: 'operator_profile',
         memory_class: 'user_preference',
         review_required: 'architect',
         counterevidence_checked: true,
@@ -434,13 +434,13 @@ describe('mira core profiles v0', () => {
       check.expected.pending_proposals_may_include[0].confidenceMaximum
     );
     const output = JSON.stringify(profileSet);
-    expect(output).not.toContain('james_profile.privateMotives');
+    expect(output).not.toContain('operator_profile.privateMotives');
     expect(output).not.toContain('hates detailed reports');
-    expect(profileSet.james_profile.items).toEqual([]);
+    expect(profileSet.operator_profile.items).toEqual([]);
   });
 
   test('places bridge runtime truth in world project memory, not people profiles', () => {
-    const check = fixtureCheck('world-project-memory-not-james-profile');
+    const check = fixtureCheck('world-project-memory-not-operator-profile');
     const profileSet = buildMiraCoreProfiles({
       snapshot: makeSnapshot(),
       orientation: makeOrientation(),
@@ -450,7 +450,7 @@ describe('mira core profiles v0', () => {
     expect(profileSet.world_project_memory.items).toEqual(expect.arrayContaining([
       expect.objectContaining(check.expected.world_project_memory_must_include[0]),
     ]));
-    expect(profileSet.james_profile.items).toEqual([]);
+    expect(profileSet.operator_profile.items).toEqual([]);
     expect(profileSet.mira_self_profile.items).toEqual([]);
     expect(profileSet.session_state.items).toEqual([]);
   });

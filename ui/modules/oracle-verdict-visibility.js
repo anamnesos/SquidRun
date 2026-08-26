@@ -17,7 +17,7 @@ function asString(value) {
 }
 
 // S468 ruling: this is NOT pane-role normalization — journal rows carry
-// OPEN-VOCABULARY party tokens (trustquote-lead, telegram, user) that are
+// OPEN-VOCABULARY party tokens (exampleapp-lead, telegram, user) that are
 // legal here. Renamed from normalizeRole; passthrough is deliberate.
 function normalizePartyToken(value) {
   const text = asString(value).toLowerCase();

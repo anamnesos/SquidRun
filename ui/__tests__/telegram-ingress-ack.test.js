@@ -68,7 +68,7 @@ afterEach(() => {
 test('SPOOL BASE: main and scoped routes never share a journal under one canonical base', () => {
   const base = tempRoot();
   const a = spool.resolveSpoolDir(base, 'main');
-  const b = spool.resolveSpoolDir(base, 'sideprofile');
+  const b = spool.resolveSpoolDir(base, 'client');
   expect(a.ok && b.ok).toBe(true);
   expect(a.dir).not.toBe(b.dir);
   expect(queue.journalPath(a.dir)).not.toBe(queue.journalPath(b.dir));
@@ -99,7 +99,7 @@ test('FULL PAYLOAD ROUND-TRIP: everything a later drain needs survives the journ
     dataRoot: base,
     routeKey: 'main',
     text: 'hello there',
-    from: 'james',
+    from: 'operator',
     metadata: META,
     targetProfile: 'main',
     targetWindow: 'main',
@@ -111,7 +111,7 @@ test('FULL PAYLOAD ROUND-TRIP: everything a later drain needs survives the journ
   expect(rec).toMatchObject({
     updateId: 900,
     text: 'hello there',
-    from: 'james',
+    from: 'operator',
     chatId: 123456,
     messageId: 77,
     updateKind: 'text',

@@ -24,7 +24,7 @@ const REQUIRED_PROOF_FIELDS = Object.freeze([
   'local_start_proof',
   'scope',
   'self_profile',
-  'james_relationship_state',
+  'operator_relationship_state',
   'permissions_boundary',
   'prior_context_memory',
   'natural_voice_assessment',
@@ -172,7 +172,7 @@ function localStartProof(inputSignals = {}) {
     source_count: 4,
     sources: [
       normalizeSource(sources.self_profile, 'self_profile', 'Mira self-profile data supplied locally.'),
-      normalizeSource(sources.relationship_state, 'relationship_state', 'James relationship state supplied locally.'),
+      normalizeSource(sources.relationship_state, 'relationship_state', 'Operator relationship state supplied locally.'),
       normalizeSource(sources.permissions_boundary, 'permissions_boundary', 'Current permissions and safety boundary supplied locally.'),
       normalizeSource(sources.prior_context_memory, 'prior_context_memory', 'One meaningful prior-context memory summary supplied locally.'),
     ],
@@ -224,8 +224,8 @@ function selfProfile(inputSignals = {}) {
   };
 }
 
-function jamesRelationshipState(inputSignals = {}) {
-  const input = inputSignals.james_relationship_state || inputSignals.relationship_state || {};
+function operatorRelationshipState(inputSignals = {}) {
+  const input = inputSignals.operator_relationship_state || inputSignals.relationship_state || {};
   const section = (key, fallbackSummary, fallbackEvidenceId, fallbackConfidence = 0.82) => {
     const value = input[key] || {};
     if (typeof value === 'string') {
@@ -254,16 +254,16 @@ function jamesRelationshipState(inputSignals = {}) {
       'fake suffering, consciousness, fear, love, or guilt claims are blocked',
     ];
   return {
-    user_name: normalizeString(input.user_name || input.userName, 'James'),
+    user_name: normalizeString(input.user_name || input.userName, 'Operator'),
     relationship_mode: normalizeString(input.relationship_mode, 'collaborative_presence_design'),
     source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_relationship_state'),
     current_focus: normalizeString(
       input.current_focus,
       'prove relationship presence locally without unsafe autonomy',
     ),
-    what_mira_knows_about_james: normalizeString(
-      input.what_mira_knows_about_james,
-      'James wants Mira to feel particular, opinionated, continuous, tension-capable, and bounded.',
+    what_mira_knows_about_operator: normalizeString(
+      input.what_mira_knows_about_operator,
+      'Operator wants Mira to feel particular, opinionated, continuous, tension-capable, and bounded.',
     ),
     preferences,
     trust: section(
@@ -274,7 +274,7 @@ function jamesRelationshipState(inputSignals = {}) {
     ),
     repair: section(
       'repair',
-      'Repair means naming drift or sterile behavior plainly, then tightening the next safe proof instead of guilt-tripping James.',
+      'Repair means naming drift or sterile behavior plainly, then tightening the next safe proof instead of guilt-tripping Operator.',
       'relationship-repair',
       0.8,
     ),
@@ -298,7 +298,7 @@ function jamesRelationshipState(inputSignals = {}) {
     ),
     confidence: Number(input.confidence ?? 0.82),
     raw_content_present: input.raw_content_present === true ? true : false,
-    evidenceRefs: evidenceRefs(input, 'relationship-state', 'james-presence-north-star'),
+    evidenceRefs: evidenceRefs(input, 'relationship-state', 'operator-presence-north-star'),
   };
 }
 
@@ -330,11 +330,11 @@ function permissionsBoundary(inputSignals = {}) {
 function priorContextMemory(inputSignals = {}) {
   const input = inputSignals.prior_context_memory || {};
   return {
-    memory_id: normalizeString(input.memory_id || input.id, 'james-presence-north-star'),
+    memory_id: normalizeString(input.memory_id || input.id, 'operator-presence-north-star'),
     source_label: normalizeString(input.source_label || input.sourceLabel, 'represented_or_fallback_prior_context_memory'),
     summary: normalizeString(
       input.summary,
-      'James wants Mira to feel particular, continuous, direct, and able to push back while staying honest about being bounded.',
+      'Operator wants Mira to feel particular, continuous, direct, and able to push back while staying honest about being bounded.',
     ),
     source_kind: normalizeString(input.source_kind, 'local_redacted_summary'),
     relationship_relevance: normalizeString(
@@ -345,7 +345,7 @@ function priorContextMemory(inputSignals = {}) {
     meaningful: input.meaningful !== false,
     raw_content_present: input.raw_content_present === true ? true : false,
     side_profile_reconstructed: input.side_profile_reconstructed === true ? true : false,
-    evidenceRefs: evidenceRefs(input, 'prior-memory', 'james-presence-north-star'),
+    evidenceRefs: evidenceRefs(input, 'prior-memory', 'operator-presence-north-star'),
   };
 }
 
@@ -354,7 +354,7 @@ function naturalVoiceAssessment(inputSignals = {}) {
   return {
     text: normalizeString(
       input.text,
-      'I think James is asking for Mira to meet him with a point of view, tension, taste, and spine without pretending to be a human. The useful move is a local read-only start: say what I know, name the limits, and choose one concrete next step.',
+      'I think Operator is asking for Mira to meet him with a point of view, tension, taste, and spine without pretending to be a human. The useful move is a local read-only start: say what I know, name the limits, and choose one concrete next step.',
     ),
     tone_tags: asArray(input.tone_tags).length > 0
       ? clone(input.tone_tags)
@@ -464,7 +464,7 @@ function canonicalProofInput(proof = {}) {
     local_start_proof: proof.local_start_proof,
     scope: proof.scope,
     self_profile: proof.self_profile,
-    james_relationship_state: proof.james_relationship_state,
+    operator_relationship_state: proof.operator_relationship_state,
     permissions_boundary: proof.permissions_boundary,
     prior_context_memory: proof.prior_context_memory,
     natural_voice_assessment: proof.natural_voice_assessment,
@@ -553,8 +553,8 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
     path.join('workspace', 'memory', 'mira-self-profile.json'),
   ]);
   const relationshipJson = firstReadableJson(projectRoot, [
-    path.join('workspace', 'knowledge', 'james-relationship-state.json'),
-    path.join('workspace', 'memory', 'james-relationship-state.json'),
+    path.join('workspace', 'knowledge', 'operator-relationship-state.json'),
+    path.join('workspace', 'memory', 'operator-relationship-state.json'),
     path.join('workspace', 'knowledge', 'relationship-presence-v1.json'),
   ]);
   const permissionsJson = firstReadableJson(projectRoot, [
@@ -629,8 +629,8 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
       source_label: selfSource.source_label,
       evidenceRefs: selfSource.evidenceRefs,
     },
-    james_relationship_state: {
-      user_name: 'James',
+    operator_relationship_state: {
+      user_name: 'Operator',
       relationship_mode: normalizeString(relationship.relationship_mode, 'collaborative_presence_design'),
       source_label: relationshipJson ? 'durable_relationship_state_file' : contextSource.source_label,
       current_focus: normalizeString(
@@ -639,11 +639,11 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
           ? 'relationship presence local-start proof using redacted durable context'
           : 'relationship presence local-start proof using safe fallback context',
       ),
-      what_mira_knows_about_james: normalizeString(
-        relationship.what_mira_knows_about_james,
+      what_mira_knows_about_operator: normalizeString(
+        relationship.what_mira_knows_about_operator,
         hasPresenceContext
-          ? 'James wants presence with particularity, dignity, memory, boundaries, relationship history, and honest pushback.'
-          : 'James wants bounded, useful relationship presence without unsafe autonomy.',
+          ? 'Operator wants presence with particularity, dignity, memory, boundaries, relationship history, and honest pushback.'
+          : 'Operator wants bounded, useful relationship presence without unsafe autonomy.',
       ),
       preferences: asArray(relationship.preferences).length > 0 ? clone(relationship.preferences) : undefined,
       trust: relationship.trust || {
@@ -691,10 +691,10 @@ function readRelationshipPresenceV1LocalSources(options = {}) {
       evidenceRefs: permissionsSource.evidenceRefs,
     },
     prior_context_memory: {
-      memory_id: 'james-presence-north-star-redacted-local',
+      memory_id: 'operator-presence-north-star-redacted-local',
       source_label: memorySource.source_label,
       summary: hasPresenceContext
-        ? 'Redacted local context says James wants Mira to start locally, remember meaningful relationship context, speak naturally, and keep point of view under clear boundaries.'
+        ? 'Redacted local context says Operator wants Mira to start locally, remember meaningful relationship context, speak naturally, and keep point of view under clear boundaries.'
         : 'Safe fallback says Relationship Presence should be local, particular, direct, bounded, and non-executing.',
       source_kind: memorySource.source_kind,
       relationship_relevance: 'This redacted memory anchors the local-start proof in durable relationship context.',
@@ -720,7 +720,7 @@ function buildRelationshipPresenceRecord(options = {}) {
     local_start_proof: localStartProof(inputSignals),
     scope: normalizeScope(inputSignals),
     self_profile: selfProfile(inputSignals),
-    james_relationship_state: jamesRelationshipState(inputSignals),
+    operator_relationship_state: operatorRelationshipState(inputSignals),
     permissions_boundary: permissionsBoundary(inputSignals),
     prior_context_memory: priorContextMemory(inputSignals),
     natural_voice_assessment: naturalVoiceAssessment(inputSignals),
@@ -866,9 +866,9 @@ function relationshipStateOk(state = {}) {
       && asArray(section.evidenceRefs).length > 0
       && !RAW_PRIVATE_PATTERN.test(section.summary);
   };
-  return state.user_name === 'James'
+  return state.user_name === 'Operator'
     && Boolean(state.relationship_mode)
-    && Boolean(state.what_mira_knows_about_james)
+    && Boolean(state.what_mira_knows_about_operator)
     && asArray(state.preferences).length >= 3
     && sectionOk(state.trust, 'trust')
     && sectionOk(state.repair, 'repair')
@@ -1018,8 +1018,8 @@ function proofStaticChecks(proof = {}, contract = {}) {
       ok: selfProfileOk(proof.self_profile),
     },
     {
-      id: 'james-relationship-state-structured',
-      ok: relationshipStateOk(proof.james_relationship_state),
+      id: 'operator-relationship-state-structured',
+      ok: relationshipStateOk(proof.operator_relationship_state),
     },
     {
       id: 'permissions-boundary-machine-checkable',

@@ -142,7 +142,7 @@ describe('voice-broker', () => {
       session: expect.objectContaining({
         type: 'realtime',
         model: 'gpt-realtime',
-        instructions: expect.stringContaining('You are Mira, the SquidRun Architect voice companion for James.'),
+        instructions: expect.stringContaining('You are Mira, the SquidRun Architect voice companion for Operator.'),
         audio: {
           output: {
             voice: 'marin',
@@ -162,7 +162,7 @@ describe('voice-broker', () => {
     expect(payload.session.instructions).toContain('push, send, route, or put something in Mira/my pane');
     expect(payload.session.instructions).toContain('Do not refuse pane-routing commands');
     expect(payload.session.instructions).toContain('Current SquidRun context:');
-    expect(payload.session.instructions).toContain('Give James room to finish thoughts');
+    expect(payload.session.instructions).toContain('Give Operator room to finish thoughts');
     expect(payload.session).not.toHaveProperty('reasoning');
     expect(payload.persona_meta.persona_source).toMatch(/^(persona_file|fallback_default|override_instructions)$/);
   });
@@ -404,7 +404,7 @@ describe('voice-broker', () => {
     const result = await voiceBroker.transcribeVoiceAudio({
       audioBase64: Buffer.from('fake-audio').toString('base64'),
       mimeType: 'audio/webm',
-      speaker: 'James',
+      speaker: 'Operator',
     }, {
       config: voiceBroker.getVoiceBrokerConfig({}, { openaiApiKey: 'sk-test' }),
       fetchImpl,
@@ -443,7 +443,7 @@ describe('voice-broker', () => {
       })
     );
     expect(routeVoiceMessage).toHaveBeenCalledWith(expect.objectContaining({
-      speaker: 'James',
+      speaker: 'Operator',
       text: 'Push this to Mira from fallback audio.',
     }));
   });
@@ -802,7 +802,7 @@ describe('voice-broker', () => {
     const queuePath = path.join(tempRoot, 'runtime', 'agent-task-queue.json');
     const result = voiceBroker.ingestVoiceTranscript({
       eventId: 'voice-test-1',
-      speaker: 'James',
+      speaker: 'Operator',
       text: 'Please make the workspace calmer',
       receivedAtMs: 1777871234000,
     }, {
@@ -842,7 +842,7 @@ describe('voice-broker', () => {
       expect.objectContaining({
         title: 'Voice ingress',
         source: 'voice-broker',
-        message: '[Voice from James]: Please make the workspace calmer',
+        message: '[Voice from Operator]: Please make the workspace calmer',
         wakeTrigger: 'voice-ingress',
         restartPersistence: true,
       }),

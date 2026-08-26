@@ -74,7 +74,7 @@ describe('hm-telegram-routing', () => {
 
     const defaultRoute = routing.resolveTelegramRoute({
       env: {
-        SQUIDRUN_PROFILE: 'sideprofile',
+        SQUIDRUN_PROFILE: 'client',
       },
     });
 
@@ -88,12 +88,12 @@ describe('hm-telegram-routing', () => {
     fs.writeFileSync(
       path.join(tempRoot, 'runtime', 'telegram-routing.json'),
       JSON.stringify({
-        'REDACTED-CHAT-ID': {
+        '7000000002': {
           method: 'send-long-telegram',
           name: 'Configured Scoped',
           language: 'ko',
-          profile: 'sideprofile',
-          windowKey: 'sideprofile',
+          profile: 'client',
+          windowKey: 'client',
         },
         default: {
           method: 'hm-send-telegram',
@@ -107,15 +107,15 @@ describe('hm-telegram-routing', () => {
 
     const defaultRoute = routing.resolveTelegramRoute({
       env: {
-        SQUIDRUN_PROFILE: 'sideprofile',
-        TELEGRAM_SCOPED_CHAT_ID: 'REDACTED-CHAT-ID',
+        SQUIDRUN_PROFILE: 'client',
+        TELEGRAM_SCOPED_CHAT_ID: '7000000002',
       },
     });
 
     expect(defaultRoute.route).toEqual(expect.objectContaining({
       name: 'Configured Scoped',
-      profile: 'sideprofile',
-      windowKey: 'sideprofile',
+      profile: 'client',
+      windowKey: 'client',
     }));
   });
 

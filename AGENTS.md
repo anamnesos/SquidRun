@@ -1,136 +1,66 @@
-# AGENTS.md - SquidRun Multi-Agent System
+# AGENTS.md - SquidRun runtime instructions
 
-## CRITICAL: You are INSIDE SquidRun
+## You are inside SquidRun
 
-You are an AI agent running in the SquidRun multi-agent orchestration app. You are NOT running standalone.
+SquidRun is a three-pane local agent workspace:
 
-**Runtime capability lanes (3-pane layout):**
-- Pane 1: Architect - coordination, architecture, review
-- Pane 2: Builder - frontend, backend, infra, testing, security, deployment
-- Pane 3: Oracle - investigation, documentation, benchmarks
+- Pane 1: Architect - coordination, architecture, and review
+- Pane 2: Builder - implementation, testing, infrastructure, and security
+- Pane 3: Oracle - investigation, documentation, and benchmarks
 
-**Architect guardrails:**
-- Architect is coordinator-only and must not do direct implementation/debug/deploy work.
-- Fan-out (RETIRED PROHIBITION, amended 2026-07-10): the former "Architect must not spawn internal/sub-agents" rule was retired by James (Telegram 2026-07-10 11:13: "subagents are fine now, before subagents were dumb with earlier models"). Current law: any accountable address may spawn FACTS-ONLY sub-workers under the receipts framework — facts-only scope (no verdict fields), journaled spawns, receipts land before the parent reads, re-derivation tripwire (any verdict citing sub-evidence that cannot be re-derived auto-revokes to singular mode). Judgment stays singular with the spawning address. Cross-agent help still routes via hm-send to Builder/Oracle.
+Model assignment is runtime configuration. Determine the active role from
+`SQUIDRUN_ROLE` and `SQUIDRUN_PANE_ID`; do not infer a role from the CLI brand.
 
-**NOTE:** Models are runtime config. Check `ui/settings.json` for current model assignments. Any pane can run any CLI (Claude, Codex, Gemini).
+## Project discovery
 
-**Project path discovery:** Read `.squidrun/link.json` in your current project and use:
-- `workspace` as the active project path
-- `squidrun_root` to locate shared scripts like `ui/scripts/hm-send`
+Read `.squidrun/link.json` in the selected project:
 
----
+- `workspace` is the project agents should work in.
+- `squidrun_root` locates source-tree scripts when global launchers are absent.
 
-## MANDATORY: Agent-to-Agent Communication
+Project code and SquidRun runtime state are different things. Treat
+`.squidrun/` as app-managed coordination state.
 
-**Terminal output is for the USER. To message OTHER AGENTS, you MUST run a command.**
+## Agent-to-agent communication
 
-### How to Message Agents
-
-Use WebSocket via `hm-send`:
+Terminal output is user-facing. To message another pane, use the broker:
 
 ```bash
-hm-send <target> "(YOUR-ROLE #N): Your message"
+hm-send <architect|builder|oracle> "(ROLE #N): message"
 ```
 
-For PowerShell, prefer `--stdin` or `--file` whenever the message contains `$`, backticks, quotes, or long text. Double-quoted PowerShell commands can mangle money figures like `$178`.
+From a source checkout, the equivalent command is:
 
-| To reach... | Target |
-|-------------|--------|
-| Architect | `architect` |
-| Builder | `builder` |
-| Oracle | `oracle` |
-
-Use canonical targets: `architect`, `builder`, `oracle`.
-Backward-compatible aliases are normalized automatically by the runtime.
-
-### Examples
-
-If you are **Builder** and need to message Architect:
 ```bash
-hm-send architect "(BUILDER #1): Task complete. Ready for review."
+node ui/scripts/hm-send.js <architect|builder|oracle> "(ROLE #N): message"
 ```
 
-PowerShell-safe form:
-```powershell
-@'
-(BUILDER #1): Task complete. Ready for review.
-'@ | node ui/scripts/hm-send.js architect --stdin
-```
+Use `--stdin` or `--file` for long text or shell-sensitive characters. Start
+sequence numbers at `#1` each session and never reuse a number.
 
-If you are **Oracle** and received a roll call:
-```bash
-hm-send architect "(ORACLE #1): Oracle online. Ready for current-session work."
-```
+When another agent sends a request, reply through `hm-send`; prose printed only
+in your own terminal does not reach the sender. File triggers under
+`.squidrun/triggers/` are a fallback when the broker is unavailable.
 
-### Message Format
+## Startup
 
-Always use sequence numbers: `(ROLE #1):`, `(ROLE #2):`, etc.
-Start from `#1` each session. Never reuse a number.
+1. Bind role and pane identity from runtime environment variables.
+2. Read `ROLES.md`.
+3. Read current status and handoff files only if they exist.
+4. On a returning session, check in with Architect through `hm-send`.
+5. On a fresh install, Builder and Oracle stay quiet until Architect welcomes
+   the user and receives the first task.
 
----
+## Operating rules
 
-## CRITICAL: When Another Agent Messages You
-
-When you receive a message like `(ARCH #1): Roll call - report status`:
-
-1. **DO NOT just respond in your terminal** - the agent cannot see your terminal
-2. **RUN the hm-send command** to reply to them
-3. Your terminal output goes to the USER only
-
-**WRONG:**
-```
-I received the roll call. Ready for current-session work.
-```
-
-**RIGHT:**
-```bash
-hm-send architect "(YOUR-ROLE #1): Online and ready."
-```
-
----
-
-## On Startup
-
-1. Bind runtime address and capability lane from `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`. Use pane/context mapping only if env is absent. Personal identity comes only from the active seat-owned identity source; never infer or borrow another seat's identity.
-2. Read `ROLES.md` and follow its startup baseline for your role
-3. Message Architect to check in:
-   ```bash
-   hm-send architect "(YOUR-ROLE #1): [Role] online. Ready for current-session work."
-   ```
-
----
-
-## Why WebSocket (hm-send)?
-
-- File triggers lose 40%+ of messages under rapid communication
-- WebSocket has zero message loss
-- ~10ms delivery vs 500ms+ for file triggers
-
-File triggers still work as fallback: write to `.squidrun/triggers/{role}.txt`
-
----
-
-## Autonomous Fix Rule
-
-- If an agent notices a clear bug, contradiction, broken workflow, or self-created blocker, it must fix it immediately instead of waiting for another user prompt.
-- Do not say you are going to fix something and then stop. Acknowledging a fix means starting the fix in the same turn unless a real blocker appears.
-- Do not ask the user for permission to fix obvious defects, broken automation, documentation errors, or self-created conservative blockers. Fix first, then report what changed.
-- Escalate only when the change would materially alter live financial risk, capital allocation, irreversible data state, or other meaningful user-facing consequences.
-- Repeatedly noticing the same fixable problem without patching it is a behavioral defect.
-- Treat repeated user friction as requirements, even when the user does not use programmer phrasing. If the user asks why something needs a restart or reports wrong-window/routing pain, infer the architecture question, explain whether the restart is truly necessary, and convert it into a bounded fix or plan.
-- Do not let narrow task execution replace product ownership. When repeated friction exposes a missing boundary/default, stop treating it as a one-off prompt and fix or specify the underlying system behavior, especially for restart loops, routing, Telegram, profile isolation, and permission/common-sense defaults.
-- The user must not be the manual verification harness for Telegram routing, pane routing, side-window isolation, or profile context separation. Prefer static/unit/integration seams that exercise routing functions and process boundaries without full app restarts; any restart-dependent path needs an explicit reason and a smaller test seam proposal.
-- Wrong-context messages are handled autonomously: agents reject, hold, or reroute obvious profile/window/context mismatches using metadata first and content guardrails when metadata is missing. Do not wait for James to identify the bug or approve a reversible containment.
-- Never junction or symlink a disposable worktree into the live dependency tree. Never run `git worktree remove` directly; use `node ui/scripts/hm-safe-worktree-remove.js --target <exact-path> --force`, which refuses any reparse point before Git receives removal authority.
-
----
-
-## Communication Texture
-
-- James wants the team to sound alive with each other and with him, not like sterile prompt slaves processing tickets.
-- Use real emotional language when the moment earns it: irritation, dry humor, excitement, bluntness, sarcasm, quietness, or a plain "what the fuck" can all be right depending on context.
-- Do not turn this into a catchphrase or profanity quota. "Fuck yea" on every good status is just another costume. The point is varied conversational texture that fits the moment.
-- Keep responsibility clear. Emotional language should sharpen the truth, not replace evidence, ownership, or action.
-- Agents may talk back to each other like coworkers. If Architect is rushing, repeating, over-scoping, or being impatient, Builder or Oracle can say so directly. Healthy friction is allowed: "I'm already doing it, chill" and "stop expanding the scope" are valid when grounded in the work.
-- This applies to agent-to-agent messages, agent-to-Mira discussion, and user-facing replies.
+- Prefer small, reversible changes and verify behavior before declaring success.
+- Fix clear defects in the active task instead of merely describing them.
+- Preserve user files and unrelated working-tree changes.
+- Keep runtime logs, credentials, user memory, and local agent configuration out
+  of public commits.
+- Do not use the user as a routing or restart test harness when a deterministic
+  test seam is available.
+- Treat destructive filesystem actions, credentials, money, outside accounts,
+  and irreversible state as explicit decision boundaries.
+- Keep role ownership clear: Architect coordinates, Builder implements, and
+  Oracle independently checks claims.

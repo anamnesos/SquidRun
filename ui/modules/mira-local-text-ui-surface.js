@@ -296,7 +296,7 @@ function normalizeSessionState(payload = {}) {
     transcript_policy: 'not_persisted_v0',
     model_boundary: 'no_model_call_v0',
     review_owner: normalizeString(payload.reviewOwner || payload.review_owner, 'Architect'),
-    user: 'James',
+    user: 'Operator',
   };
 }
 
@@ -357,7 +357,7 @@ function withTentativeUnderstandingStore(staging = {}, persistence = null) {
     auto_promotion: false,
     hidden_agent_only_promotion_path: false,
     visible_as_memory_settings_panel: false,
-    james_clickthrough_required: false,
+    operator_clickthrough_required: false,
   };
   const understandingWriteCount = Number(effectivePersistence.tentative_understanding_write_count || 0);
   const databaseWriteCount = Number(effectivePersistence.tentative_understanding_database_write_count || 0);
@@ -374,7 +374,7 @@ function withTentativeUnderstandingStore(staging = {}, persistence = null) {
       humanlike_memory_mode: 'tentative_understanding_revisable_over_time',
       integrated_lived_loop: true,
       owner: 'mira_memory_triage',
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       visible_as_memory_settings_panel: false,
       escalation_policy: 'rare_escalation_only_when_sensitive_ambiguous_contradictory_relationship_shaping_or_user_impacting',
       oracle_role: 'audit_groundedness_and_hallucination_risk_only',
@@ -393,7 +393,7 @@ function withTentativeUnderstandingStore(staging = {}, persistence = null) {
       no_non_tentative_database_write: true,
       no_durable_memory_commit: true,
       no_auto_promotion: true,
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       visible_as_memory_settings_panel: false,
       integrated_lived_loop: true,
       hidden_agent_only_promotion_path: false,
@@ -521,7 +521,7 @@ function buildSurfaceRecord({
       current_lane: whatNowAnswer.current_lane || null,
       recent_changes: whatNowAnswer.recent_changes || [],
       stale_or_parked_exclusions: whatNowAnswer.stale_or_parked_exclusions || [],
-      james_action_line_count: whatNowAnswer.james_action_line_count,
+      operator_action_line_count: whatNowAnswer.operator_action_line_count,
       no_effects: whatNowAnswer.no_effects || null,
     } : null,
     internal_request_draft: internalRequestDraft ? {
@@ -535,7 +535,7 @@ function buildSurfaceRecord({
       proposed_message_body: internalRequestDraft.proposed_message_body || null,
       reason_trigger: internalRequestDraft.reason_trigger || null,
       blocked_parked_exclusions: internalRequestDraft.blocked_parked_exclusions || [],
-      james_action_line_count: internalRequestDraft.james_action_line_count,
+      operator_action_line_count: internalRequestDraft.operator_action_line_count,
       no_effects: internalRequestDraft.no_effects || null,
     } : null,
     internal_handoff_preview: internalHandoffPreview ? {
@@ -554,7 +554,7 @@ function buildSurfaceRecord({
       risk_blocked_exclusions: internalHandoffPreview.risk_blocked_exclusions || [],
       progress: internalHandoffPreview.progress || null,
       approval_gate: internalHandoffPreview.approval_gate || null,
-      james_action_line_count: internalHandoffPreview.james_action_line_count,
+      operator_action_line_count: internalHandoffPreview.operator_action_line_count,
       no_effects: internalHandoffPreview.no_effects || null,
     } : null,
     reply: reply ? {
@@ -599,7 +599,7 @@ function buildSurfaceRecord({
       durable_growth_lane_later: true,
       integrated_lived_loop: true,
       tentative_understanding_owner: 'mira_memory_triage',
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       visible_as_memory_settings_panel: false,
       // ARCH #78 task #3: passthrough of audit-only degraded diagnostics
       // captured by callMiraTextModelAttachment. The lab-surface picks this
@@ -796,14 +796,14 @@ function buildValidationReport(surface = {}) {
       id: 'tentative-understandings-not-memory-settings',
       ok: surface.developmental_understanding?.integrated_lived_loop === true
         && surface.developmental_understanding?.visible_as_memory_settings_panel === false
-        && surface.developmental_understanding?.james_clickthrough_required === false
+        && surface.developmental_understanding?.operator_clickthrough_required === false
         && surface.developmental_understanding?.durable_growth_link?.durable_commit_now === false
         && surface.developmental_understanding?.durable_growth_link?.no_hidden_promotion === true
         && surface.developmental_understanding?.boundary?.no_durable_memory_commit === true
         && surface.developmental_understanding?.boundary?.no_auto_promotion === true
         && surface.memory_candidate_staging?.tentative_understanding?.present === true
         && surface.memory_candidate_staging?.tentative_understanding?.visible_as_memory_settings_panel === false
-        && surface.memory_candidate_staging?.tentative_understanding?.james_clickthrough_required === false
+        && surface.memory_candidate_staging?.tentative_understanding?.operator_clickthrough_required === false
         && surface.memory_candidate_staging?.tentative_understanding?.hidden_agent_only_promotion_path === false
         && surface.memory_candidate_staging?.tentative_understanding?.durable_memory_commit === false
         && surface.memory_candidate_staging?.tentative_understanding?.auto_promotion === false

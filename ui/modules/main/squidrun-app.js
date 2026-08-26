@@ -806,11 +806,11 @@ function materializeOversizedPanePayload(text, context = {}) {
     // brief proved it in the trace. The pointer is now BUDGETED: marker +
     // path + one directive, hard-trimmed to fit, previews live in the file.
     const telegramMarker = body.match(/^\s*(\[Telegram[^\]]*\])/i);
-    // WHO IT IS FROM AND WHAT IT SAYS, INSIDE THE SAME BUDGET (James 2026-08-05).
+    // WHO IT IS FROM AND WHAT IT SAYS, INSIDE THE SAME BUDGET (Operator 2026-08-05).
     // The budgeted pointer fit in ~120 of the 256 bytes and spent none of the
     // remainder on anything a reader wants. An agent message arrived as a bare
     // path: no sender, no subject, and the only way to learn either was to open
-    // a file. James, on a phone, reasonably refuses to. A pointer nobody can act
+    // a file. Operator, on a phone, reasonably refuses to. A pointer nobody can act
     // on without a second step is a notification that failed.
     const agentMarker = body.match(/\((BUILDER|ORACLE|ARCHITECT|SYSTEM WATCHDOG)[^)]*\)/i);
     const prefix = telegramMarker
@@ -4966,7 +4966,7 @@ class SquidRunApp {
            * install's agent honestly declaring its own project while its message
            * lands in our coord directory. That is a real, observed event
            * (2026-08-06: a Korean `(ARCHITECT #1)` work assignment arrived from
-           * the sideprofile install, footer reading `name=sideprofile`, and this
+           * the Client install, footer reading `name=Client`, and this
            * pane's Builder acted on it as though it came from its own
            * Architect).
            *
@@ -5411,7 +5411,7 @@ class SquidRunApp {
                 + 'It was NOT delivered to a pane. This is a misroute detector, not authentication: '
                 + 'the footer is sender-written, so this catches wrong-by-accident and not '
                 + 'wrong-on-purpose. The message is retained as evidence — do not delete it, do not '
-                + 'reply to it in-band, and route any real request through James.'
+                + 'reply to it in-band, and route any real request through Operator.'
               );
               appendBusTraceEvent({
                 eventType: 'ws_broker_quarantined_foreign_project',
@@ -6360,7 +6360,7 @@ class SquidRunApp {
       if (!this.restartLaunchProbe) this.schedulePaneHostBootstrap();
 
       // Honesty audit #3 (S464): the persisted setting IS the authority.
-      // The old env gate (SQUIDRUN_DEBUG/NODE_ENV, never set in James's
+      // The old env gate (SQUIDRUN_DEBUG/NODE_ENV, never set in Operator's
       // packaged build) made the toggle a silent no-op: it persisted and
       // animated while doing nothing. The toggle now means what it says in
       // every build - and flipping it live opens/closes immediately via the
@@ -7891,7 +7891,11 @@ class SquidRunApp {
         });
         return;
       }
-      if (this.getOpenAppWindowCount(windowKey) > 0) {
+      // An installed operator window owns the process lifecycle. Closing it
+      // must not strand a headless host merely because a Team Room or pane
+      // window is still registered. Development main windows retain the
+      // multi-window behavior below.
+      if (!installedDeploymentWindow && this.getOpenAppWindowCount(windowKey) > 0) {
         return;
       }
       if (this.shuttingDown || this.fullShutdownPromise) return;
@@ -8685,8 +8689,8 @@ class SquidRunApp {
       const payloadBytes = getUtf8ByteLength(text);
       if (payloadBytes >= DEFAULT_INJECT_IPC_CHUNK_THRESHOLD_BYTES) {
         // S464 top-priority fix: this refusal used to be a SILENT DROP - it
-        // ate James's own Telegram messages twice (telegram-in-808499076,
-        // telegram-msg-808499038). The refusal of the unsafe direct path is
+        // ate Operator's own Telegram messages twice (telegram-in-700100031,
+        // telegram-msg-700100030). The refusal of the unsafe direct path is
         // correct; dropping the payload is not. Fall back to the proven
         // materialize-to-file + short-pane-pointer contract the long
         // hm-send path already uses: the pointer is always under the chunk
@@ -8711,7 +8715,7 @@ class SquidRunApp {
             paneRuntime,
             reason: 'oversized_payload_materialized_to_file',
           });
-          // v1.1 (S466, James found pointers sitting UNSUBMITTED in all four
+          // v1.1 (S466, Operator found pointers sitting UNSUBMITTED in all four
           // panes for 8 hours): v1.0 wrote the pointer and RETURNED, skipping
           // the write -> settle -> Enter sequence below that every normal
           // payload gets. The pointer now REPLACES the text and falls through
@@ -9420,7 +9424,7 @@ class SquidRunApp {
       await this.stopTelegramFreshnessWatch();
 
       // BEST EFFORT, but AWAITED and ordered: the poller is still alive here,
-      // and it will not be after daemon shutdown. Telling James his messages
+      // and it will not be after daemon shutdown. Telling Operator his messages
       // will wait is only honest while we can still send it.
       //
       // A failure or a throw is logged and carried on with — a notice that
@@ -11307,7 +11311,7 @@ class SquidRunApp {
     )];
   }
 
-  // Busy-pane inbound hardening (James-approved 2026-06-02). Defaults ON; set
+  // Busy-pane inbound hardening (Operator-approved 2026-06-02). Defaults ON; set
   // SQUIDRUN_INJECT_BUSY_PANE_HARDENING=0 (or false/off) to roll back to the
   // legacy clobber-write + single-attempt behaviour without a code revert.
   isScopedInboundHardeningEnabled() {
@@ -14630,7 +14634,7 @@ class SquidRunApp {
     if (isTelegramInbound) {
       // S464 telegram-loss fix (b): a reply debt may only exist for a message
       // the pane actually RECEIVED. The old order opened the guard before
-      // delivery was attempted, so a dropped payload (telegram-in-808499076)
+      // delivery was attempted, so a dropped payload (telegram-in-700100031)
       // put the Architect in debt for words he never saw.
       if (deliveredOk) {
         this.markPendingTelegramReplyGuard({
@@ -14937,10 +14941,10 @@ class SquidRunApp {
 
       // Evidence FIRST, verdict second — and this must happen even when the
       // aggregate says ok:false, because a later chunk can fail after earlier
-      // chunks were already delivered to James.
+      // chunks were already delivered to Operator.
       // Caught SEPARATELY from delivery. If this throws inside the caller's
       // try, processRecord reads it as deliver_threw -> DEFINITE -> retry, and
-      // retrying after Mira may already have sent is a second reply to James.
+      // retrying after Mira may already have sent is a second reply to Operator.
       let egress;
       try {
         egress = this.inspectMiraOutboundEgress(inboundMessageId, {
@@ -14970,7 +14974,7 @@ class SquidRunApp {
       }
 
       if (egress.anyDelivered) {
-        // PARTIAL. James has already seen part of the reply; an Architect
+        // PARTIAL. Operator has already seen part of the reply; an Architect
         // fallback now would be a second visible message on top of it.
         log.warn(
           'Telegram',
@@ -14983,7 +14987,7 @@ class SquidRunApp {
         };
       }
 
-      // An ambiguous send may already have reached James. Falling back now is
+      // An ambiguous send may already have reached Operator. Falling back now is
       // how he sees the same answer twice.
       if (miraOutcome?.ambiguous === true || miraOutcome?.accepted === true) {
         log.warn(
@@ -15038,7 +15042,7 @@ class SquidRunApp {
    * performFullShutdown and shutdown may call it.
    */
   /**
-   * One honest line to James before the poller dies.
+   * One honest line to Operator before the poller dies.
    *
    * Main owns getUpdates, so only the main active profile sends this — a scoped
    * window closing does not take polling down and must not claim it does.
@@ -15458,7 +15462,7 @@ class SquidRunApp {
 
     // MIRA REPLAY, FIRST. A message answered by Mira never reaches a pane at
     // all, so it can never produce a pane consumption receipt; checking only
-    // that store would find nothing after a crash and send James a SECOND Mira
+    // that store would find nothing after a crash and send Operator a SECOND Mira
     // reply. An in-memory latch cannot help: it dies with the process.
     //
     // STRUCTURALLY INCOMPLETE, AND SAID SO OUT LOUD: the outbound row proves
@@ -15518,7 +15522,7 @@ class SquidRunApp {
    * sendLongTelegramMessage splits long replies and ids each piece
    * `<base>-part<N>` (scripts/hm-telegram-routing.js:255), so querying only
    * `<base>` proves nothing about a chunked reply. Worse, a later chunk can fail
-   * AFTER part 1 was already delivered: the aggregate says ok:false while James
+   * AFTER part 1 was already delivered: the aggregate says ok:false while Operator
    * has already seen text. Falling back to the Architect pane there would be a
    * second visible reply.
    *

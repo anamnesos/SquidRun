@@ -217,7 +217,7 @@ describe('pane-control-service', () => {
   });
 
   test('nudge routes addressed workroom panes without consulting the main-pane running map', async () => {
-    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'trustquote-app');
+    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'exampleapp-app');
     ctx.nudgeAddressedPane = jest.fn().mockResolvedValue({
       ok: true,
       accepted: true,
@@ -227,11 +227,11 @@ describe('pane-control-service', () => {
     });
 
     const result = await executePaneControlAction(ctx, 'nudge', {
-      paneId: 'trustquote-app',
+      paneId: 'exampleapp-app',
       message: 'Status check',
     });
 
-    expect(ctx.nudgeAddressedPane).toHaveBeenCalledWith('trustquote-app', 'Status check');
+    expect(ctx.nudgeAddressedPane).toHaveBeenCalledWith('exampleapp-app', 'Status check');
     expect(ctx.mainWindow.webContents.send).not.toHaveBeenCalled();
     expect(result).toEqual(expect.objectContaining({
       success: true,
@@ -243,7 +243,7 @@ describe('pane-control-service', () => {
   });
 
   test('addressed workroom nudge reports delivery failure without a false agent_not_running verdict', async () => {
-    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'trustquote-invoice');
+    ctx.isAddressedPane = jest.fn((paneId) => paneId === 'exampleapp-invoice');
     ctx.nudgeAddressedPane = jest.fn().mockResolvedValue({
       accepted: false,
       queued: false,
@@ -252,7 +252,7 @@ describe('pane-control-service', () => {
     });
 
     const result = await executePaneControlAction(ctx, 'nudge', {
-      paneId: 'trustquote-invoice',
+      paneId: 'exampleapp-invoice',
       message: 'Status check',
     });
 
@@ -322,7 +322,7 @@ describe('pane-control-service', () => {
     const result = await executePaneControlAction(ctx, 'switch-model', {
       paneId: '2',
       model: 'claude',
-      targetInstance: { profileName: 'sideprofile', windowKey: 'sideprofile' },
+      targetInstance: { profileName: 'client', windowKey: 'client' },
     });
 
     expect(result).toEqual(expect.objectContaining({

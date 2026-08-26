@@ -44,7 +44,7 @@ function makeExecutionPacket(overrides = {}) {
       scorerPassRequired: true,
       oracleVerifyRequired: true,
       architectSynthesisRequired: true,
-      jamesCheckpointRequired: true,
+      operatorCheckpointRequired: true,
       liveSettingsChangeAllowedByThisPacket: false,
     },
     ...overrides,
@@ -141,7 +141,7 @@ describe('model replay job packet', () => {
       candidateSelfAttestationAllowed: false,
       blankTemplateExpectedToFailClosed: true,
       scorerPassIsNotSeatAuthority: true,
-      jamesCheckpointRequiredBeforeSeatMutation: true,
+      operatorCheckpointRequiredBeforeSeatMutation: true,
     }));
   });
 

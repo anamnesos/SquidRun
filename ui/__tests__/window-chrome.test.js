@@ -79,14 +79,14 @@ describe('window chrome matrix', () => {
         .toBe(WINDOW_CHROME_CLASSES.SQUID_ROOM);
     });
 
-    test('client profile window (the live sideprofile launch shape)', () => {
-      // sideprofile launches: --profile=sideprofile --window=sideprofile --standalone-window
+    test('client profile window (the live Client launch shape)', () => {
+      // Client launches: --profile=client --window=client --standalone-window
       expect(resolveWindowChromeClass({
-        windowKey: 'sideprofile',
-        profileName: 'sideprofile',
+        windowKey: 'client',
+        profileName: 'client',
         standaloneWindow: true,
       })).toBe(WINDOW_CHROME_CLASSES.CLIENT_PROFILE);
-      expect(resolveWindowChromeClass({ windowKey: 'sideprofile', profileName: 'sideprofile' }))
+      expect(resolveWindowChromeClass({ windowKey: 'client', profileName: 'client' }))
         .toBe(WINDOW_CHROME_CLASSES.CLIENT_PROFILE);
     });
 
@@ -120,7 +120,7 @@ describe('window chrome matrix', () => {
       expect(visible(doc, 'headerSessionBadge')).toBe(true);
     });
 
-    test('client window shows Quit only - no retired profile form or operator surface leaks to sideprofile', () => {
+    test('client window shows Quit only - no retired profile form or operator surface leaks to Client', () => {
       const doc = buildHeaderDoc();
       applyWindowChrome(doc, WINDOW_CHROME_CLASSES.CLIENT_PROFILE);
       expect(visible(doc, 'fullRestartBtn')).toBe(true);

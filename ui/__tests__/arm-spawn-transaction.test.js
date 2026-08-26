@@ -8,12 +8,12 @@ const {
 
 function baseInput(overrides = {}) {
   return {
-    workspacePath: 'D:\\qa\\trustquote-test-copy',
+    workspacePath: 'D:\\qa\\exampleapp-test-copy',
     profileName: 'build-1a-qa',
-    appRoomId: 'trustquote-qa',
+    appRoomId: 'exampleapp-qa',
     armKey: 'dev-qa',
-    paneId: 'trustquote-dev-qa',
-    role: 'trustquote-dev-qa',
+    paneId: 'exampleapp-dev-qa',
+    role: 'exampleapp-dev-qa',
     owner: 'terminal-daemon',
     recoveryEvent: 'lease_check_on_spawn',
     sourceMessageId: 'qa-liveness-ping-1',
@@ -70,7 +70,7 @@ describe('arm spawn transaction', () => {
       mainSessionId: 'app-session-qa-2',
     }));
 
-    expect(first).toMatch(/^arm:\/\/build-1a-qa\/[a-f0-9]{16}\/trustquote-qa\/dev-qa$/);
+    expect(first).toMatch(/^arm:\/\/build-1a-qa\/[a-f0-9]{16}\/exampleapp-qa\/dev-qa$/);
     expect(restarted).toBe(first);
     expect(otherWorkspace).not.toBe(first);
   });
@@ -137,8 +137,8 @@ describe('arm spawn transaction', () => {
     }));
     expect(daemonClient.spawnAddressed).toHaveBeenCalledWith(expect.objectContaining({
       env: expect.objectContaining({
-        SQUIDRUN_ROLE: 'trustquote-dev-qa',
-        SQUIDRUN_PANE_ID: 'trustquote-dev-qa',
+        SQUIDRUN_ROLE: 'exampleapp-dev-qa',
+        SQUIDRUN_PANE_ID: 'exampleapp-dev-qa',
       }),
     }), {});
     expect(recordSession).toHaveBeenCalledWith(expect.objectContaining({
@@ -175,7 +175,7 @@ describe('arm spawn transaction', () => {
     expect(daemonClient.killAddressed).toHaveBeenCalledWith(expect.objectContaining({
       durableAddress: result.durableAddress,
       spawnLeaseId: 'lease-qa-1',
-      paneId: 'trustquote-dev-qa',
+      paneId: 'exampleapp-dev-qa',
       reason: 'spawn_session_persist_failure',
     }));
   });

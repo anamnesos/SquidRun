@@ -258,7 +258,7 @@ describe('terminal.js module', () => {
     }
     terminal._internals.terminalStreamingFitTimers.clear();
     terminal._internals.terminalStreamingLastFitAt.clear();
-    ['1', '2', '3', 'trustquote-app', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch'].forEach((paneId) => {
+    ['1', '2', '3', 'exampleapp-app', 'exampleapp-lead', 'exampleapp-invoice', 'exampleapp-schedule-dispatch'].forEach((paneId) => {
       terminal.resetTerminalWriteQueue(paneId);
       terminal._internals.clearStartupInjection(paneId);
     });
@@ -282,10 +282,10 @@ describe('terminal.js module', () => {
       startupBundlePath: '',
       startupBundleReady: false,
     });
-    terminal.clearPaneRuntimeOverride('trustquote-lead');
-    terminal.clearPaneRuntimeOverride('trustquote-invoice');
-    terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
-    terminal.clearPaneRuntimeOverride('trustquote-app');
+    terminal.clearPaneRuntimeOverride('exampleapp-lead');
+    terminal.clearPaneRuntimeOverride('exampleapp-invoice');
+    terminal.clearPaneRuntimeOverride('exampleapp-schedule-dispatch');
+    terminal.clearPaneRuntimeOverride('exampleapp-app');
   });
 
   afterEach(() => {
@@ -322,12 +322,12 @@ describe('terminal.js module', () => {
     for (const paneId of Array.from(terminal._internals.startupFallbackEnterTimers.keys())) {
       terminal._internals.clearStartupFallbackEnter(paneId);
     }
-    ['1', '2', '3', 'trustquote-app', 'trustquote-lead', 'trustquote-invoice', 'trustquote-schedule-dispatch']
+    ['1', '2', '3', 'exampleapp-app', 'exampleapp-lead', 'exampleapp-invoice', 'exampleapp-schedule-dispatch']
       .forEach((paneId) => terminal._internals.clearStartupInjection(paneId));
-    terminal.clearPaneRuntimeOverride('trustquote-lead');
-    terminal.clearPaneRuntimeOverride('trustquote-invoice');
-    terminal.clearPaneRuntimeOverride('trustquote-schedule-dispatch');
-    terminal.clearPaneRuntimeOverride('trustquote-app');
+    terminal.clearPaneRuntimeOverride('exampleapp-lead');
+    terminal.clearPaneRuntimeOverride('exampleapp-invoice');
+    terminal.clearPaneRuntimeOverride('exampleapp-schedule-dispatch');
+    terminal.clearPaneRuntimeOverride('exampleapp-app');
   });
 
   describe('PANE_IDS constant', () => {
@@ -572,7 +572,7 @@ describe('terminal.js module', () => {
       expect(caps.verifySubmitAccepted).toBe(true);
     });
 
-    test('uses source pane runtime and PTY Enter for live TrustQuote arm panes', () => {
+    test('uses source pane runtime and PTY Enter for live ExampleApp arm panes', () => {
       mockSettings.getSettings.mockReturnValue({
         hiddenPaneHostsEnabled: false,
         paneCommands: {
@@ -581,16 +581,16 @@ describe('terminal.js module', () => {
         },
       });
 
-      const leadCaps = terminal.getPaneInjectionCapabilities('trustquote-lead');
+      const leadCaps = terminal.getPaneInjectionCapabilities('exampleapp-lead');
       expect(leadCaps.displayName).toBe('Claude');
       expect(leadCaps.enterMethod).toBe('pty');
-      expect(leadCaps.submitMethod).toBe('trustquote-pty-enter');
+      expect(leadCaps.submitMethod).toBe('exampleapp-pty-enter');
       expect(leadCaps.requiresFocusForEnter).toBe(false);
 
-      const appCaps = terminal.getPaneInjectionCapabilities('trustquote-app');
+      const appCaps = terminal.getPaneInjectionCapabilities('exampleapp-app');
       expect(appCaps.displayName).toBe('Claude');
       expect(appCaps.enterMethod).toBe('pty');
-      expect(appCaps.submitMethod).toBe('trustquote-pty-enter');
+      expect(appCaps.submitMethod).toBe('exampleapp-pty-enter');
       expect(appCaps.requiresFocusForEnter).toBe(false);
     });
 
@@ -852,34 +852,34 @@ describe('terminal.js module', () => {
     });
 
     test('uses pane runtime startup override for Squid Room app arms', async () => {
-      terminal.setPaneRuntimeOverride('trustquote-lead', {
-        label: 'TrustQuote Lead',
-        roleLabel: 'TrustQuote Lead',
+      terminal.setPaneRuntimeOverride('exampleapp-lead', {
+        label: 'ExampleApp Lead',
+        roleLabel: 'ExampleApp Lead',
         provider: 'codex',
-        startupMessage: 'TrustQuote arm role: Lead.\nWork in D:\\projects\\TrustQuote.',
+        startupMessage: 'ExampleApp arm role: Lead.\nWork in D:\\projects\\ExampleApp.',
       });
 
-      const message = await terminal._internals.buildStartupIdentityMessage('trustquote-lead');
+      const message = await terminal._internals.buildStartupIdentityMessage('exampleapp-lead');
 
-      expect(message).toContain('# SQUIDRUN SESSION: TrustQuote Lead');
-      expect(message).toContain('TrustQuote arm role: Lead.');
-      expect(message).toContain('Work in D:\\projects\\TrustQuote.');
+      expect(message).toContain('# SQUIDRUN SESSION: ExampleApp Lead');
+      expect(message).toContain('ExampleApp arm role: Lead.');
+      expect(message).toContain('Work in D:\\projects\\ExampleApp.');
       expect(message).not.toContain('SIDE-PROFILE STARTUP CONTEXT PENDING');
 
-      terminal.clearPaneRuntimeOverride('trustquote-lead');
+      terminal.clearPaneRuntimeOverride('exampleapp-lead');
     });
 
-    test('uses side-profile startup bundle instead of main Mira briefing for sideprofile startup', async () => {
-      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-sideprofile-startup-'));
+    test('uses side-profile startup bundle instead of main Mira briefing for Client startup', async () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-client-startup-'));
       const bundlePath = path.join(tempRoot, 'startup-bundle.md');
       fs.writeFileSync(bundlePath, [
-        '# sideprofile Startup Bundle',
+        '# Client Startup Bundle',
         '',
         'Profile identity:',
-        '- Profile: sideprofile',
+        '- Profile: client',
         '- Workspace: D:\\projects\\squidrun',
         '',
-        'sideprofile case/runtime context only.',
+        'Client case/runtime context only.',
       ].join('\n'));
       try {
         mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce([
@@ -901,11 +901,11 @@ describe('terminal.js module', () => {
 
         terminal.setStartupWindowContext({
           loaded: true,
-          windowKey: 'sideprofile',
-          windowTeam: 'sideprofile',
-          profileName: 'sideprofile',
-          profileLabel: 'sideprofile',
-          sessionScopeId: 'app-session-372:sideprofile',
+          windowKey: 'client',
+          windowTeam: 'client',
+          profileName: 'client',
+          profileLabel: 'Client',
+          sessionScopeId: 'app-session-372:client',
           startupBundlePath: bundlePath,
           startupBundleReady: true,
         });
@@ -913,8 +913,8 @@ describe('terminal.js module', () => {
         const message = await terminal._internals.buildStartupIdentityMessage('2');
 
         expect(message).toContain('# SQUIDRUN SESSION: Rook (Builder)');
-        expect(message).toContain('# sideprofile Startup Bundle');
-        expect(message).toContain('sideprofile case/runtime context only.');
+        expect(message).toContain('# Client Startup Bundle');
+        expect(message).toContain('Client case/runtime context only.');
         expect(message).not.toContain('Mira Presence Runtime');
         expect(message).not.toContain('New Mira implementation seam');
         expect(mockStartupAiBriefing.readStartupBriefingForInjection).not.toHaveBeenCalled();
@@ -931,17 +931,17 @@ describe('terminal.js module', () => {
       mockStartupAiBriefing.readStartupBriefingForInjection.mockReturnValueOnce('Mira Presence Runtime acceptance');
       terminal.setStartupWindowContext({
         loaded: false,
-        windowKey: 'sideprofile',
-        profileName: 'sideprofile',
-        profileLabel: 'sideprofile',
-        sessionScopeId: 'app-session-372:sideprofile',
-        startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\sideprofile\\startup-bundle.md',
+        windowKey: 'client',
+        profileName: 'client',
+        profileLabel: 'Client',
+        sessionScopeId: 'app-session-372:client',
+        startupBundlePath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\window-teams\\client\\startup-bundle.md',
         startupBundleReady: false,
       });
 
       const message = await terminal._internals.buildStartupIdentityMessage('2');
 
-      expect(message).toContain('SIDE-PROFILE STARTUP CONTEXT PENDING: sideprofile');
+      expect(message).toContain('SIDE-PROFILE STARTUP CONTEXT PENDING: Client');
       expect(message).toContain('Main startup continuity intentionally omitted');
       expect(message).not.toContain('Mira Presence Runtime');
       expect(mockStartupAiBriefing.readStartupBriefingForInjection).not.toHaveBeenCalled();
@@ -1443,10 +1443,10 @@ describe('terminal.js module', () => {
       expect(terminal._internals.rendererOwnsStartupInjection('1')).toBe(false);
       expect(terminal._internals.rendererOwnsStartupInjection('2')).toBe(false);
       expect(terminal._internals.rendererOwnsStartupInjection('3')).toBe(false);
-      expect(terminal._internals.rendererOwnsStartupInjection('trustquote-app')).toBe(true);
+      expect(terminal._internals.rendererOwnsStartupInjection('exampleapp-app')).toBe(true);
     });
 
-    test('keeps squid-room TrustQuote arms authoritative for their own PTY geometry', () => {
+    test('keeps squid-room ExampleApp arms authoritative for their own PTY geometry', () => {
       jest.useFakeTimers();
       terminal.setStartupWindowContext({
         windowKey: 'squid-room',
@@ -1461,15 +1461,15 @@ describe('terminal.js module', () => {
         }),
       };
 
-      terminal.fitAddons.set('trustquote-app', mockFitAddon);
-      terminal.terminals.set('trustquote-app', mockTerminalObj);
+      terminal.fitAddons.set('exampleapp-app', mockFitAddon);
+      terminal.terminals.set('exampleapp-app', mockTerminalObj);
 
       terminal.handleResize();
       jest.advanceTimersByTime(300);
 
-      expect(terminal._internals.rendererOwnsPtyGeometry('trustquote-app')).toBe(true);
+      expect(terminal._internals.rendererOwnsPtyGeometry('exampleapp-app')).toBe(true);
       expect(mockFitAddon.fit).toHaveBeenCalled();
-      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('trustquote-app', 128, 36);
+      expect(mockSquidRun.pty.resize).toHaveBeenCalledWith('exampleapp-app', 128, 36);
     });
 
     test('should handle resize errors gracefully', () => {
@@ -2596,10 +2596,10 @@ describe('terminal.js module', () => {
     test('does not skip spawnAgent for daemon-started non-core arm panes', async () => {
       jest.useRealTimers();
       mockSquidRun.claude.spawn.mockClear();
-      terminal.setActivePaneIds(['trustquote-app']);
-      terminal.setPaneRuntimeOverride('trustquote-app', {
-        roleId: 'trustquote-app',
-        routeTarget: 'trustquote-app',
+      terminal.setActivePaneIds(['exampleapp-app']);
+      terminal.setPaneRuntimeOverride('exampleapp-app', {
+        roleId: 'exampleapp-app',
+        routeTarget: 'exampleapp-app',
         command: 'codex',
         spawnCommandOnCreate: true,
       });
@@ -2607,7 +2607,7 @@ describe('terminal.js module', () => {
         ok: true,
         terminals: [
           {
-            paneId: 'trustquote-app',
+            paneId: 'exampleapp-app',
             alive: true,
             mode: 'pty-command',
             createdAt: Date.now(),
@@ -2615,16 +2615,16 @@ describe('terminal.js module', () => {
           },
         ],
       });
-      terminal.terminals.set('trustquote-app', { write: jest.fn() });
+      terminal.terminals.set('exampleapp-app', { write: jest.fn() });
 
       await terminal.spawnAllAgents();
 
       expect(mockSquidRun.pty.claimStartupInjection).toHaveBeenCalledWith(expect.objectContaining({
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         source: 'spawn-command-on-create-retry',
         modelType: 'codex',
       }));
-      terminal.clearPaneRuntimeOverride('trustquote-app');
+      terminal.clearPaneRuntimeOverride('exampleapp-app');
       terminal.setActivePaneIds(terminal.PANE_IDS);
       jest.useFakeTimers();
     });
@@ -3065,19 +3065,19 @@ describe('terminal.js module', () => {
         ok: true,
         terminals: [
           {
-            paneId: 'trustquote-invoice',
+            paneId: 'exampleapp-invoice',
             alive: true,
-            scrollback: 'Windows PowerShell\r\nPS D:\\projects\\TrustQuote> ',
+            scrollback: 'Windows PowerShell\r\nPS D:\\projects\\ExampleApp> ',
           },
         ],
       });
 
-      await terminal.initTerminal('trustquote-invoice', { snapshotTimeoutMs: 777 });
+      await terminal.initTerminal('exampleapp-invoice', { snapshotTimeoutMs: 777 });
 
       expect(mockSquidRun.daemon.terminalSnapshot).toHaveBeenCalledWith({ timeoutMs: 777 });
-      const terminalInstance = terminal.terminals.get('trustquote-invoice');
+      const terminalInstance = terminal.terminals.get('exampleapp-invoice');
       const writeCall = terminalInstance.write.mock.calls.find(
-        (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\TrustQuote')
+        (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\ExampleApp')
       );
       expect(writeCall).toBeDefined();
       jest.runOnlyPendingTimers();
@@ -3090,8 +3090,8 @@ describe('terminal.js module', () => {
         addEventListener: jest.fn(),
       };
       mockDocument.getElementById.mockReturnValue(mockContainer);
-      terminal.setPaneRuntimeOverride('trustquote-lead', {
-        workingDir: 'D:\\projects\\TrustQuote',
+      terminal.setPaneRuntimeOverride('exampleapp-lead', {
+        workingDir: 'D:\\projects\\ExampleApp',
         command: 'codex --yolo',
         recreateOnWorkingDirMismatch: true,
       });
@@ -3099,7 +3099,7 @@ describe('terminal.js module', () => {
         ok: true,
         terminals: [
           {
-            paneId: 'trustquote-lead',
+            paneId: 'exampleapp-lead',
             alive: true,
             cwd: 'D:\\projects\\squidrun\\ui',
             scrollback: 'PS D:\\projects\\squidrun\\ui> ',
@@ -3107,30 +3107,30 @@ describe('terminal.js module', () => {
         ],
       });
 
-      await terminal.initTerminal('trustquote-lead', {
+      await terminal.initTerminal('exampleapp-lead', {
         snapshotTimeoutMs: 777,
         recreateDelayMs: 0,
         repaintAfterRecreate: false,
       });
 
-      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('exampleapp-lead');
       expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
-        'trustquote-lead',
-        'D:\\projects\\TrustQuote',
+        'exampleapp-lead',
+        'D:\\projects\\ExampleApp',
         expect.objectContaining({
           paneCommand: 'codex --yolo',
           env: expect.objectContaining({
-            SQUIDRUN_ROLE: 'trustquote-lead',
-            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+            SQUIDRUN_ROLE: 'exampleapp-lead',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\ExampleApp',
           }),
         })
       );
-      const terminalInstance = terminal.terminals.get('trustquote-lead');
+      const terminalInstance = terminal.terminals.get('exampleapp-lead');
       const staleWrite = terminalInstance.write.mock.calls.find(
         (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\squidrun\\ui')
       );
       expect(staleWrite).toBeUndefined();
-      terminal.clearPaneRuntimeOverride('trustquote-lead');
+      terminal.clearPaneRuntimeOverride('exampleapp-lead');
     });
 
     test('creates command-bearing runtime override panes without typing the command later', async () => {
@@ -3143,36 +3143,36 @@ describe('terminal.js module', () => {
         profileName: 'main',
         sessionScopeId: 'app-session-413:squid-room',
       });
-      terminal.setPaneRuntimeOverride('trustquote-app', {
-        roleId: 'trustquote-app',
-        routeTarget: 'trustquote-app',
-        workingDir: 'D:\\projects\\TrustQuote',
+      terminal.setPaneRuntimeOverride('exampleapp-app', {
+        roleId: 'exampleapp-app',
+        routeTarget: 'exampleapp-app',
+        workingDir: 'D:\\projects\\ExampleApp',
         command: 'codex --yolo',
         spawnCommandOnCreate: true,
-        startupMessage: 'TrustQuote arm role: TrustQuote App.',
+        startupMessage: 'ExampleApp arm role: ExampleApp App.',
       });
 
-      await terminal.initTerminal('trustquote-app');
-      await terminal.spawnAgent('trustquote-app', 'codex');
+      await terminal.initTerminal('exampleapp-app');
+      await terminal.spawnAgent('exampleapp-app', 'codex');
 
       expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
-        'trustquote-app',
-        'D:\\projects\\TrustQuote',
+        'exampleapp-app',
+        'D:\\projects\\ExampleApp',
         expect.objectContaining({
           paneCommand: 'codex --yolo',
           spawnCommandOnCreate: true,
           preferWorkingDir: true,
           env: expect.objectContaining({
-            SQUIDRUN_ROLE: 'trustquote-app',
+            SQUIDRUN_ROLE: 'exampleapp-app',
             SQUIDRUN_SESSION_SCOPE_ID: 'app-session-413:squid-room',
             SQUIDRUN_PROFILE: 'main',
             SQUIDRUN_WINDOW_KEY: 'squid-room',
-            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\ExampleApp',
           }),
         })
       );
-      expect(mockSquidRun.pty.write).not.toHaveBeenCalledWith('trustquote-app', 'codex --yolo');
-      terminal.clearPaneRuntimeOverride('trustquote-app');
+      expect(mockSquidRun.pty.write).not.toHaveBeenCalledWith('exampleapp-app', 'codex --yolo');
+      terminal.clearPaneRuntimeOverride('exampleapp-app');
     });
   });
 
@@ -3259,21 +3259,21 @@ describe('terminal.js module', () => {
     });
 
     test('recreates runtime override panes during reattach when the daemon PTY cwd is wrong', async () => {
-      terminal.terminals.delete('trustquote-lead');
+      terminal.terminals.delete('exampleapp-lead');
       const mockContainer = {
         addEventListener: jest.fn(),
       };
       mockDocument.getElementById.mockReturnValue(mockContainer);
-      terminal.setPaneRuntimeOverride('trustquote-lead', {
-        workingDir: 'D:\\projects\\TrustQuote',
+      terminal.setPaneRuntimeOverride('exampleapp-lead', {
+        workingDir: 'D:\\projects\\ExampleApp',
         command: 'codex --yolo',
         recreateOnWorkingDirMismatch: true,
       });
 
-      const reattachPromise = terminal.reattachTerminal('trustquote-lead', 'PS D:\\projects\\squidrun\\ui> ', {
+      const reattachPromise = terminal.reattachTerminal('exampleapp-lead', 'PS D:\\projects\\squidrun\\ui> ', {
         cwd: 'D:\\projects\\squidrun\\ui',
         daemonTerminal: {
-          paneId: 'trustquote-lead',
+          paneId: 'exampleapp-lead',
           alive: true,
           cwd: 'D:\\projects\\squidrun\\ui',
           scrollback: 'PS D:\\projects\\squidrun\\ui> ',
@@ -3284,19 +3284,19 @@ describe('terminal.js module', () => {
       });
       await reattachPromise;
 
-      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('trustquote-lead');
+      expect(mockSquidRun.pty.kill).toHaveBeenCalledWith('exampleapp-lead');
       expect(mockSquidRun.pty.create).toHaveBeenCalledWith(
-        'trustquote-lead',
-        'D:\\projects\\TrustQuote',
+        'exampleapp-lead',
+        'D:\\projects\\ExampleApp',
         expect.objectContaining({
           paneCommand: 'codex --yolo',
           env: expect.objectContaining({
-            SQUIDRUN_ROLE: 'trustquote-lead',
-            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+            SQUIDRUN_ROLE: 'exampleapp-lead',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\ExampleApp',
           }),
         })
       );
-      const terminalInstance = terminal.terminals.get('trustquote-lead');
+      const terminalInstance = terminal.terminals.get('exampleapp-lead');
       const staleWrite = terminalInstance.write.mock.calls.find(
         (args) => typeof args[0] === 'string' && args[0].includes('D:\\projects\\squidrun\\ui')
       );
@@ -4046,7 +4046,7 @@ describe('runTerminalScrollProbe (Bug B proof seam)', () => {
         buffer.active.viewportY = Math.max(0, buffer.active.viewportY + Number(n));
       }),
     };
-    return { paneId: 'trustquote-app', terminal: term };
+    return { paneId: 'exampleapp-app', terminal: term };
   }
 
   beforeEach(() => {
@@ -4073,14 +4073,14 @@ describe('runTerminalScrollProbe (Bug B proof seam)', () => {
     mockDocument.getElementById.mockReturnValue({ [PROBE_PROP]: target });
 
     const res = terminal.runTerminalScrollProbe({
-      containerId: 'terminal-trustquote-app',
+      containerId: 'terminal-exampleapp-app',
       windowKey: 'squid-room',
       op: 'scrollLines',
       lines: -10,
     });
 
     expect(res.success).toBe(true);
-    expect(res.paneId).toBe('trustquote-app');
+    expect(res.paneId).toBe('exampleapp-app');
     expect(res.before.scrollbackRows).toBe(100); // length 124 - rows 24
     expect(target.terminal.scrollLines).toHaveBeenCalledWith(-10);
     expect(res.after.viewportY).toBe(90);

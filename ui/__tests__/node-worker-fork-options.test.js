@@ -21,7 +21,7 @@ describe('node worker fork options', () => {
 
   test('uses electron-as-node when a worker is forked from Electron', () => {
     const runtime = {
-      execPath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+      execPath: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
       env: {
         ELECTRON_RUN_AS_NODE: 'stale',
         Electron_Run_As_Node: 'stale-case-variant',

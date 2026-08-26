@@ -8,5 +8,5 @@ Grade (sharp, one-time): 2560x1440 north-cover crop, brightness 0.56,
 saturation 0.56, hue +42 (reds -> magenta/violet), cool wash #10163a
 at 0.28, vertical abyss gradient (constitution depth story: structure
 above, abyss below), cinematic vignette. The real photograph replaces
-procedural nebula math — assets over runtime art (James's S467 method
+procedural nebula math — assets over runtime art (Operator's S467 method
 correction: "actual professional game developer approach").

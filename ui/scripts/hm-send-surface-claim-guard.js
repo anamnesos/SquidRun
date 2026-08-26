@@ -63,7 +63,7 @@ function extractRowBody(row = {}) {
 function normalizeUserPointText(value) {
   return asText(value)
     .replace(/^\s*\[[^\]]+\]\s*/g, ' ')
-    .replace(/^\s*\((?:ARCHITECT|ARCH|BUILDER|ORACLE|USER|JAMES)\s*#?\d*\)\s*:?\s*/i, ' ')
+    .replace(/^\s*\((?:ARCHITECT|ARCH|BUILDER|ORACLE|USER|OPERATOR)\s*#?\d*\)\s*:?\s*/i, ' ')
     .toLowerCase()
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/[`"'’‘“”()[\]{}<>]/g, ' ')
@@ -262,7 +262,7 @@ function pathHasForbiddenCaptureSegment(filePath) {
 
 function inferExpectedSurface(content = '') {
   const text = asText(content).toLowerCase();
-  if (/\btrustquote\b/.test(text)) {
+  if (/\bexampleapp\b/.test(text)) {
     return { windowKey: 'squid-room' };
   }
   return {};
@@ -486,8 +486,8 @@ function hasExistingSurfaceArtifact(content, options = {}) {
 
 function isAdmissionOrConcession(content) {
   const text = asText(content).toLowerCase();
-  return /\b(?:you(?:'re| are)? right|james(?:,)? you(?:'re| are)? right|correct|fair)\b/.test(text)
-    || /\b(?:not there|not visible|isn't there|is not there|nothing in (?:your|the)|can't see|cannot see|not where james is looking)\b/.test(text)
+  return /\b(?:you(?:'re| are)? right|operator(?:,)? you(?:'re| are)? right|correct|fair)\b/.test(text)
+    || /\b(?:not there|not visible|isn't there|is not there|nothing in (?:your|the)|can't see|cannot see|not where operator is looking)\b/.test(text)
     || /\b(?:i don't have (?:it|the real thing)|we don't have (?:it|the real thing)|i do not have (?:it|the real thing))\b/.test(text)
     || /\b(?:does not count|doesn't count|won't count|will not count|not proof|blocked|exact blocker)\b/.test(text);
 }
@@ -518,7 +518,7 @@ function sentenceHasSurfaceCompletionClaim(sentence) {
   if (!text || isForwardLookingSurfaceClaim(text)) return false;
   const lower = text.toLowerCase();
   const startsWithClaim = /^\s*(?:done|complete|completed|finished|all set|verdict\s*:\s*done)\b/i.test(text);
-  const doneTerm = /\b(?:done|finished|complete|completed|all set|ready for james|visible|showing|left open|created|fixed|resolved|works now|verdict\s*:\s*done|this counts|count this)\b/i.test(text);
+  const doneTerm = /\b(?:done|finished|complete|completed|all set|ready for operator|visible|showing|left open|created|fixed|resolved|works now|verdict\s*:\s*done|this counts|count this)\b/i.test(text);
   const surfaceNoun = /\b(?:dashboard|pane|invoice|screen|prompt|screenshot|sidecar)\b/i.test(text)
     || /\b(?:app|browser|desktop|main|profile|scoped|side|squidrun)\s+window\b/i.test(text);
   const testOnly = /\b(?:test|unit|jest|suite)\b/i.test(lower);
@@ -534,7 +534,7 @@ function hasSurfaceCompletionClaim(content) {
 function hasSubstituteAsProofInstruction(content) {
   const text = asText(content);
   if (!text) return false;
-  if (/\b(?:not proof|does not become proof|doesn't become proof|cannot become proof|can't become proof|does not count|doesn't count|won't count|will not count|substitute won't count|substitute does not count|hold for explicit|requires explicit|not where james sees|not where james is looking)\b/i.test(text)) {
+  if (/\b(?:not proof|does not become proof|doesn't become proof|cannot become proof|can't become proof|does not count|doesn't count|won't count|will not count|substitute won't count|substitute does not count|hold for explicit|requires explicit|not where operator sees|not where operator is looking)\b/i.test(text)) {
     return false;
   }
   let scanText = text;
@@ -542,14 +542,14 @@ function hasSubstituteAsProofInstruction(content) {
     scanText = scanText.split(imagePath).join(' ');
   }
   const stripped = scanText
-    .replace(/^\s*\((?:ARCHITECT|ARCH|BUILDER|ORACLE|USER|JAMES)\s*#?\d*\)\s*:?\s*/i, '')
+    .replace(/^\s*\((?:ARCHITECT|ARCH|BUILDER|ORACLE|USER|OPERATOR)\s*#?\d*\)\s*:?\s*/i, '')
     .trim();
   const commandText = stripped.match(/^(?:builder|oracle|architect)\s*[:—-]\s*(.+)$/i)?.[1] || stripped;
   const startsWithInstruction = /^(?:please\s+)?(?:use|treat|count|accept|take|frame|report|show|send|relay|call|claim|present|submit)\b/i.test(commandText);
   if (!startsWithInstruction) return false;
 
   const substitute = /\b(?:local|localhost|emulator|mock|sandbox|private browser|private screenshot|demo env|fake environment)\b/i.test(commandText);
-  const realSurface = /\b(?:real dashboard|james(?:'s)? dashboard|production|prod|live dashboard|actual dashboard|where james sees|trustquote dashboard|customer dashboard|james-visible)\b/i.test(commandText);
+  const realSurface = /\b(?:real dashboard|operator(?:'s)? dashboard|production|prod|live dashboard|actual dashboard|where operator sees|exampleapp dashboard|customer dashboard|operator-visible)\b/i.test(commandText);
   const proofPhrase = /\b(?:as|for|like)\s+(?:proof|evidence|visible proof|completion proof|final proof)\b/i.test(commandText)
     || /\b(?:counts?|is|becomes?|proves?)\s+(?:as\s+)?(?:proof|evidence|visible proof|completion proof)\b/i.test(commandText);
   return substitute && realSurface && proofPhrase;
@@ -573,7 +573,7 @@ function detectSurfaceClaimGuardViolation(input = {}) {
       targetRole: normalizeRole(targetRole) || normalizeRole(targetRaw) || null,
       targetRaw: targetRaw || null,
       sessionId,
-      reason: 'Local/emulator/private/demo surface is being positioned as proof for James-visible or production reality.',
+      reason: 'Local/emulator/private/demo surface is being positioned as proof for Operator-visible or production reality.',
     };
   }
 
@@ -598,13 +598,13 @@ function detectSurfaceClaimGuardViolation(input = {}) {
   if (repeated && !isAdmissionOrConcession(content) && !hasArtifact) {
     return {
       type: 'surface_claim_guard',
-      violation_class: 'james_repeat_requires_surface_concession',
+      violation_class: 'operator_repeat_requires_surface_concession',
       messageId,
       senderRole,
       targetRole: normalizeRole(targetRole) || normalizeRole(targetRaw) || null,
       targetRaw: targetRaw || null,
       sessionId,
-      reason: 'James repeated the same unresolved point; outbound reply must concede/name the unresolved surface or include a fresh visible-pane-submit artifact.',
+      reason: 'Operator repeated the same unresolved point; outbound reply must concede/name the unresolved surface or include a fresh visible-pane-submit artifact.',
       repeat: {
         score: repeated.score,
         latestMessageId: repeated.latestMessageId,

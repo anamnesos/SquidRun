@@ -22,7 +22,7 @@ const { createColdSpawnBlankRecoveryController } = require('./terminal/cold-spaw
 const { getRuntimeInjectionCapabilityDefault } = require('./terminal/injection-capabilities');
 const { readStartupBriefingForInjection } = require('./startup-ai-briefing');
 const { loadSeatIdentityContext } = require('./seat-identity-loader');
-const { isTrustQuotePaneId } = require('./work-room-terminal-visibility');
+const { isExampleAppPaneId } = require('./work-room-terminal-visibility');
 const {
   extractClaudeSessionIdFromCommand,
   isClaudeSessionInUseError,
@@ -1964,9 +1964,9 @@ function getPaneInjectionCapabilities(paneId) {
     });
   }
 
-  if (isTrustQuotePaneId(paneId)) {
+  if (isExampleAppPaneId(paneId)) {
     Object.assign(base, {
-      submitMethod: 'trustquote-pty-enter',
+      submitMethod: 'exampleapp-pty-enter',
       requiresFocusForEnter: false,
       enterMethod: 'pty',
       enterFailureReason: 'pty_enter_failed',

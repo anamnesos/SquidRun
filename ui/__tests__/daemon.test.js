@@ -72,22 +72,22 @@ describe('DaemonClient', () => {
     });
 
     test('can target a profile-scoped terminal daemon pipe', async () => {
-      const profileClient = new DaemonClient({ profileName: 'sideprofile' });
+      const profileClient = new DaemonClient({ profileName: 'client' });
 
       await profileClient.connect();
 
-      expect(net.createConnection).toHaveBeenCalledWith(getProfilePipePath('sideprofile', process.platform));
+      expect(net.createConnection).toHaveBeenCalledWith(getProfilePipePath('client', process.platform));
       profileClient.disconnect();
     });
 
     test('spawns daemon through the running Electron binary as node', async () => {
       const profileClient = new DaemonClient({
-        profileName: 'sideprofile',
+        profileName: 'client',
         daemonEnv: {
           ELECTRON_RUN_AS_NODE: 'stale',
           Electron_Run_As_Node: 'stale-case-variant',
-          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
         },
       });
 
@@ -98,9 +98,9 @@ describe('DaemonClient', () => {
         [expect.stringContaining('terminal-daemon.js')],
         expect.objectContaining({
           env: expect.objectContaining({
-            SQUIDRUN_PROFILE: 'sideprofile',
-            SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-            SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+            SQUIDRUN_PROFILE: 'client',
+            SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+            SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
             ELECTRON_RUN_AS_NODE: '1',
           }),
         })
@@ -296,11 +296,11 @@ describe('DaemonClient', () => {
       await client.connect();
 
       client.spawn(
-        'trustquote-lead',
-        'D:\\projects\\TrustQuote',
+        'exampleapp-lead',
+        'D:\\projects\\ExampleApp',
         false,
         'pty-command',
-        { SQUIDRUN_ROLE: 'trustquote-lead' },
+        { SQUIDRUN_ROLE: 'exampleapp-lead' },
         { paneCommand: 'codex', spawnCommandOnCreate: true }
       );
 
@@ -309,12 +309,12 @@ describe('DaemonClient', () => {
 
       expect(parsed).toEqual(expect.objectContaining({
         action: 'spawn',
-        paneId: 'trustquote-lead',
-        cwd: 'D:\\projects\\TrustQuote',
+        paneId: 'exampleapp-lead',
+        cwd: 'D:\\projects\\ExampleApp',
         mode: 'pty-command',
         env: expect.objectContaining({
-          SQUIDRUN_ROLE: 'trustquote-lead',
-          SQUIDRUN_PANE_ID: 'trustquote-lead',
+          SQUIDRUN_ROLE: 'exampleapp-lead',
+          SQUIDRUN_PANE_ID: 'exampleapp-lead',
         }),
         options: {
           paneCommand: 'codex',

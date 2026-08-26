@@ -40,7 +40,7 @@ function parseArgs(argv = []) {
   return options;
 }
 
-// The human block is the surface James touches first, so it obeys the same
+// The human block is the surface Operator touches first, so it obeys the same
 // visible-text constraints as Mira's surface output: evidence lines only -
 // no rule recitation, no padding, no apologies, no spec prose.
 function buildHumanBlock(answer = {}) {

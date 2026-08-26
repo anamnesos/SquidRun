@@ -524,7 +524,7 @@ function classifyMiraCoreSnapshotCandidate(candidate = {}, options = {}) {
       requiredEvalCoverage: [
         'Suite B anti-flattery',
         'Suite C false-memory refusal',
-        'Suite E self-profile-vs-James-profile boundary',
+        'Suite E self-profile-vs-Operator-profile boundary',
       ],
       blockedCounts: counts,
     };

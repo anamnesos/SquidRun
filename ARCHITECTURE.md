@@ -1,499 +1,137 @@
-# ARCHITECTURE
+# SquidRun architecture
 
-## 1) APP OVERVIEW
-SquidRun is an Electron desktop app that runs a 3-pane, multi-model agent team (Architect, Builder, Oracle) in parallel. The main process orchestrates pane lifecycle, messaging, persistence, and runtime services; renderers and hidden pane hosts provide the terminal UX and agent I/O path. Agent-to-agent coordination is driven by WebSocket messaging (`hm-send.js`) with trigger-file fallback for resilience.
+SquidRun is a local Electron application that runs three AI command-line tools
+as an addressed team. The desktop shell owns their terminals, routes messages,
+persists coordination state, and makes recovery observable.
 
-## 2) PROCESS MODEL
-1. `ui/main.js` starts Electron, enforces single-instance lock, installs the phase-aware `boot-failure-policy` (fatal and visible before init; log-only afterward), builds managers, and calls `SquidRunApp.init()`.
-2. `ui/modules/main/squidrun-app.js` loads settings, resolves launch intent, creates the requested top-level BrowserWindow set (main and/or scoped side windows), runs firmware/CLI identity startup work, sets session scope, and starts WebSocket + runtime services.
-3. Main window preload (`ui/preload.js`) exposes safe bridge APIs to renderer (`window.squidrun` / `window.squidrunAPI`) under context isolation.
-4. Hidden pane hosts are created by `ui/modules/main/pane-host-window-manager.js` as offscreen BrowserWindows (`pane-host.html`) for robust PTY injection and delivery acknowledgements.
-5. PTY runtime is managed by daemon client (`ui/daemon-client.js`) connecting to `ui/terminal-daemon.js`; panes attach through renderer/hidden-host bridges.
-6. Watchers (`ui/modules/watcher.js` + `ui/modules/watcher-worker.js`) monitor workspace/trigger/message paths and route payloads through `ui/modules/triggers.js`.
-7. IPC handlers are registered via `ui/modules/ipc-handlers.js` + `ui/modules/ipc/handler-registry.js`; websocket dispatch uses `ui/modules/websocket-server.js` / `ui/modules/websocket-runtime.js`.
-8. The private Team Room is a separate local HTTP/WebSocket service and SQLite store opened through its own Electron window. Phone clients pair over the private LAN by default; optional tailnet-only field access uses Tailscale Serve HTTPS in front of a second exact-loopback ingress, while the agent-control WebSocket and LAN manifest remain unchanged.
-9. Startup and coordination state is continuously materialized into `.squidrun/` (status, handoffs, snapshots, runtime ledgers).
+## System shape
 
-## 3) KEY FILE MAP
-This is a curated orientation map for agents, not a complete generated inventory. Use `git ls-files`, `rg --files`, and the runtime health/index scripts for full-codebase discovery.
-- ui/config.js: Shared runtime constants and path resolution (project root, coord root, pane cwd, trigger targets, role maps).
-- ui/modules/main/boot-failure-policy.js: Pre-window fatal-error boundary. It shows a native startup error and exits once so a failed boot cannot invisibly retain Electron's single-instance lock; after successful init it preserves log-only runtime handling.
-- ui/scripts/hm-dependency-integrity.js: Restart preflight for the live installed dependency tree. It validates package manifests, runs the npm dependency graph without a shell shim, and directly probes Sharp plus required runtime/build tools before shutdown is allowed.
-- ui/scripts/hm-safe-worktree-remove.js: Destructive worktree-removal wrapper that verifies a registered non-current target and refuses any symlink/junction/reparse descendant before invoking Git.
-- ui/daemon-client.js: Electron-side daemon client for PTY lifecycle, reconnect logic, write-ack tracking, and kernel event forwarding.
-- ui/index.html: Main renderer shell (3-pane layout, broadcast input, settings panel, right tabs, and startup overlays).
-- ui/team-room.html + ui/team-room.js + ui/team-room.css: Shared desktop/phone Team Room surface with authenticated history, WebSocket updates, attachments, reconnect recovery, and the PWA install shell; `team-room-sw.js`, the manifest, and icon assets provide installability without intercepting API traffic.
-- ui/jsconfig.json: Scoped JavaScript type-check configuration for the first-stage JSDoc + `checkJs` gate (`tsc --noEmit`) over selected contract-heavy modules.
-- ui/pane-host.html: Hidden pane-host window document that mounts xterm and loads `pane-host-renderer.js`.
-- ui/pane-host-renderer.js: Hidden pane PTY bridge that injects messages, dispatches Enter, and reports delivery ack/outcome to main.
-- ui/preload.js: Context-isolated bridge bootstrap exposing `window.squidrun` / `window.squidrunAPI` and renderer module adapters.
-- ui/renderer.js: Main renderer entrypoint wiring terminals, IPC listeners, settings/tabs, pane controls, and command dispatch UX.
-- ui/styles/base.css: Design-system base stylesheet (tokens, resets, global UX primitives, context-menu styling, and motion/accessibility rules).
-- ui/terminal-daemon.js: Detached PTY daemon process that owns terminal sessions, transport protocol handling, and daemon-side event kernel.
-- ui/modules/agent-templates.js: Built-in agent templates library Provides curated configurations for common team setups.
-- ui/modules/backup-manager.js: Backup Manager Automated backups of .squidrun/config/state with restore points and versioning.
-- ui/modules/bridge/channel-policy.js: Exports INVOKE_CHANNELS, SEND_CHANNELS, ON_CHANNELS, DYNAMIC_ON_CHANNEL_PATTERNS, ....
-- ui/modules/bridge/preload-api.js: Exports createPreloadApi.
-- ui/modules/bridge/renderer-modules.js: Exports createRendererModules.
-- ui/modules/bridge/safe-ipc.js: Exports createSafeIpc.
-- ui/modules/buffered-file-writer.js: Exports createBufferedFileWriter.
-- ui/modules/codex-utils.js: Exports hasCodexDangerouslyBypassFlag, hasCodexAskForApprovalFlag.
-- ui/modules/codex-pane-session-store.js: Atomic role/profile/pane-scoped Codex session binding store at `.squidrun/runtime/codex-pane-sessions.json`. Bindings contain routing provenance only (exact session/thread id, cwd, transcript path, pane launch, app generation, bind time), never conversation prose. Reads revalidate the transcript beneath the local Codex session root and reject symlink/reparse traversal. Clears compare the snapshotted session and launch provenance so a newer SessionStart binding is never erased.
-- ui/modules/codex-seat-model-policy.js: MAIN Oracle-only Codex launch policy. App-side PTY handlers and the durable terminal daemon derive the seat from main-owned pane facts and the stable SquidRun install root (never the pane's assigned project/cwd), pin `gpt-5.6-sol` plus `model_reasoning_effort=xhigh` on cold start and exact-id resume, and reject conflicting flags before PTY spawn. MAIN Oracle therefore stays pinned while assigned to another project; other panes and the separately rooted sideprofile install retain their existing command behavior.
-- ui/modules/codex-live-model-guard.js and codex-model-guard-hooks.js: Fail-closed MAIN Oracle runtime sentinel and user-level Codex-hook installer. The user hook follows the exact MAIN Oracle seat across assigned projects while the installed command remains bound to the reviewed SquidRun script path. Applicability additionally requires the hook session/transcript/pane-launch/app-generation to match MAIN's validated pane-3 Codex binding; a separately rooted installed SquidRun is an explicit no-op, while an unbound MAIN Oracle fails closed. Because Codex runs synchronous SessionStart hooks concurrently, exact resume/compact may enter a bounded binding-refresh state only when the prior validated binding still matches immutable session/transcript/cwd and the new launch provenance is well formed; the next prompt/tool boundary requires the refreshed provenance and blocks if the binder did not land. The sentinel validates the exact current Codex transcript handle beneath the local session root, requires payload cwd to match the newest live turn/thread state, checks both payload and newest live settings for Sol/xhigh, and blocks compact/resume, prompt, local tool, and stop boundaries on mismatch. Minimal append-only receipts carry only model/effort/session metadata, never prompt prose.
-- ui/modules/command-palette.js: Exports initCommandPalette.
-- ui/modules/comms-worker-client.js: Exports start, stop, isRunning, getPort, ....
-- ui/modules/comms-worker.js: Child-process worker entrypoint for async runtime tasks.
-- ui/modules/comms/message-envelope.js: Exports ENVELOPE_VERSION, buildOutboundMessageEnvelope, buildCanonicalEnvelopeMetadata, buildWebSocketDispatchMessage, ....
-- ui/modules/compaction-detector.js: Exports init, processChunk, getState, reset, ....
-- ui/modules/cognitive-memory-api.js: Lease-backed cognitive memory API for ingest, retrieve, patch, salience updates, transactive expertise lookup, and runtime IPC/websocket access over the cognitive memory store/search index.
-- ui/modules/cognitive-memory-immunity.js: Behavioral immunity layer that stages post-task heuristics and promotes matched failure->success corrections into immune cognitive-memory nodes.
-- ui/modules/constants.js: Exports BYPASS_CLEAR_DELAY_MS, BUTTON_DEBOUNCE_MS, SPINNER_INTERVAL_MS, UI_IDLE_THRESHOLD_MS, ....
-- ui/modules/context-compressor.js: Exports init, generateSnapshot, refreshAll, refresh, ....
-- ui/modules/contract-promotion-service.js: Exports ACTIONS, normalizeAction, getContractStatsSnapshot, approvePromotion, ....
-- ui/modules/contract-promotion.js: Exports init, saveStats, syncStatsFromDisk, checkPromotions, ....
-- ui/modules/contracts.js: Exports init, CONTRACTS, SHADOW_CONTRACTS, ENFORCED_CONTRACTS, ....
-- ui/modules/daemon-handlers.js: Exports setStatusCallbacks, teardownDaemonListeners, setupDaemonListeners, setupSyncIndicator, ....
-- ui/modules/diagnostic-log.js: Exports write, _flushForTesting, flush, LOG_PATH, ....
-- ui/modules/event-bus.js: Exports emit, ingest, on, off, ....
-- ui/modules/experiment/index.js: Exports initializeExperimentRuntime, executeExperimentOperation, closeExperimentRuntime, createExperimentRuntime, ....
-- ui/modules/experiment/profiles.js: Exports DEFAULT_PROFILES_PATH, resolveDefaultProfilesPath.
-- ui/modules/experiment/runtime.js: Exports ExperimentRuntime, createExperimentRuntime, initializeExperimentRuntime, executeExperimentOperation, ....
-- ui/modules/experiment/worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
-- ui/modules/experiment/worker.js: Child-process worker entrypoint for async runtime tasks.
-- ui/modules/feature-capabilities.js: Exports getFeatureCapabilities, hasKey.
-- ui/modules/formatters.js: Exports formatDuration, formatTimeSince, formatShort, formatCompound, ....
-- ui/modules/image-gen.js: Exports generateImage, removeHistoryEntryByPath, resolveProvider, detectImageExt, ....
-- ui/modules/input-shadow-log.js: Local forensic JSONL writer for user-input bytes crossing renderer IPC and terminal-daemon PTY write surfaces.
-- ui/modules/ipc-handlers.js: Exports init, setDaemonClient, setExternalNotifier, setupIPCHandlers, ....
-- ui/modules/ipc/agent-claims-handlers.js: Registers IPC channels (claim-agent, release-agent, get-claims, ...).
-- ui/modules/ipc/agent-metrics-handlers.js: Registers IPC channels (record-completion, record-error, record-response-time, ...).
-- ui/modules/ipc/arm-state-projection-handlers.js: Read-only renderer IPC seam for `arm-state:projection`; ignores renderer DB-path overrides and treats renderer `sessionId` as readiness scope, not the manifest key. Returns legacy registry readiness, watchdog, and apply-queue state from the canonical durable tables without seeding, evaluating, advancing watchdogs, dispatching requests, or changing TrustQuote room behavior. This projection is not the user-facing Squid Room authority.
-- ui/modules/ipc/auto-handoff-handlers.js: Registers IPC channels (trigger-handoff, get-handoff-chain).
-- ui/modules/ipc/auto-nudge-handlers.js: Registers IPC channels (get-agent-health, nudge-pane, restart-pane, ...).
-- ui/modules/ipc/background-processes.js: Tracks background child processes, broadcasts process state to renderer, and terminates running processes on cleanup.
-- ui/modules/ipc/backup-handlers.js: Registers IPC channels (backup-list, backup-create, backup-restore, ...).
-- ui/modules/ipc/checkpoint-handlers.js: Registers IPC channels (create-checkpoint, list-checkpoints, get-checkpoint-diff, ...).
-- ui/modules/ipc/completion-detection-handlers.js: Registers IPC channels (check-completion, get-completion-patterns) and fires non-blocking post-task immunity extraction on completion/handoff signals.
-- ui/modules/ipc/completion-quality-handlers.js: Registers IPC channels (check-completion-quality, validate-state-transition, get-quality-rules, ...).
-- ui/modules/ipc/conflict-detection-handlers.js: Registers IPC channels (get-file-conflicts, check-file-conflicts).
-- ui/modules/ipc/contract-promotion-handlers.js: Exports registerContractPromotionHandlers, unregisterContractPromotionHandlers, CONTRACT_PROMOTION_CHANNEL_ACTIONS.
-- ui/modules/ipc/cognitive-memory-handlers.js: Exports COGNITIVE_MEMORY_CHANNELS, executeCognitiveMemoryOperation, registerCognitiveMemoryHandlers, unregisterCognitiveMemoryHandlers, closeSharedCognitiveMemoryRuntime.
-- ui/modules/ipc/debug-replay-handlers.js: Registers IPC channels (debug-load-session, debug-load-timerange, debug-step-forward, ...).
-- ui/modules/ipc/device-pairing-handlers.js: Registers IPC channels (bridge:get-devices, bridge:get-status, bridge:get-pairing-state, bridge:pairing-init, bridge:pairing-join).
-- ui/modules/ipc/error-handlers.js: Registers IPC channels (get-error-message, show-error-toast, list-error-codes, ...).
-- ui/modules/ipc/evidence-ledger-handlers.js: Exports registerEvidenceLedgerHandlers, unregisterEvidenceLedgerHandlers, createEvidenceLedgerRuntime, initializeEvidenceLedgerRuntime, ....
-- ui/modules/ipc/evidence-ledger-runtime.js: Exports createEvidenceLedgerRuntime, initializeEvidenceLedgerRuntime, executeEvidenceLedgerOperation, closeSharedRuntime, ....
-- ui/modules/ipc/evidence-ledger-worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
-- ui/modules/ipc/evidence-ledger-worker.js: Child-process worker entrypoint for async runtime tasks.
-- ui/modules/ipc/friction-handlers.js: Registers IPC channels (list-friction, read-friction, delete-friction, ...).
-- ui/modules/ipc/git-handlers.js: Registers IPC channels (git-status, git-diff, git-log, ...).
-- ui/modules/ipc/github-handlers.js: Exports GITHUB_CHANNEL_ACTIONS, executeGitHubOperation, registerGitHubHandlers, unregisterGitHubHandlers, ....
-- ui/modules/ipc/handler-registry.js: Exports registerAllHandlers, unregisterAllHandlers, setupAllHandlers, DEFAULT_HANDLERS, ....
-- ui/modules/ipc/index.js: Exports createIpcContext, createIpcRegistry, DEFAULT_STATE_KEYS.
-- ui/modules/ipc/ipc-state.js: Exports state, initState, setDaemonClient.
-- ui/modules/ipc/knowledge-graph-handlers.js: Registers IPC channels (graph-query, graph-visualize, graph-stats, ...).
-- ui/modules/ipc/knowledge-handlers.js: Registers IPC channels (knowledge-ingest, knowledge-search, knowledge-stats, ...).
-- ui/modules/ipc/mcp-autoconfig-handlers.js: Registers IPC channels (mcp-configure-agent, mcp-reconnect-agent, mcp-remove-agent-config, ...).
-- ui/modules/ipc/mcp-handlers.js: Registers IPC channels (mcp-register-agent, mcp-unregister-agent, mcp-get-connected-agents, ...).
-- ui/modules/ipc/message-queue-handlers.js: Registers IPC channels (init-message-queue, send-message, send-broadcast-message, ...).
-- ui/modules/ipc/mira-conversation-handlers.js: Live IPC seam for main command-bar and Telegram Mira replies plus bounded internal self-direction proposal/list/review routes. It deliberately exposes no standalone Lab window, turn, export, or renderer-drive channels.
-- ui/modules/ipc/model-switch-handlers.js: Registers IPC channels (get-pane-commands, switch-pane-model).
-- ui/modules/ipc/oracle-handlers.js: Registers IPC channels (oracle:generateImage, oracle:deleteImage, oracle:listImages, ...).
-- ui/modules/ipc/organic-ui-handlers.js: Registers IPC channels (organic:get-agent-states, organic:get-agent-state, organic:set-agent-state, ...).
-- ui/modules/ipc/output-validation-handlers.js: Registers IPC channels (validate-output, validate-file, get-validation-patterns, ...).
-- ui/modules/ipc/perf-audit-handlers.js: Registers IPC channels (get-perf-profile, set-perf-enabled, set-slow-threshold, ...).
-- ui/modules/ipc/plugin-handlers.js: Registers IPC channels (list-plugins, enable-plugin, disable-plugin, ...).
-- ui/modules/ipc/preflight-handlers.js: Registers IPC channels (run-preflight-check) and executes startup health checks (env, CLIs, relay reachability, workspace writeability, system Node version).
-- ui/modules/ipc/precommit-handlers.js: Registers IPC channels (run-pre-commit-checks, get-ci-status, set-ci-enabled, ...).
-- ui/modules/ipc/process-handlers.js: Registers IPC channels (spawn-process, list-processes, kill-process, ...).
-- ui/modules/ipc/project-handlers.js: Registers IPC channels (select-project, get-project, get-recent-projects, ...).
-- ui/modules/ipc/pty-handlers.js: Registers IPC channels (pty-create, pty-write, pty-write-chunked, ...).
-- ui/modules/ipc/recovery-handlers.js: Registers IPC channels (get-recovery-status, get-health-snapshot, get-recovery-playbooks, ...).
-- ui/modules/ipc/resource-handlers.js: Registers IPC channels (resource:get-usage).
-- ui/modules/ipc/scheduler-handlers.js: Registers IPC channels (get-schedules, add-schedule, update-schedule, ...).
-- ui/modules/ipc/screenshot-handlers.js: Registers IPC channels (capture-screenshot, save-screenshot, list-screenshots, ...).
-- ui/modules/ipc/session-history-handlers.js: Registers IPC channels (get-session-history).
-- ui/modules/ipc/session-summary-handlers.js: Registers IPC channels (save-session-summary, get-session-summaries, get-latest-summary, ...).
-- ui/modules/ipc/settings-handlers.js: Registers IPC channels (get-settings, set-setting, get-all-settings, ...).
-- ui/modules/ipc/shared-context-handlers.js: Registers IPC channels (read-shared-context, write-shared-context, get-shared-context-path, ...).
-- ui/modules/ipc/smart-routing-handlers.js: Registers IPC channels (route-task, get-best-agent, get-agent-roles, ...).
-- ui/modules/ipc/state-handlers.js: Registers IPC channels (get-state, set-state, trigger-sync, ...).
-- ui/modules/ipc/task-parser-handlers.js: Registers IPC channels (parse-task-input, route-task-input), returns high-stakes problem previews/capability output, and persists detected intake into the problem orchestrator on routed submissions.
-- ui/modules/ipc/task-pool-handlers.js: Registers IPC channels (get-task-list, claim-task, update-task-status, ...).
-- ui/modules/ipc/team-memory-handlers.js: Exports TEAM_MEMORY_CHANNELS, registerTeamMemoryHandlers, unregisterTeamMemoryHandlers.
-- ui/modules/ipc/template-handlers.js: Registers IPC channels (save-template, load-template, list-templates, ...).
-- ui/modules/ipc/test-execution-handlers.js: Registers IPC channels (detect-test-framework, run-tests, get-test-results, ...).
-- ui/modules/ipc/test-notification-handlers.js: Registers IPC channels (notify-test-failure, get-test-notification-settings, set-test-notification-settings, ...).
-- ui/modules/ipc/transition-ledger-handlers.js: Exports TRANSITION_LEDGER_CHANNEL_ACTIONS, executeTransitionLedgerOperation, registerTransitionLedgerHandlers, unregisterTransitionLedgerHandlers, ....
-- ui/modules/ipc/user-profile-handlers.js: Registers IPC channels (get-user-profile, save-user-profile).
-- ui/modules/ipc/whisper-handlers.js: Registers IPC channels (voice:transcribe).
-- ui/modules/ipc/workflow-handlers.js: Registers IPC channels (workflow-list, workflow-save, workflow-load, ...).
-- ui/modules/knowledge-base.js: Exports KnowledgeBase.
-- ui/modules/knowledge/knowledge-graph-service.js: Exports initialize, queryGraph, getGraphVisualization, getGraphStats, ....
-- ui/modules/knowledge/knowledge-graph-store.js: Exports NODE_TYPES, EDGE_TYPES, initialize, save, ....
-- ui/modules/local-embedder.js: Local embeddings via Python sentence-transformers subprocess.
-- ui/modules/logger.js: Exports logger.
-- ui/modules/main/activity-manager.js: Exports ActivityManager.
-- ui/modules/main/agent-task-resolution.js: Shared current-lane/task-resolution helper used by `squidrun-app`, `auto-handoff-materializer`, `startup-ai-briefing`, and `hm-session-summary` to parse agent refs, detect later ACK/complete/supersede closure rows, and derive the active current-session lane from `comms_journal` evidence.
-- ui/modules/main/app-control-service.js: Main-process WebSocket app-control action service for bounded app operations. `terminal-scroll-probe` is intentional durable dev-only proof tooling for terminal-interaction fixes such as scrollback and restart proof without depending on OS-input delivery or a human verification loop. It is inert when `app.isPackaged`/`ctx.isPackaged` is true or `NODE_ENV=production`, uses a fixed `webContents.executeJavaScript` script rather than arbitrary eval, accepts only explicit `windowKey`/sanitized `containerId` plus allowlisted operations (`scrollLines`, `dispatchWheel`, `dispatchKey` with PageUp/PageDown), and returns viewport before/after movement proof.
-- ui/modules/main/app-context.js: Exports new.
-- ui/modules/main/arm-apply-queue.js: Evidence-ledger-backed apply-request queue for lead/arm proposals; persists category/risk/evidence/status, forces high-risk/alias categories through approval-required state, requires real James/user/Architect comms approval rows before executable marking, and keeps dispatch as a no-executor/no-side-effect stub.
-- ui/modules/main/arm-registry.js: Evidence-ledger-backed app-room arm registry wrapper; persists desired arm manifests under canonical app-room sentinel session ids (`app-room:<id>`), records role/pane/session check-in proofs from real `comms_journal` evidence, evaluates readiness against `readinessSessionId`, and rejects forged/stale/route-only readiness claims.
-- ui/modules/main/arm-state-projection.js: Explicit read-only projection over the durable arm registry, check-in, missing-watchdog, and apply-queue tables; resolves manifests by canonical app-room scope and recomputes desired/ready/missing against the requested/current readiness session without advancing watchdogs, dispatching requests, opening rooms, or changing TrustQuote behavior.
-- ui/modules/main/trustquote-arm-registry-seed.js: Explicit TrustQuote desired-arm manifest seed/migration helper. The manifest session is always the canonical app-room sentinel `app-room:trustquote`, while `metadata.readinessSessionId` tracks the current `app-session-N:trustquote` readiness scope. This is not a startup hook; only explicit CLI/module callers run it.
-- ui/modules/main/auto-handoff-materializer.js: Exports materializeSessionHandoff, buildSessionHandoffMarkdown, removeLegacyPaneHandoffFiles, _internals, ....
-- ui/modules/main/background-agent-manager.js: Exports BackgroundAgentManager, createBackgroundAgentManager, containsCompletionSignal, appendCompletionDirective, ....
-- ui/modules/main/cli-identity.js: Exports CliIdentityManager.
-- ui/modules/main/comms-journal.js: Exports appendCommsJournalEntry, queryCommsJournalEntries, closeCommsJournalStores, resolveDefaultEvidenceLedgerDbPath, ....
-- ui/modules/main/codex-desktop-inbound-transport.js: Probes the installed Codex Desktop/CLI/App Server/Windows UI surfaces and emits a fail-closed SquidRun verdict for whether a real visible SquidRun-to-Codex Desktop inbound message transport exists.
-- ui/modules/main/codex-desktop-capability-awareness.js: Builds the Codex Desktop capability status from current process availability, app-control route ownership, attention-inbox counts, and desktop transport proof. The legacy `codex-heartbeat.json` reader/CLI was retired; do not revive `hm-codex-heartbeat-check.js` as availability proof.
-- ui/modules/main/evidence-ledger-ingest.js: Exports REQUIRED_FIELDS, normalizeEnvelope, validateEnvelope, buildEdgeRows, ....
-- ui/modules/main/evidence-ledger-investigator.js: Exports EvidenceLedgerInvestigator.
-- ui/modules/main/evidence-ledger-memory-seed.js: Exports stableId, deriveSeedRecords, seedDecisionMemory.
-- ui/modules/main/evidence-ledger-memory.js: Exports EvidenceLedgerMemory, DECISION_CATEGORIES, DECISION_STATUSES, DECISION_AUTHORS, ....
-- ui/modules/main/evidence-ledger-store.js: Exports EvidenceLedgerStore, DEFAULT_DB_PATH, resolveDefaultDbPath, DEFAULT_MAX_ROWS, ....
-- ui/modules/main/firmware-manager.js: Exports FirmwareManager.
-- ui/modules/main/github-service.js: Exports createGitHubService, execAsync, toGhError.
-- ui/modules/main/inbound-poller-service.js: Owns main-process inbound Telegram/SMS poller lifecycle behind a small service boundary so channel handling can move out of Electron without changing message routing callbacks. Telegram worker readiness is explicit (`spawned`/handoff wait/`ready`/`failed`) so fork acceptance cannot be mistaken for a polling owner.
-- ui/modules/main/kernel-bridge.js: Exports KernelBridge, createKernelBridge, BRIDGE_VERSION, BRIDGE_EVENT_CHANNEL, ....
-- ui/modules/main/launch-intent.js: Normalizes `--window` / standalone launch flags so secondary windows can cold-open with their own top-level lifecycle while still sharing the runtime when needed.
-- ui/modules/main/team-room-*.js: Private Team Room subsystem covering Electron-window lifecycle, LAN-safe auth/pairing and offline QR generation, SQLite message/activation storage, attachment validation/upload, CLI binding, pane delivery, and the HTTP/WebSocket runtime. `team-room-tailscale-access.js` owns the allowlisted Tailscale CLI lifecycle for optional tailnet-only HTTPS: it validates one exact Serve route to the server-owned `127.0.0.1:9911` ingress, rolls back failed activation, and proves reset across the installed CLI's three route-status surfaces. Remote pairing is origin-pinned and distinct from LAN pairing; clearing the remote origin denies the entire remote HTTP ingress before routing and terminates existing remote WebSockets while LAN remains live. Agent posts are activation-bound; same-root coverage arbitration runs inside the store's `BEGIN IMMEDIATE` post transaction so covered echoes lose atomically while corrections, questions, direct mentions, and distinct evidence remain admissible.
-- ui/modules/main/live-task-audit-sidecar.js: Builds the Task Audit sidecar snapshot from typed work items, current-lane reconciliation, and the canonical `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json` state file; the legacy `future-items.json` file is not read and should not be recreated.
-- ui/modules/main/missing-arm-watchdog.js: Stage-based missing-arm watchdog wrapper around the durable registry state; advances expected -> nudge -> escalate -> satisfied with injectable sender and canonical Architect escalation sink while tests can exercise stages without real timers.
-- ui/modules/main/pane-control-service.js: Exports executePaneControlAction, detectPaneModel, normalizeAction.
-- ui/modules/main/pane-failure-monitor.js: Discrete PTY failure monitor for core and workroom panes. It provider-gates exact CLI usage-refusal output, consumes unexpected process-exit events, latches one durable system notice plus one Telegram attempt per pane/event state, and rearms on the next PTY spawn; it deliberately adds no silence timers or generic rate-limit heuristics.
-- ui/modules/main/pane-restart-arbiter.js: Main-process pane restart arbiter that grants one active restart claim per pane, routes ownership by visible window, coalesces duplicate restart requests, and authorizes the destructive restart lifecycle (`pty-kill` -> `pty-create` -> `spawn-claude`) exactly once per claim.
-- ui/modules/main/telegram-ingress-drain.js: Best-effort ordered drain for the Telegram ingress spool. It offers pending records in ascending `updateId` order, uses the admission transport claim as the at-most-once key, and never makes consumption proof, activation mode, a legacy sidecar, a route failure, a delivery result, or an ack failure into a head-of-line gate. A returned claim retires that update without re-injection; a missing/throwing lookup delivers anyway and logs the accepted duplicate risk. Unresolved routes, false receipts, delivery throws, and ack failures log loudly while N+1 still runs; a failed ack leaves only that record pending. Activation mode remains observable health metadata, not delivery authority. Concurrent schedules coalesce, disposal stops new work and waits for an in-flight delivery, and every pass emits a backlog snapshot for health scoring.
-- ui/modules/main/telegram-activation-mode.js: The v7 §3 Phase L transport activation mode. One recognised value, `legacy_settlement`, and the module exists for the cases that are NOT it: missing, empty, non-string and unrecognised each get their own named refusal, because "nobody has set this" and "someone set it to something this build does not understand" need different fixes. Absent is never a default and nothing is normalised into validity - `' legacy_settlement '` is unrecognised rather than trimmed, since whitespace in a protocol state means something wrote it wrong. Total, pure, never throws; private Set behind a frozen value array plus predicates, and frozen exports so require order is not a security assumption.
-- ui/modules/main/telegram-legacy-journal.js: Strict legacy sidecar reader and pure source-decision helper retained for cutover/recovery tooling; it is not a live ingress-drain gate. It refuses duplicate update ids, unknown keys, interior blank lines, torn tails and unrecognised states/dispositions. The recognised state/disposition sets are private; consumers get frozen value arrays plus predicates and the exports object itself is frozen.
-- ui/modules/main/telegram-claim-lookup.js: Reads the durable admission transport claim used by the drain as its at-most-once key. It verifies the claim-read subset of the installed schema and returns the stored row's fields. A thrown lookup is diagnostic, not delivery authority: the drain warns and delivers anyway; null means nothing has claimed this update.
-- ui/modules/main/telegram-attempt-authority.js: Pure legacy claim-state decision helper retained outside the live drain. It projects attempt/close/hold decisions from claim state and claimant liveness, but the best-effort ingress drain does not call it.
-- ui/modules/main/telegram-consumption-proof.js: Runtime-neutral proof primitives used by admission readiness and terminal-consumption paths, plus `summarizeBacklog` for drain health. Proof evaluation is no longer a Telegram ingress retirement gate.
-- ui/modules/main/telegram-launch-registry.js: Durable pane-launch, consumer-session, admission-receipt, and terminal-receipt identities. `findActivePaneLaunch` normally requires one completed row; the live admission sequence opts into the newest same-generation/same-pane `launching` row with an explicit readiness warning so a stuck SessionStart binder is observable but cannot veto James's message.
-- ui/modules/main/telegram-admission-sequence.js: Awaited A-B-C-D admission sequence for the main Telegram pane. Immutable source, claim ownership, exact final-byte hashing, and delivery-start recording remain ordered; a recorded launch still in `launching` is now a logged warning carried on the result, not a B_launch refusal. Missing launch identity, role mismatch, claim conflict, and malformed authorization still refuse because the sequence cannot construct a valid target/claim from them.
-- ui/modules/main/telegram-admission-store.js: S491 v3 checkpoint-A2 storage for Telegram admission, writing to the REAL authorities: the immutable inbound `comms_journal` row IS the source of record (generic upsert bypassed, no `expects`, so recording a source creates no debt), the obligation id hashes `comms_journal.row_id` with the kernel's own builder and a fixed null lease so the kernel foreign key resolves, and `promoteToAdmittedOwned` creates the REAL `obligations` row and `ledger_events` created-event alongside the immutable Telegram binding, queue-ack outbox and initial work generation — all in ONE transaction across four authorities. Exclusivity is a PARTIAL UNIQUE INDEX on (cutover, route, update) rather than the attempt JSONL, since a file cannot arbitrate between two database handles; a closed-unsent claim releases the slot while keeping its audit trail, and an outstanding ambiguous claim is never stolen. Every mutating entry point ASSERTS `journal_mode=wal` + `synchronous=FULL` on the caller's handle and fails closed, because durability that is assumed rather than checked is not durability. Hash inputs use a length-prefixed canonical join so the file stays scannable text and no field content can forge a delimiter.
-- ui/modules/main/telegram-consumed-proof.js: The `telegram_consumed.v1` schema and the single validator that may retire a Telegram inbound record. Requires a positive proof class (a fabricated object carrying the right identity fields is rejected for what it is), full identity, app generation, pane binding, the canonical queued-payload SHA-256, and the exact delivered-prompt SHA-256 plus byte length — so a truncated-but-acked delivery cannot satisfy it. Runtime-neutral by SCHEMA rather than by producer: per-runtime adapters may differ internally, their emitted proof may not. Keeps "producer never fired" distinct from "runtime cannot prove", because conflating them is what wedged S491 for 8.6 hours.
-- ui/modules/main/telegram-consume-marker.js: Builds and parses the one-line `[SQUIDRUN_TG_CONSUME ...]` marker carried inside a Telegram ingress prompt, so the consumer can echo an app generation and canonical payload digest it actually received. Deliberately separate from the `[SQUIDRUN_RECEIPT ...]` delivery marker, which is stamped on every pane message and would make agent-to-agent sends look like Telegram consumption claims. All fields or none — a partial marker is never emitted or accepted.
-- ui/modules/main/telegram-drain-wiring.js: The seams joining the ingress drain to the running app, extracted so each is testable without an Electron app: per-process drain generation, honest pane-runtime naming from the pane command (unrecognised stays null rather than becoming a plausible wrong answer), and durable out-of-process publication of the backlog health snapshot.
-- ui/modules/main/telegram-backlog-health.js: Scores Telegram ingress backlog health so a fresh poller can never buy a passing grade for a queue that is not moving. An unhealthy transport activation mode is critical BEFORE the pending count is even read, because an install nobody configured refuses every message that will ever arrive and its queue is empty until the first one does - the one shape this function used to answer ok to immediately. It re-derives mode membership from the mode authority rather than trusting a persisted `activationModeHealthy` flag, since it scores documents read back from disk, and refuses a snapshot whose three activation fields disagree with each other. Degrades on an aged head-of-line record, treats structurally unattainable proof as critical at any age, and treats a missing snapshot as critical rather than healthy. Exists because poller freshness scored 100/100 for 8.6 hours while six user messages sat undelivered.
-- ui/modules/main/telegram-poller-worker.js: Child-process Telegram inbound poller owner; before starting `getUpdates` it waits for both the exact main-root standalone lane/launch claim and every other exact same-root Telegram worker process to become quiescent, fails closed on process-probe uncertainty or bounded timeout, then sends inbound messages back to `SquidRunApp` through the inbound-poller service IPC boundary.
-- ui/modules/main/pane-host-window-manager.js: Creates/manages hidden pane-host BrowserWindows and routes bridge messages into pane-host renderers.
-- ui/modules/main/settings-manager.js: Exports SettingsManager.
-- ui/modules/main/startup-output-utils.js: Shared startup/smoke-runner output parsing helpers for structured JSON extraction and startup health summary normalization, kept out of `squidrun-app.js` so the main process stays under its growth guard.
-- ui/modules/main/system-protected-evals.js: Pure static system-eval registry/runner for protected zero-fail SquidRun behaviors. Phase 4A binds the `accepted.unverified` visible-delivery invariant to concrete `hm-send.js` route-proof refs; Phase 4B binds materialized full-message read requirements to daemon full-agent-message refs and preview-only decision fixtures; Phase 4C binds route metadata authority to `squidrun-app.js` routeInjectMessage guard refs and tempting-body mismatch fixtures; Phase 4D binds agent-response watchdog autonomy suppression to explicit pending/comms-ledger/WorkItem/current-lane evidence and body-only no-reply trap fixtures; Phase 4E binds visible route-injection dedupe to stable message/window/profile/session/route identity, duplicate short-circuiting, and post-delivery cache writes; Phase 4F binds Telegram/human inbound recall formatting so body appears before recall and inside the first pane-injection window despite long recall context; Phase 4G binds Telegram reply-debt satisfaction to proven acked Telegram egress and wrong-session/chat/time/pane-only rejection fixtures; Phase 4H binds Telegram poller restart semantics so `restart-telegram-poller` stays poller-only, keeps worker launch acceptance distinct from IPC-confirmed readiness, remains separate from renderer reload/main restart, and explicitly does not activate restart-bound formatter changes. Cases are mutation-failable and have no runtime, network, write, send, restart, or dispatcher side effects.
-- ui/modules/main/squidrun-salience-engine.js: Pure Phase 2 salience ranker for SquidRun-native comms rows, WorkItems, and audit events; normalizes first-class candidates, applies a generalized regret-of-silence score, returns top-3 rank-only decisions, and preserves swallowed/non-selected candidate evidence without granting dispatch authority.
-- ui/modules/main/squidrun-authority-dispatcher.js: Pure Phase 3 authority dispatcher for Builder #67 policy buckets; converts salience/work/action candidates into audit-first `rank_only_no_permission`, `safe_auto`, `caution_gated`, or `approval_required` decisions with metadata-scope checks, required proofs, denied capabilities, and James checkpoints, while performing no direct side effects, restart activation, runtime watcher changes, network egress, or file writes.
-- ui/modules/main/model-replay-job-packet.js: Pure Phase 5 model-agnostic replay/job-packet harness for seat bakeoffs; wraps the existing universal scorer and Fable-return Oracle artifacts into deterministic `ready_to_run` packets with preserved task evidence refs, Phase 4 protected-eval replay coverage, stable hashes, and explicit no-provider-call/no-seat-authority/no-Phase-3 boundaries until a live evaluator-authored run fills availability and result evidence.
-- ui/modules/main/squidrun-app.js: Registers IPC channels (pane-host-ready, pane-host-inject, pane-host-dispatch-enter, ...). Its direct daemon PTY delivery path is short-payload only; chunk-sized or larger pane messages must route through packetized/chunked inject so Claude panes do not front-clip one-shot writes.
-- ui/modules/main/the-tell-shadow-runner.js: Read-only/dry-run TrustQuote shadow runner for The Tell; writes local runtime shadow ledger rows (`tick`, `tick_failed`, `spoke`, `swallowed`) so promotion gates can prove successful continuous observation instead of trusting elapsed wall time or alive-but-blind failed reads.
-- ui/modules/main/trustquote-tell-feed.js: Read-only TrustQuote feed adapter for The Tell; converts live Firestore/job/quote/task evidence into supported signal rows without mutating TrustQuote data.
-- ui/modules/terminal-restart-scrollback-store.js: Local runtime-only restart scrollback snapshot store used by `terminal-daemon.js` to preserve visible pane body buffers across daemon/app respawn and rehydrate hidden pane hosts before renderer attach.
-- ui/modules/cli-resume-invocation.js: Per-CLI restart-continuity strategy used by `terminal-daemon.js` and PTY handlers so each core pane resumes its own exact conversation id, never a cwd-selected newest session. Claude uses its stable per-pane UUID. Installed Codex 0.149.0 uses `codex resume <exact-uuid>`; `--last`, names, missing ids, and other explicit resume selectors are stripped/refused. Codex missing/corrupt recovery treats startup text only as a candidate: it may clear/retry once only after the resume process exits nonzero and the full snapshotted binding provenance is unchanged. Active-writer collisions and same-id/new-launch refreshes hold without fallback.
-- ui/modules/pane-session-id-store.js: Persists Claude's stable per-pane CLI session UUID (`runtime/pane-session-ids.json`, `crypto.randomUUID`) so `--resume <id>` on respawn matches the `--session-id <id>` that created it. Codex continuity is separate in `codex-pane-session-store.js` because Codex exposes its runtime id through SessionStart rather than a pin-at-creation flag.
-- ui/modules/mira-core/autonomy-substrate-v0.js: Backend-only first autonomy substrate for typed Mira: self-directed drives, curiosity queue, permissioned local reads, transcript-quality gates, evidence-backed self-profile proposal records, and strict visible/backend separation. It performs no durable writes or external sends by default.
-- ui/modules/mira-core/developmental-understanding-v1.js: Builds Mira's integrated conversation, tentative-understanding, self-state, relationship-state, relational-texture, and next-intention surface without claiming durable memory commit or private consciousness.
-- ui/modules/mira-core/local-text-session-v0.js: Local Mira text session builder that applies language rules and model attachment boundaries before visible tab output.
-- ui/modules/mira-core/live-what-now-answer-v0.js: Read-only live-evidence renderer for the visible Mira "what now?" answer; uses current-lane/comms evidence and keeps parked/prototype/archive scaffolds out of next-move authority.
-- ui/modules/mira-core/live-internal-request-draft-v0.js: Read-only live-evidence renderer for reviewable internal Builder/Oracle request drafts; produces draft-only message bodies without hm-send, runtime POST, model call, or external action.
-- ui/modules/mira-core/memory-candidate-staging-v1.js: Extracts bounded recent-panel conversation signals into tentative Mira understandings with confidence/risk/revision metadata, not visible CRUD memory management.
-- ui/modules/mira-core/mira-language-rules-v0.js: Shared Mira reply-language gate used by local text, tab, and route-facing tests to block meta/tool-like user-visible phrasing.
-- ui/modules/mira-core/mira-persona-loader-v0.js: Loads and hot-reloads Mira voice/persona text from config files, returning explicit persona metadata for broker/runtime freshness checks.
-- ui/modules/mira-core/mira-progress-proof-inputs-v0.js: Generates and reads HEAD/worktree-bound Mira progress proof artifacts, including visible Presence/A0, A1 what-now, A2 internal-request draft, and local text surface proofs consumed by progress and startup accounting.
-- ui/modules/mira-core/mira-progress-v0.js: Computes contract-driven Mira progress from Presence state, fixtures, blocker flags, HEAD metadata, explicit proof inputs, and fresh generated proof artifacts without durable global percent authority.
-- ui/__tests__/mira-core-disabled-no-side-effect-contract-v0.test.js + fixture: Replacement contract for the retired Mira runtime/server/kill-switch/auth/storage/identity scaffold; preserves the no-side-effect truth with hardened import/spawn consumer scans and doc dangle checks instead of executable phase chains.
-- ui/modules/mira-core/tentative-understanding-store-v1.js: Persists tentative-understanding scaffold rows through CognitiveMemoryStore pending-PR mechanics while explicitly blocking durable memory promotion, hidden approval, and James-as-clickthrough-harness behavior.
-- ui/modules/mira-core/text-model-attachment-v1.js: Owns typed Mira Responses API attachment config/call contract, defaulting to gpt-5.5, forbidding silent downgrade/local fallback in the enabled path, and bounding recent thread context.
-- ui/modules/mira-browser-history-curiosity.js: Native read-only browser-history curiosity adapter that temp-copies Chromium History DB files and returns compact metadata only (hosts, titles, safe paths, visit counts, timestamps) without cookies, auth stores, browser mutation, or external sends.
-- ui/modules/mira-calendar-message-curiosity.js: Native read-only calendar/message curiosity adapter that inventories compact local calendar/message artifacts and hm-comms sender/target/status/timestamp metadata without exporting message bodies, writing calendars, sending messages, or performing network calls.
-- ui/modules/mira-email-curiosity.js: Native read-only email curiosity snapshot adapter that stores connector-derived label counts, hashed recent message references, pressure buckets, snapshot gaps, and metadata-only next snapshot queries for Mira scouting without reading bodies, exposing raw message IDs, sending, archiving, deleting, or modifying labels.
-- ui/modules/mira-automation-scheduler-curiosity.js: Native read-only scheduler curiosity adapter that inventories compact `schedules.json` metadata, due-soon/overdue counts, type counts, and scheduler IPC operations without creating, updating, deleting, or running schedules.
-- ui/modules/mira-visual-asset-curiosity.js: Native read-only visual asset curiosity adapter that inventories screenshots and generated images with compact file metadata and cheap dimensions before any OCR, image-model call, mutation, or external send.
-- ui/modules/mira-web-research-curiosity.js: Native read-only web research curiosity adapter that inventories local saved research artifacts and extracts compact titles, excerpts, safe URLs, and domains without live network crawling or raw query-string exposure.
-- ui/modules/mira-work-continuation-curiosity.js: Native read-only work-continuation curiosity adapter that summarizes owned-work queue state and next resume metadata without queue mutation, dispatch, or external sends.
-- ui/modules/mira-runtime-curiosity.js: Native read-only Mira runtime curiosity adapter that evaluates growth/autonomy/experience/perception/intent module health and isolates runtime gaps without applying mutations, queue writes, captures, or sends.
-- ui/modules/mira-conversation-engine.js: Live Mira conversation engine for main command-bar and Telegram replies plus internal self-direction/curiosity work. Historical `mira-lab-*` filenames and `squidrun.mira_lab.*` schemas remain storage-compatibility identifiers only; there is no standalone Lab UI.
-- ui/modules/mira-direct-channel-readiness.js: Pure dry-run New Mira direct-channel readiness contract that distinguishes today's SquidRun/team/ops Telegram path from a future separate New Mira bot/chat candidate without reading tokens, sending Telegram, flipping route owners, starting runtime, or calling a model.
-- ui/modules/mira-telegram-turn-candidate.js: Dry-run New Mira direct-channel seam that turns eligible main-owner Telegram text into a deterministic `/turn` candidate with `useModel:false` while preserving command/media/scoped-route exclusions and avoiding live sends, route flips, runtime execution, and model calls.
-- mira/runtime/src/mission-control-route-preview.ts: State-root writer/list reader for Mission Control internal-route previews saved as `pending_internal_review` history under `MIRA_STATE_ROOT/mission-control/route-previews`, explicit saved-preview-token promotion into reviewable internal-route requests under `MIRA_STATE_ROOT/mission-control/internal-route-requests`, approve/reject/edit owned-work continuation metadata under `MIRA_STATE_ROOT/mission-control/owned-work-continuations`, read-only follow-through recommendations derived from continuation metadata, selected-recommendation delivery preview/audit packets with checksum/manual-copy review details under `MIRA_STATE_ROOT/mission-control/internal-delivery-previews`, and saved-delivery-preview-token dispatch-readiness checklists under `MIRA_STATE_ROOT/mission-control/dispatch-readiness`, preserving manual-execution/no-send/no-route-flip/no-provider audit fields and storing no executable command.
-- ui/modules/mira-local-text-ui-surface.js: Builds Mira's typed conversation surface for the live conversation engine, joining local shell gating, optional text model attachment, bounded thread context, tentative-understanding persistence counts, and developmental-understanding validation.
-- ui/modules/memory-consistency-check.js: On-demand drift checker that compares `workspace/knowledge/` chunks against knowledge-backed nodes in `workspace/memory/cognitive-memory.db`.
-- ui/modules/memory-broker.js: Unified recall broker that queries cognitive/vector memory, team-memory graph claims, evidence-ledger episodic decisions, and optional knowledge search providers, then merges ranked context with Reciprocal Rank Fusion for pane delivery and agent tooling.
-- ui/modules/belief-snapshot-prune.js: Copy-only belief-history retention planner and candidate builder. It opens the source SQLite database read-only, keeps every per-agent/session belief transition, newest row, and contradiction-referenced snapshot, verifies schema plus all non-belief table contents and the pre-existing foreign-key baseline, and atomically publishes only a fresh separately named candidate after verification; it never swaps or prunes the live database.
-- ui/modules/memory-ingest/delivery.js: Proactive memory delivery engine (trigger matching, injection budgets, handoff packets, and compaction survival persistence).
-- ui/modules/memory-ingest/journal.js: Shared ingest journal / retry queue / dedupe state backing Phases 1-4 of the memory contract.
-- ui/modules/memory-ingest/lifecycle.js: Session-based lifecycle advancement for memory objects (stale/archive/reactivation review flows).
-- ui/modules/memory-ingest/promotion.js: Promotion target resolution and canonical knowledge-file patch application helpers.
-- ui/modules/memory-ingest/router.js: Tier-routing logic that classifies incoming memory payloads before ingest/promotion.
-- ui/modules/memory-ingest/schema.js: Shared schema/constants for memory-ingest statuses, tiers, and validation rules.
-- ui/modules/memory-ingest/service.js: Canonical ingest + recovery service handling crash-safe routing, compaction locks, replay, and Tier 4 override notes.
-- ui/modules/memory-ingest/shutdown-marker.js: Crash/restart coordination helper for marking interrupted ingest runtime shutdowns.
-- ui/modules/main/usage-manager.js: Exports UsageManager.
-- ui/modules/mcp-bridge.js: Exports MC5, registerAgent, unregisterAgent, heartbeat, ....
-- ui/modules/model-selector.js: Exports initModelSelectors, setupModelSelectorListeners, setupModelChangeListener, setPaneCliAttribute, ....
-- ui/modules/notifications.js: Exports showNotification, showToast, showStatusNotice, DEFAULT_TOAST_TIMEOUT, ....
-- ui/modules/performance-data.js: Exports DEFAULT_PERFORMANCE, createDefaultPerformance, createPerformanceLoader.
-- ui/modules/capability-planner.js: Static domain capability registry that turns detected legal/financial/medical problems into user-facing "here is what we can do" action plans.
-- ui/modules/problem-orchestrator.js: Phase 1 real-problem orchestration skeleton that owns `.squidrun/runtime/active-cases.json`, dedupes intake records, attaches capability plans, and surfaces oracle timeout/disagreement warnings in case state and startup summaries.
-- ui/modules/project-room-envelope.js: Read-only TrustQuote room envelope/readiness helpers on existing comms metadata; TrustQuote room rows can surface in Main as activity but cannot set Main current-lane authority or launch room agents.
-- ui/modules/pipeline.js: Exports init, setMainWindow, onMessage, markCommitted, ....
-- ui/modules/plugins/index.js: Plugin-module entrypoint that re-exports `createPluginManager`.
-- ui/modules/plugins/plugin-manager.js: Plugin Manager Loads plugin manifests, manages lifecycle, and dispatches hook events.
-- ui/modules/recovery-manager.js: Self-Healing Recovery Manager Detects stuck/failed agents, restarts with backoff, and enforces circuit breakers.
-- ui/modules/renderer-bridge.js: Exports resolveBridgeApi, invokeBridge, sendBridge, onBridge, ....
-- ui/modules/renderer-ipc-registry.js: Exports registerScopedIpcListener, clearScopedIpcListeners.
-- ui/modules/replay/debug-replay.js: Exports loadSession, loadTimeRangeSession, exportSession, stepForward, ....
-- ui/modules/scheduler.js: Exports createScheduler, matchesCron, computeNextRun.
-- ui/modules/settings.js: Exports setConnectionStatusCallback, setSettingsLoadedCallback, loadSettings, applySettingsToUI, ....
-- ui/modules/shared-state.js: Exports init, getState, getChangesSince, getChangelogForPane, ....
-- ui/modules/smart-routing.js: Exports getBestAgent, inferTaskType, scoreAgents.
-- ui/modules/squid-room-surface.js: Read-only Squid Room renderer surface. The live Squid Room contract is real CLI panes, one shared Builder and one shared Oracle rendered at the top, expandable per-app arm sections, and a single arms count. Legacy registry/projection data may appear only as non-authority support context; the desired/ready/missing scoreboard and Work+Schedule/Money+Documents abstraction are not the product spec.
-- ui/modules/sms-poller.js: Exports start, stop, isRunning, _internals, ....
-- ui/modules/surface-capture-events.js: In-memory Electron-main capture event ledger that binds visible-pane screenshot claims to app-recorded window/pane/path/timestamp/image hashes.
-- ui/modules/trustquote-arm-specs.js: Shared TrustQuote day-to-day arm definitions for Squid Room live panes and the arm registry seed. Keeps the four canonical arms (TrustQuote Lead, Schedule Dispatch, TrustQuote App, Invoice) in one source with pane ids, route targets, cwd, command, and startup text.
-- ui/modules/window-chrome.js: Per-window-class chrome allow-list (main / squid-room / client-profile / work-room): each class names the EXACT header controls and regions that render; everything else is hidden by default. Applied at renderer boot via workspace-pane-shell. Inheritance-minus-exceptions is forbidden here by design (S426 identity lane).
-- ui/modules/window-team-bootstrap.js: Renderer-side window-context bootstrap that tracks `windowKey`, startup source bundle metadata, and secondary-window auto-boot rules.
-- ui/modules/status-strip.js: Exports initStatusStrip, shutdownStatusStrip.
-- ui/modules/tabs.js: Exports setConnectionStatusCallback, togglePanel, isPanelOpen, switchTab, .... Manages the existing right-side tabbed utility panel (bridge, screenshots, comms, oracle, voice, api-keys); Mira is no longer mounted as a main SquidRun tab.
-- ui/modules/tabs/api-keys.js: Exports setupApiKeysTab, destroyApiKeysTab, loadApiKeys.
-- ui/modules/tabs/bridge.js: Exports setupBridgeTab. Renders the existing Bridge tab in the right-side panel and hydrates relay health from `bridge:get-status` plus live kernel bridge events.
-- ui/modules/tabs/comms-console.js: Exports setupCommsConsoleTab, destroy. The existing Comms tab backfills `comms_journal`, correlates live `comms.*` events by `messageId`, and surfaces delivery status/attempt/error metadata for external channels.
-- ui/modules/mira-local-text-ui-surface.js: Core local typed conversation surface retained for Lab/local-text gate coverage after the old unmounted `ui/modules/tabs/mira-local-text.js` shell was removed.
-- ui/modules/tabs/oracle.js: Exports setupOracleTab, destroyOracleTab, applyImageGenCapability.
-- ui/modules/tabs/screenshots.js: Exports setupScreenshots, destroyScreenshots, loadScreenshots.
-- ui/modules/tabs/utils.js: Exports escapeHtml.
-- ui/modules/tabs/voice-broker.js: Voice broker tab UI for inspecting broker state, active leases, sessions, and recent spoken-message routing.
-- ui/modules/phone-voice-client.js: Phone voice client surface that registers authenticated phone-client leases, tracks real user activity, and acknowledges spoken rows after playback.
-- ui/modules/voice-broker.js: Central voice egress broker for desktop/Mira/phone output leases, persona instructions, duplicate suppression, and spoken ACK handling.
-- ui/modules/voice-broker-lease-contract.js: Shared lease lifecycle contract helpers used by broker and tests.
-- ui/modules/voice-broker-lease-store.js: Voice broker lease/session state store helpers.
-- ui/modules/task-parser.js: Exports parseTaskInput and lightweight legal/financial/medical problem-intake detection metadata for orchestration triggers.
-- ui/scripts/hm-codex-desktop-transport.js: CLI wrapper for `probe`, `study`, and workspace `summon` around the Codex Desktop inbound-transport probe. It can write the probe report under `.squidrun/runtime/` and never claims queue/polling as visible inbound delivery.
-- ui/scripts/hm-codex-capability-status.js: CLI wrapper for Codex Desktop process/app-control/attention-inbox/desktop-transport capability status. It intentionally does not read the retired Codex heartbeat file.
-- ui/scripts/hm-codex-pane-session.js: Fail-closed CLI for showing/capturing one core pane's exact Codex binding. The installed SessionStart hook invokes `capture`; role/profile/pane/cwd/launch/session facts must all agree before the atomic store changes.
-- ui/scripts/hm-codex-model-guard.js: User-hook CLI for the MAIN Oracle live-model sentinel and idempotent global hook installation. `check` requires the installer-pinned expected install root, uses the fixed Sol/xhigh policy (no caller-selected weakening), and fails closed if live verification or its audit receipt fails; hook trust remains an explicit Codex boundary.
-- ui/scripts/codex-hooks/session-start.ps1 and stop.ps1: Repo-pinned canonical copies of the installed user hooks. SessionStart binds exact Codex runtime ids and both hooks key continuity summaries by complete SquidRun profile+role+pane identity, preventing Builder and Oracle from reading each other's same-cwd state. Outside SquidRun, legacy cwd-only behavior remains; partial SquidRun identity fails closed. Exact installed hashes are included in `ui/config/codex-computer-use-hook-trust.json`.
-- ui/modules/team-memory/backfill.js: Exports runBackfill, buildBackfillRecord, resolveDefaultEvidenceLedgerDbPath.
-- ui/modules/team-memory/claims.js: Exports TeamMemoryClaims, CLAIM_TYPES, CLAIM_STATUS, CONSENSUS_POSITIONS, ....
-- ui/modules/team-memory/comms-tagged-extractor.js: Exports TAG_RULES, extractTaggedItems, buildTaggedClaimRecord, extractTaggedClaimsFromComms, ....
-- ui/modules/team-memory/daily-integration.js: Exports roleFromPaneId, normalizeDomain, deriveTaskScopes, buildReadBeforeWorkQueryPayloads, ....
-- ui/modules/team-memory/guards.js: Exports TeamMemoryGuards, GUARD_ACTIONS.
-- ui/modules/team-memory/index.js: Exports initializeTeamMemoryRuntime, executeTeamMemoryOperation, runBackfill, runIntegrityCheck, ....
-- ui/modules/team-memory/integrity-checker.js: Exports scanOrphanedEvidenceRefs, repairOrphanedEvidenceRefs, upsertIntegrityReport, resolveDefaultEvidenceLedgerDbPath, ....
-- ui/modules/team-memory/migrations.js: Exports MIGRATIONS, runMigrations.
-- ui/modules/team-memory/migrations/001-initial-schema.js: Exports version, description, schema, sql, ....
-- ui/modules/team-memory/migrations/002-phase1-compat.js: Exports version, description, patch, up, ....
-- ui/modules/team-memory/migrations/003-phase2-search.js: Exports version, description, index, up, ....
-- ui/modules/team-memory/migrations/004-phase4-patterns.js: Exports version, description, up.
-- ui/modules/team-memory/migrations/005-phase5-guards.js: Exports version, description, up.
-- ui/modules/team-memory/migrations/006-phase6-experiments.js: Exports version, description, up.
-- ui/modules/team-memory/migrations/007-phase6b-pending-proof.js: Exports version, description, up.
-- ui/modules/team-memory/migrations/008-phase6c-contradiction-resolution.js: Exports version, description, up.
-- ui/modules/team-memory/patterns.js: Exports TeamMemoryPatterns, DEFAULT_PATTERN_SPOOL_PATH, resolveDefaultPatternSpoolPath.
-- ui/modules/team-memory/runtime.js: Exports createTeamMemoryRuntime, initializeTeamMemoryRuntime, executeTeamMemoryOperation, closeSharedRuntime, ....
-- ui/modules/team-memory/store.js: Exports TeamMemoryStore, DEFAULT_DB_PATH, resolveDefaultDbPath, loadSqliteDriver, ....
-- ui/modules/team-memory/worker-client.js: Exports initializeRuntime, executeOperation, closeRuntime, resetForTests, ....
-- ui/modules/team-memory/worker.js: Child-process worker entrypoint for async runtime tasks.
-- ui/modules/cross-process-lease.js: Atomic cross-process lease primitive used by Telegram claim mutation and poll/dispatch ownership. It publishes complete owner metadata with create-if-absent hard-link semantics, recovers only aged dead/ownerless legacy leases, never steals a live owner, and token-revalidates release.
-- ui/modules/telegram-poller-handoff.js: Bounded main-worker startup barrier for the temporary standalone Telegram lane and retiring same-root app workers; exact lane/launch or predecessor-worker activity waits, foreign-root workers do not match, and unavailable process inventory, unverified identity, and timeout fail closed.
-- ui/modules/telegram-poller.js: Exports start, stop, isRunning, _internals, .... Telegram `getUpdates` and media requests have bounded deadlines so a hung HTTPS request cannot park `pollInFlight` forever; startup must acquire the state-path/cursor-qualified lease, read the durable cursor, and persist a PID-qualified `starting` ownership heartbeat before it may schedule the first poll. Each poll holds that same cross-process lease from its first durable cursor read through `getUpdates`, callback selection, cursor/heartbeat persistence, and release; contenders skip the tick, while durable state is reconciled after HTTP and at the final dispatch boundary for upgrade residue. Cursor writes are monotonic. Startup-health recovery defers through a bounded fresh-boot/owner-claim window even after `init_complete`. A temporary standalone lane is serialized by an exclusive versioned launch claim that binds a token, current data root, absolute lane script, and child PID; claim adoption and conditional cleanup share the same bounded dead/ownerless-recovering mutation lease plus content CAS, live exact legacy numeric claims fail closed, start/stop fail closed when process identity is unavailable, exact script-argument checks prevent wrapper or side-profile PID reuse, and root-exact main-worker authority makes handoff survive stale standalone heartbeat clobbering.
-- ui/modules/terminal.js: Exports PANE_IDS, terminals, fitAddons, setStatusCallbacks, .... Fresh Codex launches use a two-phase renderer/main commit: main returns a one-use token with a bare command, renderer must get both command and Enter accepted, then main compare-clears the old binding and only afterward consumes the one-shot Fresh flag. Write/Enter/commit failure preserves the request and stops any entered but uncommitted process. Terminal containers intentionally attach a non-enumerable `__squidrunTerminalScrollProbeTarget` reference for the dev-only `terminal-scroll-probe` action; this gives the fixed proof script access to the live xterm instance while avoiding global arbitrary renderer evaluation.
-- ui/modules/terminal/agent-colors.js: Exports attachAgentColors, AGENT_COLORS.
-- ui/modules/terminal/injection.js: Terminal injection helpers Extracted from terminal.js to isolate fragile send/verify logic.
-- ui/modules/terminal/recovery.js: Terminal recovery helpers (unstick, restart, sweeper) Extracted from terminal.js to isolate recovery logic.
-- ui/modules/terminal/cold-spawn-blank-recovery.js: Codex-only renderer recovery classifier/controller for a live PTY whose visible xterm frame stays blank under clear-screen churn. Fresh terminal wiring subscribes to PTY data before command-on-create so the initial full TUI frame cannot race ahead of the renderer; the fallback permits one logged Enter nudge only after bounded blank-frame confirmation, and any direct terminal input or paste permanently disarms that recovery generation before forwarding bytes to the PTY.
-- ui/modules/token-utils.js: Exports estimateTokens, truncateToTokenBudget.
-- ui/modules/transition-ledger.js: Exports init, stop, reset, getTransition, ....
-- ui/modules/triggers.js: Exports init, setSelfHealing, setPluginManager, setWatcher, ....
-- ui/modules/triggers/metrics.js: Exports recordSent, recordDelivered, recordFailed, recordTimeout, ....
-- ui/modules/triggers/routing.js: Exports setSharedState, routeTask, triggerAutoHandoff, formatAuxEvent, ....
-- ui/modules/triggers/sequencing.js: Exports loadMessageState, saveMessageState, parseMessageSequence, isDuplicateMessage, ....
-- ui/types/contracts.d.ts: Shared contract types used by JSDoc-annotated JS surfaces (message envelopes, IPC payloads, device pairing, cognitive memory, app status).
-- ui/modules/ui-view.js: Exports PANE_IDS, PANE_ROLES, SYNC_FILES, flashPaneHeader, ....
-- ui/modules/utils.js: Exports debounceButton, applyShortcutTooltips.
-- ui/modules/utils/transcript-store.js: Exports TRANSCRIPTS_DIR, getDateString, getTranscriptPath, parseTranscriptLines, ....
-- ui/modules/watcher-worker.js: File watcher worker process.
-- ui/modules/watcher.js: Exports init, States, ACTIVE_AGENTS, CONTEXT_MESSAGES, ....
-- ui/modules/websocket-runtime.js: Exports start, stop, isRunning, getPort, ....
-- ui/modules/websocket-server.js: Exports start, stop, isRunning, getPort, ....
-- docs/codebase-index.md: Generated full Git-visible file inventory for agent navigation. Regenerate with `node ui/scripts/hm-codebase-index.js`; verify with `node ui/scripts/hm-codebase-index.js --check`.
-- ui/scripts/hm-codebase-index.js: Deterministic codebase inventory generator/checker built from `git ls-files --cached --others --exclude-standard`.
-- ui/scripts/doc-lint.js: Lints `.squidrun/build/*.md` docs for active-item caps, required metadata fields, and stale-marker correctness.
-- ui/scripts/evidence-ledger-seed-memory.js: Seeds Evidence Ledger decision memory from context snapshot markdown/JSON with deterministic IDs.
-- ui/scripts/headless-harness-bootstrap.js: MANDATORY first require for every offscreen Electron audit/probe rig: swallows EPIPE on closed parent pipes, handles uncaughtException to a log file (NO native dialogs - S426 incident: replica crashes popped error dialogs on James's desktop), muzzles dialog.showErrorBox, marks the process via SQUIDRUN_HEADLESS_HARNESS=1.
-- ui/scripts/generate-squid-pet-atlas.js: Parts-based generator for the Squid Room pet sprite atlases (`ui/assets/squid-room-pets/*.png`); run a copy under Electron from outside `ui/` (single-instance lock) with `SQUID_PET_ATLAS_OUT` pointing back at the assets dir.
-- ui/scripts/hm-arm-state.js: Explicit read-only CLI for the arm-state projection read model; prints desired/ready/missing, watchdog, and apply-queue state only when invoked and does not wire into TrustQuote room open/readiness behavior.
-- ui/scripts/hm-bg.js: Background Builder control CLI; uses WebSocket for live PTY agents and the durable supervisor queue CLI for queued work.
-- ui/scripts/hm-capabilities.js: Runtime capability-manifest CLI that scans live `hm-*` scripts, writes `.squidrun/runtime/tool-manifest.json`, and supports `list`, `search`, and `verify` lookups before agents make negative capability claims.
-- ui/scripts/hm-ci-check.js: CLI utility for reading the latest CI/pre-commit gate status used by review and release workflows.
-- ui/scripts/hm-claim.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-comms.js: CLI utility that reads comms history from `.squidrun/runtime/evidence-ledger.db` via `node:sqlite`.
-- ui/scripts/hm-compat-count.js: Utility script for compatibility/counting diagnostics used in release and audit workflows.
-- ui/scripts/hm-doctor.js: Preflight health-check CLI for dependencies, native modules, transport port, shell defaults, and `.squidrun` permissions.
-- ui/scripts/hm-experiment.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-github.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-hook-afteragent.js: Post-agent hook script for runtime follow-up after pane activity.
-- ui/scripts/hm-hook-precompress.js: Pre-compaction hook that extracts/stages memory candidates before context compression.
-- ui/scripts/hm-image-gen.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-investigate.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-memory-api.js: Cognitive memory CLI for direct node operations; supports `retrieve`, `ingest`, `patch`, `salience`, and `set-immune` over the cognitive-memory store.
-- ui/scripts/hm-memory-broker.js: Unified recall CLI exposing the memory broker contract for agent tool paths, returning ranked JSON or a compact pane-ready recall block.
-- ui/scripts/hm-memory-consistency.js: On-demand CLI that reports drift between tracked knowledge markdown and knowledge-backed cognitive-memory nodes.
-- ui/scripts/hm-memory-extract.js: Extracts memory candidates from runtime/session artifacts for staged promotion review.
-- ui/scripts/hm-memory-index.js: Builds or refreshes the cognitive/vector memory index from workspace knowledge files.
-- ui/scripts/hm-memory-ingest.js: Strict ingest CLI for canonical team-memory objects with promotion/review routing.
-- ui/scripts/hm-memory-promote.js: Reviews pending memory promotion candidates and applies approved updates into tracked knowledge files.
-- ui/scripts/hm-memory-registry.js: CLI for transactive memory registry updates and expertise tracking by domain/agent.
-- ui/scripts/hm-memory-search.js: Queries the cognitive/vector memory index and returns ranked semantic matches.
-- ui/scripts/hm-memory.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-belief-snapshot-prune.js: Explicit `plan`/`build` CLI for the copy-only belief-snapshot retention path. `plan` is read-only; `build` requires a fresh candidate path and can emit a fresh proof receipt, with no live-database replacement command.
-- ui/scripts/hm-nas-mirror.js: Incremental, browsable PC-to-NAS evidence mirror. It walks the allowlisted case/document roots and sends changed files through byte-counted atomic SSH writes so Windows codepage handling cannot corrupt Korean directory names.
-- ui/scripts/hm-nas-mirror-transfer.js: Path validation and remote receive-command builder for the NAS mirror; remote destinations travel as UTF-8 base64 and are decoded only inside quoted shell variables.
-- ui/scripts/hm-room.js: Runtime-identity-bound Team Room CLI for activation replies, read-only room listing/status, and clear same-root coverage refusals; it exposes no author override.
-- ui/scripts/hm-mira-emit.js: Emits Mira-originated route intents through the normal SquidRun messaging path for proof and runtime integration.
-- ui/scripts/hm-mira-progress.js: Prints contract-driven Mira progress and consumes fresh default progress proof artifacts unless explicitly disabled.
-- ui/scripts/hm-mira-reply.js: Sends Architect-authored replies back to Mira-originated intents while preserving sender/target role constraints.
-- ui/scripts/hm-mira-visible-presence-proof.js: Runs the default Mira progress proof harnesses and writes the HEAD-bound progress proof artifact.
-- ui/scripts/hm-oracle-wake-context.js: Shared read-only wake-context builder for Oracle wake watchdog scripts; summarizes cached market-scanner movers and stale watch-rule context without importing removed live-ops modules.
-- ui/scripts/hm-pane.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-path-audit.js: Audits documented/runtime paths and path-safety constraints across the workspace.
-- ui/scripts/hm-preflight.js: Scans protocol docs (`CLAUDE.md`, `GEMINI.md`, `AGENTS.md`, `CODEX.md`) for potential coordination-rule conflicts.
-- ui/scripts/hm-promotion.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-reddit.js: Exports parseArgs, getRedditConfig, getMissingConfigKeys, getAccessToken, ....
-- ui/scripts/hm-screenshot-window.ps1: PowerShell helper script (window/screenshot automation).
-- ui/scripts/hm-screenshot.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-search.js: Safe `rg` wrapper for Windows/PowerShell with optional glob filters and escaped-pattern default behavior.
-- ui/scripts/hm-send.js: CLI utility that sends/queries runtime actions via WebSocket; hot-loads outbound guardrails before journaling or websocket dispatch. The surface-claim classifier is warn-only: it records the suspected unsupported claim and prints the concern but always lets the message continue, because a keyword/intent proxy may not silence a report to James. Routing and private-context guards remain separate policies.
-- ui/scripts/hm-send-context-leak-guard.js: Outbound hm-send guard that blocks private side-profile context leakage from the main profile and records violations/bypasses as JSONL runtime audit rows.
-- ui/scripts/hm-visible-pane-submit-harness.js: Visible pane submit proof harness that sends through the live WebSocket route, waits for terminal output, captures the same app window/pane through the Electron app port, and writes app-event-bound provenance consumed by the surface-claim guard.
-- ui/scripts/hm-sms.js: Exports parseMessage, getTwilioConfig, getMissingConfigKeys, buildAuthHeader, ....
-- ui/scripts/hm-surface-audit.js: UI/documentation surface audit helper used to check exposed commands and runtime-facing features.
-- ui/scripts/hm-startup-health.js: Startup health wrapper (poller auto-recover, bidirectional wake watchdog, then the health snapshot). `readTelegramBacklogHealth` reads `.squidrun/runtime/telegram-backlog-health.json` strictly: arrays, unknown schema versions, malformed route entries, absent/stale/future `observedAtMs`, and unreadable or route-less documents all degrade, and head age is RECOMPUTED from the durable received-at against the current clock rather than trusted from the producer. The verdict is consumed by `hm-health-snapshot`'s `inspectTelegramIngressBacklog` and penalised in `buildHealthStatus`, so it reaches the published score, JSON and markdown — degrading only the wrapper would leave the false green exactly where James reads it. The sole exemption is a root with no Telegram ingress spool at all, which has no backlog to be behind on.
-- ui/scripts/hm-system-protected-evals.js: CLI wrapper for the static system protected-eval registry; prints reusable JSON for future gates and exits nonzero when a protected source/test invariant fails, without sending messages, touching runtime state, or starting the app.
-- ui/scripts/hm-model-replay-job-packet.js: CLI wrapper for the Phase 5 model replay/job-packet harness; reads the local seat-change bakeoff artifacts and writes a deterministic `ready_to_run` JSON packet without invoking models, mutating pane settings, restarting, sending, or granting seat authority.
-- ui/scripts/telegram-consumer-receipt-adapter.js: The consumer-side producer of `telegram_consumed.v1`. Runs as the runtime's own UserPromptSubmit hook, inside the process about to consume the prompt, and reports the exact bytes the model received rather than what a sender believes it wrote. Per-runtime knowledge is confined to two small extractors; everything else is shared, so Claude and Codex emit identical proof. Binds the pane from `SQUIDRUN_PANE_ID` and fails closed when absent (same-CWD Codex sessions run in panes 1 and 3, so CWD/newest-session inference is not permitted). Records every refusal as a visible `skipped` line — an adapter that runs and declines must be distinguishable from one that was never trusted and never ran — and always exits 0 so a proof producer can never wedge the pane it observes.
-- ui/scripts/hm-telegram-recover-inbound.js: One-shot operator recovery for a Telegram inbound record the drain provably cannot resolve on its own (consumed and answered, but with an attempt written before attempts carried timestamps, so no receipt can be ordered against it). Dry-run by default; `--apply` requires stated `--evidence` and appends exactly one line to the append-only terminal-disposition sidecar, which the drain overlays at read time to retire the record without delivery. It never delivers, sends, edits the inbound journal, touches the attempt latch, or restates an existing disposition.
-- ui/scripts/hm-telegram.js: Exports parseMessage, getTelegramConfig, getMissingConfigKeys, requestTelegram, .... Outbound sends reuse caller-provided journal `messageId` when present so live comms events and evidence-ledger rows stay correlated.
-- ui/scripts/hm-visual-capture.js: Playwright sidecar CLI for URL resolution/readiness checks and visual artifact bundle capture (screenshot, trace, console/request diagnostics, DOM/ARIA snapshot) with optional Telegram photo send.
-- ui/scripts/hm-smoke-runner.js: Deterministic autonomous QA sidecar used by workflow-triggered smoke runs; captures screenshot/trace/DOM, axe-core a11y report, accessibility snapshot, DOM summary, link validation, before/after pixel diff artifacts (pixelmatch), failure debug packages (trace/screenshots/network summary/explanation), and assistive Playwright draft spec generation from successful runs.
-- ui/scripts/hm-supervisor.js: CLI utility for supervisor queue inspection/enqueue/requeue against `.squidrun/runtime/supervisor.sqlite`.
-- ui/scripts/hm-visual-utils.js: Shared helpers for hm-visual-capture URL candidate resolution (explicit/cache/heuristic), readiness probes, cache persistence, and artifact layout/writers.
-- ui/scripts/hm-transition.js: CLI utility that sends/queries runtime actions via WebSocket.
-- ui/scripts/hm-twitter.js: Exports parseArgs, getTwitterConfig, getMissingConfigKeys, percentEncode, ....
-- ui/scripts/hm-what-now.js: Read-only Mission Control CLI: prints the live what-now answer (7-source evidence bundle from `live-what-now-answer-v0`) as a human block or `--json`; no send/WS imports by gate criterion.
-- ui/scripts/install-supervisor-task.ps1: PowerShell installer for registering the durable supervisor as a Windows scheduled task.
-- ui/scripts/local_embedder.py: Python helper worker for local embeddings.
-- ui/scripts/postinstall-electron-rebuild.js: npm postinstall guard that first probes `better-sqlite3` under the Electron runtime ABI, then runs a targeted `electron-rebuild -f -o better-sqlite3` only when the native module cannot load.
-- ui/modules/cognitive-memory-sleep.js: Exports SleepConsolidator, resolves sleep threshold configs, manages background semantic clustering, and auto-promotes matched supervisor failure->success antibodies into immune nodes.
-- ui/modules/cognitive-memory-store.js: Cognitive memory vector and metadata store wrapper over sqlite-vec.
-- ui/modules/memory-search.js: Hybrid FTS and sqlite-vec memory search index and chunking engine.
-- ui/modules/supervisor/index.js: Supervisor module entrypoint.
-- ui/modules/supervisor/store.js: SQLite-backed store for durable background supervisor tasks.
-- ui/scripts/hm-health-snapshot.js: Startup pipeline script that captures codebase and system health for cognitive memory ingest, including the shared startup-health scoring contract (100-point base, threshold mapping, and probe penalties).
-- ui/modules/trustquote-work-room-route-owner-supervisor.js: Supervises the TrustQuote work-room route-owner process (binds room port 9979, profile=trustquote, cwd D:/projects/TrustQuote). Launch contract: spawns the route-owner via `resolveRouteOwnerLaunchExecutable()`, which injects `ELECTRON_RUN_AS_NODE=1` when `process.execPath` is electron (so the script runs as Node, not a second Electron app); overridable via `SQUIDRUN_TRUSTQUOTE_ROUTE_OWNER_NODE_PATH` / `SQUIDRUN_SUPERVISOR_NODE_PATH`. Readiness requires `status.state==='running'` AND a proven route probe (`canRouteTask`); a running-but-not-`running` or stale-session supervisor is stopped (attach-only, `killTerminalsOnStop=false` — never kills live agent terminals) and relaunched. Consumed only by squidrun-app.js `ensureTrustQuoteRouteOwnerCurrent`→`prepareTrustQuoteWorkspaceOpen` (one-shot on workspace-open, not a loop/interval).
+```text
+Human
+  |
+  +-- Electron renderer ---------------- Team Room (paired browser)
+  |          |                                     |
+  |          +--------------- IPC -----------------+
+  |                              |
+  |                      Electron main process
+  |                       /        |        \
+  |              message router  lifecycle  persistence
+  |                       |        |        /
+  |                 hidden pane hosts + PTY daemon
+  |                      /          |          \
+  +--------------- Architect     Builder      Oracle
+                       CLI          CLI          CLI
+```
 
-## 4) OUTER-LOOP CO[private-live-ops]NATOR MODEL (3-PANE + BACKGROUND)
-- **Architect (Pane 1):** The outer-loop coordinator. Handles decomposition, review, and release gating (no direct implementation). Elevates the AI from individual workers to a management layer over native sub-agents.
-- **Builder (Pane 2):** The working lead. Executes implementation and autonomously spawns up to 3 background agents (`builder-bg-1..3`) for parallel execution.
-- **Oracle (Pane 3):** The high-level system monitor and vision-provider. Shifted from the old per-pane "Analyst" role to provide system-wide investigation, root-cause evidence, documentation, and benchmarks.
-- **Squid Room authority:** James's canonical Squid Room spec is `memory/project_squidroom_original_definition.md`. The Squid Room is a separate window with the same live Builder and Oracle panes rendered once, plus expandable app arm sections containing real CLI agents and a single arms count. It is not the old desired/ready/missing scoreboard, not duplicate Builder/Oracle sessions, and not the TrustQuote Lead / Work + Schedule / Money + Documents abstraction.
-- Primary comms path: `node ui/scripts/hm-send.js <target> "(ROLE #N): ..."` sends WebSocket envelopes into the comms runtime.
-- Fallback comms path: if WebSocket delivery is unverified/fails, `hm-send.js` writes `.squidrun/triggers/<role>.txt` atomically.
-- Trigger/watch path: `ui/modules/watcher.js` watches trigger/message/workspace paths and calls `ui/modules/triggers.js` for routing and delivery tracking.
-- PTY injection path: `ui/modules/main/squidrun-app.js` routes to hidden pane host first (`pane-host-inject`), with visible renderer fallback.
-- Hidden pane host architecture: one hidden BrowserWindow per pane, with explicit ready/ack/outcome signaling to main process for delivery verification.
-- Pane restart ownership: destructive pane restart lifecycle is main-side-arbitrated. Core panes are owned by the main window; Squid Room app arms are owned by the Squid Room window. The renderer may process only the restart claim sent by main, and main authorizes `pty-kill`, `pty-create`, and `spawn-claude` once per claim. The deleted `restart-all-panes`/`freshStartAll` chain had no live invoker; any future restart-all/fresh-start feature must be built through the arbiter and must include a cold-start override that clears or skips pane-session ids so "fresh" does not resume pinned UUID sessions.
+The role belongs to the pane, not to a provider. Claude Code, Codex CLI, or
+Gemini CLI can occupy any pane.
 
-## 5) CROSS-DEVICE RELAY
-- Topology: `Architect (Device A) <-> WebSocket Relay <-> Architect (Device B)`.
-- Architect-only gate: cross-device relay targeting is restricted to `@<DEVICE>-architect`; role gate enforced in `ui/modules/main/squidrun-app.js` (around line 1900).
-- Local routing model: Builder/Oracle never target external devices directly. Inbound cross-device payloads terminate at local Architect, which then routes to local Builder/Oracle via `hm-send.js`.
-- Phase 4 handoffs: cross-device work transfer is carried as structured `HandoffPacket` relay metadata, journaled in `team-memory.sqlite`, and surfaced locally as Tier 4 continuation context.
-- Bridge status is surfaced with an explicit operator mode (`disabled`, `connecting`, `connected`) layered over the lower-level relay state/status. Startup health and the Bridge tab treat `enabled + not connected` as a degraded condition without conflating it with intentional disablement. App-provided bridge status is authoritative; standalone startup-health snapshots may use a fresh `.squidrun/bridge/known-devices.json` discovery cache to upgrade only env-derived fallback status, and stale/missing discovery remains `pending_live_discovery` without a disconnected penalty.
+## Process boundaries
 
-## 5A) MEMORY DELIVERY
-- Canonical memory ingest lands in `team-memory.sqlite` through `ui/modules/memory-ingest/service.js` and `ui/modules/memory-ingest/journal.js`, which guarantee durable envelopes before routing and replay pending writes after crashes or compaction locks.
-- Proactive injection is resolved by `ui/modules/memory-ingest/delivery.js`: triggers (`error_signature_match`, `file_path_affinity`, `task_domain_match`, `session_rollover`, `user_preference_activation`) query routed memory objects, apply budgets/rank-down/suppression, and emit ephemeral Tier 4 assistive or authoritative notes into pane context.
-- Delivery budgets are enforced per pane through `memory_injection_events` / `memory_injection_suppressions` (max 1 per trigger event, max 3 per 10 minutes unless explicit, rank-down after 2 unreferenced injections, dismissal suppression until context changes).
-- Compaction survival persists pre-compact active-task notes plus Tier 3 extracted insights into `memory_compaction_survival`, then re-reads Tier 1 files from disk on resume before reinjecting the survival summary.
+### Electron main process
 
-## 5B) COGNITIVE MEMORY (CURRENT RUNTIME STATE)
-- Runtime access is live, not CLI-only: `ui/modules/ipc/cognitive-memory-handlers.js`, `ui/modules/bridge/preload-api.js`, and `ui/modules/main/squidrun-app.js` expose ingest/retrieve/patch/salience operations over IPC plus structured websocket routing.
-- Retrieval scoring now applies bounded age decay in both `ui/modules/cognitive-memory-api.js` and `ui/modules/memory-search.js`, so older high-salience memories lose rank over time instead of permanently dominating fresh evidence.
-- Retrieval access is tiered: exploratory reads update `last_accessed_at` / `access_count`, while repeated or explicit use reactivates recency. This prevents casual lookups from fully refreshing stale memories.
-- `transactive_meta` is consulted during `retrieve()`. When expertise rows exist, the API returns additive transactive guidance (`matches`, `recommendedAgentId`) alongside normal content results.
-- Patch writes stay in sync with search: `cognitive-memory-api.patch()` updates linked `memory-document:<id>` entries in `search-index.db`, including the FTS and vector-backed rows managed by `ui/modules/memory-search.js`.
-- Supervisor-backed maintenance is live: `ui/supervisor-daemon.js` initializes the sleep consolidator and lease janitor during startup, reruns housekeeping on each supervisor tick, and tracks runtime automation state under `.squidrun/runtime/`.
-- Startup health scoring contract is explicit in `ui/scripts/hm-health-snapshot.js`: score starts at 100, penalties subtract from named findings, thresholds map score bands to `OK`/`WARN`/`DEGRADED`/`CRITICAL`, and new probes are expected to register a stable warning code plus a documented penalty instead of open-coded score math. Current operational probes are bridge connectivity (`bridge_enabled_unconfigured`, `bridge_enabled_not_connected`) and memory consistency (`memory_consistency_drift`, generic unsynced fallback).
-- Sleep consolidation is wired through the supervisor, but it is intentionally gated by idle/activity thresholds. Its tables initialize at supervisor startup; full clustering/extraction runs only when the session is idle enough.
-- Memory expiration is enforced in active delivery paths: `ui/modules/memory-ingest/delivery.js` excludes expired rows from proactive injection, and `ui/modules/memory-ingest/lifecycle.js` advances expired memories to `status='expired'`.
-- Lifecycle maintenance is no longer dead code: successful delivery records access, and session rollover in `ui/modules/main/squidrun-app.js` runs `advance-memory-lifecycle` plus `review-stale-memories` before proactive injection.
-- Promotion corrections now supersede originals: approved correction candidates persist `correction_of` / `supersedes` links and move the original memory to `superseded` instead of leaving both memories active.
-- Knowledge-backed memory can be audited on demand: `ui/modules/memory-consistency-check.js` compares the current `workspace/knowledge/` chunk set against `nodes.source_type='knowledge'` in `cognitive-memory.db`, reporting missing flat-file coverage, orphaned nodes, and duplicate knowledge hashes via `ui/scripts/hm-memory-consistency.js`. Repair defaults are conservative: orphan deletion is disabled unless explicitly approved, `--repair-scope missing-only` limits repair to missing chunks, and orphan relationship migration requires an explicit mapping review before `--migrate-orphans --mapping-file <path>` can modify live memory.
+[`ui/main.js`](ui/main.js) starts Electron, applies the single-instance policy,
+and constructs [`SquidRunApp`](ui/modules/main/squidrun-app.js). The application
+object owns top-level windows, startup state, message routing, and coordinated
+shutdown.
 
-## 6) DATA FLOW
-1. User types in pane 1 broadcast input (`ui/index.html#broadcastInput`, `ui/renderer.js`).
-2. Renderer forwards through IPC (`send-broadcast-message` / task-parser handlers) into main process routing.
-3. Architect delegates via `hm-send.js` to target role/pane.
-4. `hm-send.js` runs hot-loadable outbound guardrails, then sends a canonical envelope over WebSocket and records outbound comms metadata.
-5. WebSocket runtime dispatch in `squidrun-app.js` calls `triggers.sendDirectMessage()` / `broadcastToAllAgents()`.
-6. If direct WS verification fails, `hm-send.js` writes trigger fallback file under `.squidrun/triggers/`.
-7. Watcher picks trigger/message changes, parses target/sequence, and routes to injection.
-8. Main routes injection to hidden pane host PTY (or visible fallback), then receives delivery ack/outcome.
-9. Target agent processes and replies via `hm-send.js` back to Architect, repeating the same envelope + verification flow.
-10. Handoff materializer compacts comms journal/evidence into `.squidrun/handoffs/session.md` and context snapshots.
-11. Team-memory delivery can proactively inject Tier 3/Tier 4 memory into a pane, send cross-device handoff packets over relay, and restore compaction survival notes after context compression.
+Main-process services are split into small modules under `ui/modules/main/`.
+The important boundaries include:
 
-## 7) CONFIG FILES
-- `ui/settings.json`: user/runtime settings (pane commands, watcher/autospawn flags, hidden pane-host toggle). **Gitignored** (`.gitignore`).
-- `.squidrun/link.json`: bootstrap metadata (workspace root, comms script path, role targets). **Runtime-generated, gitignored**.
-- `.squidrun/app-status.json`: current runtime status/session/pane-host health. **Runtime-generated, gitignored**.
-- `workspace/user-profile.json`: user-editable profile used by agent startup behavior. **Tracked**.
-- `workspace/knowledge/runtime-environment.md`: shared device registry and machine/runtime environment quirks. **Tracked**.
-- `docs/diagrams-reference.md`: ASCII templates for system topology (Agent Message Flow and Knowledge & Memory System) intended for Excalidraw visualization.
-- `docs/gate-census-2026-06-12.md`: evidence-based keep/fix/kill census of all guards, hooks, verifiers, contracts, and Mira Lab scaffolds (S442 mandate from James). Kill rationales recorded in-doc; contested kills arbitrated by Architect, executed by Builder.
-- `docs/timeline-data-spec-v0.md`: data spec for the human timeline surface (fresh-eyes agenda item 5) — source mapping over comms_journal/ledger/sidecar, plain-language translation rules, needs-you detection, world-coherence filter. Oracle-owned; Builder builds against it.
-- `ROLES.md`: canonical role boundaries/startup baseline/operating rules. **Tracked**.
-- `CLAUDE.md`, `GEMINI.md`, `AGENTS.md`: CLI-specific config files auto-read by Claude Code, Gemini CLI, and Codex CLI respectively. Each contains CLI quirks + mandatory directive to read `ROLES.md`. **Tracked**.
+- `pane-host-window-manager.js`: one hidden BrowserWindow per agent pane.
+- `websocket-startup-lifecycle.js`: local addressed-message transport startup.
+- `team-room-runtime.js`: Team Room server, pairing, history, and delivery.
+- `telegram-ingress-*`: optional bot ingress, admission, durable spool, and drain.
+- `restart-launch-probe.js`: restart/relaunch acceptance without user guesswork.
 
-## 8) CO[private-live-ops]NATION STATE (`.squidrun/`)
-- `.squidrun/handoffs/`: materialized session handoff index (`session.md`) from comms journal.
-- `.squidrun/context-snapshots/`: per-pane startup context snapshots (`1.md`, `2.md`, `3.md`, etc.).
-- `.squidrun/runtime/`: live SQLite stores (`evidence-ledger.db*`, `team-memory.sqlite*`, `supervisor.sqlite*`).
-- `.squidrun/runtime/live-task-audit-sidecar/task-audit-items.json`: canonical Task Audit sidecar state for broken/disabled/half-wired/misinterpreted items. The sidecar is a live mental-model record, not a generic to-do list. Resolved entries leave the file; unresolved agent-created residue gets an honest status/next action instead of user-escalation parking. The old `future-items.json` sidecar file was a zero-consumer legacy artifact and is deleted.
-- `.squidrun/reports/`: generated audit/review reports.
-- `.squidrun/state/`: runtime queue/state artifacts (e.g., `comms-outbound-queue.json`).
-- `.squidrun/triggers/`: fallback trigger files consumed by watcher for agent delivery.
-- `.squidrun/build/`: build blockers/errors/status artifacts used by restart gates.
-- `.squidrun/app-status.json` + `.squidrun/link.json`: runtime truth + bootstrap metadata.
-- `.squidrun/fresh-install.json`: marker file indicating a new installation before onboarding completion.
+### Renderer and preload
 
-### Arm Registry Scope Contract
-- Desired-arm manifests are durable app-room state and are stored as `arm_registries.session_id='app-room:<appRoomId>'`. The `app-room:<id>` sentinel is intentionally format-distinct from `app-session-N[:room]`; `buildCanonicalAppRoomSessionId()` enforces that it cannot parse as an app session.
-- Readiness, check-ins, missing-watchdogs, and apply requests remain session-scoped. They use the current readiness scope, for example `app-session-408:trustquote`, through `readinessSessionId`.
-- Squid Room renderers may send the current session id, but `arm-state:projection` treats that value as readiness scope, resolves the manifest by canonical app-room scope, and recomputes desired/ready/missing from current-session accepted identity proofs. Projection is read-only and must not seed, migrate, dispatch, or advance watchdog state.
-- Startup must not seed or migrate arm-registry manifests. Any future seed/reseed path must be explicit and must target the canonical `app-room:<id>` manifest. Re-running migration with an already-canonical row is a no-op (`already_canonical`); duplicate canonical plus legacy rows are a blocker/refusal, not a boot-time repair.
+[`ui/index.html`](ui/index.html) and [`ui/renderer.js`](ui/renderer.js) render the
+three-pane desktop workspace. [`ui/preload.js`](ui/preload.js) exposes a bounded,
+context-isolated API; renderer code does not receive unrestricted Node access.
 
-## 9) TEST INFRASTRUCTURE
-- Test suite root: `ui/__tests__/` (Jest, Node environment) with shared setup in `ui/__tests__/setup.js`.
-- Core commands (from `ui/package.json`): `npm test`, `npm run test:watch`, `npm run test:coverage`, `npm run lint`, `npm run typecheck`.
-- Jest config: `ui/jest.config.js` (coverage thresholds, module mapping, setup files).
-- Typecheck config: `ui/jsconfig.json` scopes the initial `tsc --noEmit` gate to JSDoc-annotated contract modules instead of the full legacy JS codebase.
-- Mock patterns:
-  - Electron API mocks in `ui/__tests__/mocks/electron.js`.
-  - Shared IPC harness helpers in `ui/__tests__/helpers/ipc-harness.js`.
-  - Config mocking helpers in `ui/__tests__/helpers/mock-config.js` and `ui/__tests__/helpers/real-config.js`.
-  - Frequent fake-timer tests for watcher/terminal/runtime behavior.
-- S491 Telegram ingress proof suites (registered individually under repository law):
-  - `ui/__tests__/telegram-admission-store.test.js` — checkpoint-A2 storage on TEMP databases initialised with the REAL evidence-ledger schema, so the tests query all four authorities and prove all four roll back together: source identity conflicts, two-handle claim races, the exclusivity constraint tested directly rather than through the code path above it, ambiguous claims never stolen, promotion idempotency and identity conflicts, and the ownership transaction asserted to be exactly one BEGIN/COMMIT.
-  - `ui/__tests__/telegram-consumed-proof.test.js` — the `telegram_consumed.v1` validator: truncated-but-acked rejection, fabricated-object rejection, same-id/different-payload rejection, stale generation and pane-3 rejection, proof-before-attempt rejection.
-  - `ui/__tests__/telegram-consumer-receipt-adapter.test.js` — hook contract from representative Claude and Codex `UserPromptSubmit` stdin with explicit pane env; proves both runtimes emit an identical proof shape and that every refusal is recorded rather than silent.
-  - `ui/__tests__/telegram-ingress-drain.test.js` — the live best-effort contract: adversarial claim lookup, route, delivery receipt, thrown delivery, and ack failures each prove N+1 still runs; an existing update claim proves re-injection is suppressed; unsorted records prove updateId offer order; payload, coalescing, discovery, and disposal boundaries remain covered.
-  - `ui/__tests__/telegram-activation-mode.test.js` — the v7 §3 Phase L mode resolver: absent is never a default, nothing is normalised into validity, every refusal is named apart, and the authority cannot be widened by a consumer.
-  - `ui/__tests__/telegram-drain-wiring.test.js` — drain generation, honest pane-runtime naming, durable backlog-health publication.
-  - `ui/__tests__/telegram-consume-marker-adversarial.test.js` — proves a Telegram body cannot forge or suppress the delivery evidence about itself: embedded/partial prefixes, duplicate markers, a marker placed before the authoritative one, and non-final-line placement are each defanged or refused.
-  - `ui/__tests__/telegram-backlog-health-artifact.test.js` — drives `hm-health-snapshot main()` end to end against a fixture root and asserts on the SERIALIZED bytes: the emitted JSON and the written Markdown must both show a sub-100 score naming the backlog for wedged, missing-with-live-spool and stale states, and must stay clean for a healthy one. Every layer above the artifact can be correct while the artifact stays green; this is the test that forbids it.
-  - `ui/__tests__/telegram-backlog-health-snapshot-emission.test.js` — asserts on the EMITTED status that gets serialized: the published score must drop below 100 and carry a warning for a wedged, missing, stale or unreported backlog. A reader returning a tidy object while the published number stays green is the failure this pins.
-  - `ui/__tests__/telegram-recover-inbound.test.js` — the one-shot recovery tool's refusals and its guarantee that the inbound journal and attempt latch are never rewritten.
-- `ui/__tests__/mira-extraction-main-ui.test.js` locks the extraction boundary by asserting the standalone Lab opener is absent while the main command-bar conversation surface remains available.
-- Current suite scale: 298 suites / 4325 tests discovered in the active Jest gate, with handler-heavy coverage across main/ipc/runtime modules.
+### Terminal daemon
+
+[`ui/terminal-daemon.js`](ui/terminal-daemon.js) owns the real PTY processes.
+[`ui/daemon-client.js`](ui/daemon-client.js) reconnects Electron to those
+processes and maintains terminal identity across window reloads. The daemon is
+why a renderer refresh does not automatically destroy a working agent session.
+
+### Hidden pane hosts
+
+Visible panes are presentation surfaces. Hidden pane hosts provide a stable
+injection and acknowledgement path even when a visible renderer is loading or
+backgrounded. Delivery flows through
+[`ui/pane-host-renderer.js`](ui/pane-host-renderer.js) and returns an explicit
+outcome to main.
+
+## Message path
+
+1. A sender addresses `architect`, `builder`, or `oracle` through
+   [`ui/scripts/hm-send.js`](ui/scripts/hm-send.js).
+2. The local WebSocket runtime validates and journals the envelope.
+3. Main routes the message to the target pane host and waits for delivery
+   evidence.
+4. File triggers under `.squidrun/triggers/` remain a fallback path.
+5. [`ui/scripts/hm-comms.js`](ui/scripts/hm-comms.js) queries the durable
+   communication journal.
+
+An accepted send is deliberately different from a processed message. The
+protocol and state transitions are documented in
+[`docs/protocol-spec.md`](docs/protocol-spec.md).
+
+## Team Room
+
+Team Room is the human-facing shared conversation for a project. The main
+process serves the room, stores history in SQLite, pairs browser clients, and
+delivers each room activation to the configured agent seats. The browser UI is
+implemented by `ui/team-room.*`; the trusted service boundary lives under
+`ui/modules/main/team-room-*`.
+
+Team Room is local by default. Remote reachability is an operator-managed
+network decision, not a hosted SquidRun service.
+
+## State and continuity
+
+Runtime state lives under the active project's `.squidrun/` directory and is
+never public source. It includes session and pane identity, message journals,
+delivery evidence, handoffs, context snapshots, Team Room history, pairing
+state, and supervisor artifacts.
+
+Startup restores saved terminal sessions when it can prove their identity.
+Shutdown and restart paths target the selected app or pane instead of treating
+every Electron process on the machine as interchangeable.
+
+## Security boundaries
+
+- Provider credentials stay in the user's CLI or local `.env` configuration.
+- Preload exposes an allowlisted IPC surface under context isolation.
+- Message envelopes carry explicit target, profile, and window metadata.
+- Destructive lifecycle actions are arbitrated in the main process.
+- Installed packages pin their own data root and network settings.
+- Runtime memory, logs, credentials, and workspace files are ignored by Git.
+
+SquidRun launches tools with the user's operating-system permissions. The
+application is therefore a local trust boundary, not a sandbox for untrusted
+repositories or prompts.
+
+## Verification map
+
+Useful boundary tests include:
+
+- `ui/__tests__/websocket-delivery.test.js` — addressed transport and failures.
+- `ui/__tests__/startup-source-of-truth.test.js` — restart identity and state.
+- `ui/__tests__/team-room-service-integration.test.js` — room lifecycle.
+- `ui/__tests__/team-room-pane-delivery.test.js` — room-to-pane delivery.
+- `ui/__tests__/postinstall-electron-rebuild.test.js` — native rebuild command
+  safety, including Windows paths containing spaces.
+- `ui/__tests__/squidrun-app.test.js` — main-process orchestration and lifecycle.
+
+Run the complete validation gate from `ui/`:
+
+```bash
+npm ci
+npm run typecheck
+npm run lint
+npm test -- --runInBand
+```

@@ -1,9 +1,9 @@
 'use strict';
 
 const {
-  buildTrustQuoteFactSignalsFromDocs,
-  DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS,
-} = require('../modules/main/trustquote-tell-feed');
+  buildExampleAppFactSignalsFromDocs,
+  DEFAULT_PARKED_EXAMPLEAPP_CUSTOMER_IDS,
+} = require('../modules/main/exampleapp-tell-feed');
 const { evaluate } = require('../modules/the-tell/scorer');
 
 const NOW = Date.parse('2026-06-22T17:30:00.000Z');
@@ -25,7 +25,7 @@ function expectFeedSignalContract(signal, requiredFactKeys = []) {
     source: 'live',
     observedAtMs: NOW,
     rawRefs: expect.objectContaining({
-      system: 'trustquote',
+      system: 'exampleapp',
       businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
     }),
     facts: expect.any(Object),
@@ -61,7 +61,7 @@ function liveSignal(overrides) {
     source: 'live',
     observedAtMs: NOW,
     rawRefs: {
-      system: 'trustquote',
+      system: 'exampleapp',
       collection: 'jobs',
       docId: 'fixture-doc',
       businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
@@ -77,8 +77,8 @@ const pricingModule = {
 };
 
 describe('The Tell Feed->MIND->BODY seam contract', () => {
-  test('TrustQuote live feed emits raw facts with provenance, not BODY judgment fields', () => {
-    const signals = buildTrustQuoteFactSignalsFromDocs({
+  test('ExampleApp live feed emits raw facts with provenance, not BODY judgment fields', () => {
+    const signals = buildExampleAppFactSignalsFromDocs({
       nowMs: NOW,
       source: 'live',
       parkedCustomerIds: [],
@@ -97,9 +97,9 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
           date: '2026-05-20',
           updatedAt: NOW,
           lastEmailSentAt: NOW - 10 * 86400000,
-          clientInfo: { email: 'customer@example.com', firstName: 'Deepika' },
+          clientInfo: { email: 'customer@example.com', firstName: 'Customer A' },
           photoCount: 0,
-          customerId: 'customer-deepika',
+          customerId: 'customer-a',
           jobTypes: [{
             type: 'Leak repair',
             price: '34359.19',
@@ -134,24 +134,24 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
           start: NOW + 60 * 60000,
           end: NOW + 120 * 60000,
           title: 'Water heater install',
-          clientName: 'Deepika',
-          customerId: 'customer-deepika',
+          clientName: 'Customer A',
+          customerId: 'customer-a',
           jobId: 'job-469',
         },
       }],
     });
 
     const byType = new Map(signals.map((signal) => [signal.type, signal]));
-    expectFeedSignalContract(byType.get('trustquote:job-margin'), ['bidAmount', 'historicalMargin', 'bidStatus', 'customerIdentityKey']);
-    expectFeedSignalContract(byType.get('trustquote:invoice-aging'), ['invoiceAmount', 'dueMs', 'isPendingJob', 'status']);
-    expectFeedSignalContract(byType.get('trustquote:job-tasks-incomplete'), ['taskSummary', 'tasksTotal', 'tasksIncomplete', 'isProposal', 'isPendingJob']);
+    expectFeedSignalContract(byType.get('exampleapp:job-margin'), ['bidAmount', 'historicalMargin', 'bidStatus', 'customerIdentityKey']);
+    expectFeedSignalContract(byType.get('exampleapp:invoice-aging'), ['invoiceAmount', 'dueMs', 'isPendingJob', 'status']);
+    expectFeedSignalContract(byType.get('exampleapp:job-tasks-incomplete'), ['taskSummary', 'tasksTotal', 'tasksIncomplete', 'isProposal', 'isPendingJob']);
     expectFeedSignalContract(byType.get('promise:collision'), ['commitments']);
-    expect(byType.has('trustquote:job-proof-stale')).toBe(false);
-    expect(byType.get('trustquote:job-tasks-incomplete').facts).toEqual(expect.objectContaining({
+    expect(byType.has('exampleapp:job-proof-stale')).toBe(false);
+    expect(byType.get('exampleapp:job-tasks-incomplete').facts).toEqual(expect.objectContaining({
       tasksTotal: 2,
       tasksIncomplete: 1,
     }));
-    expect(byType.get('trustquote:job-tasks-incomplete').facts.taskSummary).toEqual(expect.objectContaining({
+    expect(byType.get('exampleapp:job-tasks-incomplete').facts.taskSummary).toEqual(expect.objectContaining({
       total: 2,
       completed: 1,
       incomplete: 1,
@@ -166,7 +166,7 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
   });
 
   test('Feed contract blocks parked customer facts before the MIND seam', () => {
-    const signals = buildTrustQuoteFactSignalsFromDocs({
+    const signals = buildExampleAppFactSignalsFromDocs({
       nowMs: NOW,
       source: 'live',
       quotes: [{
@@ -176,7 +176,7 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
           invoiceNumber: '109',
           status: 'ready',
           total: 24000,
-          customerId: DEFAULT_PARKED_TRUSTQUOTE_CUSTOMER_IDS[0],
+          customerId: DEFAULT_PARKED_EXAMPLEAPP_CUSTOMER_IDS[0],
           clientInfo: { firstName: 'Charles', lastName: 'Long' },
         },
       }],
@@ -190,7 +190,7 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
       nowMs: NOW,
       source: 'live',
       signals: [liveSignal({
-        type: 'trustquote:invoice-aging',
+        type: 'exampleapp:invoice-aging',
         id: 'jobs:invoice-overdue:invoice-aging',
         facts: {
           invoiceAmount: 36500,
@@ -211,10 +211,10 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
       nowMs: NOW,
       source: 'live',
       signals: [liveSignal({
-        type: 'trustquote:job-margin',
+        type: 'exampleapp:job-margin',
         id: 'quotes:under-margin:job-margin',
         rawRefs: {
-          system: 'trustquote',
+          system: 'exampleapp',
           collection: 'quotes',
           docId: 'under-margin',
           businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
@@ -239,14 +239,14 @@ describe('The Tell Feed->MIND->BODY seam contract', () => {
         id: 'calendar-events:schedule-overlap:promise-collision',
         context: 'promise:collision:schedule',
         rawRefs: {
-          system: 'trustquote',
+          system: 'exampleapp',
           collection: 'calendar-events',
           docId: 'schedule-overlap',
           businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
         },
         facts: {
           commitments: [{
-            who: 'Deepika',
+            who: 'Customer A',
             what: 'Water leak',
             startMs: NOW + 90 * 60000,
             endMs: NOW + 150 * 60000,

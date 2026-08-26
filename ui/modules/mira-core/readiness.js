@@ -157,7 +157,7 @@ const DEFAULT_PHASE_INVENTORY = Object.freeze([
     fixture_path: 'ui/__tests__/fixtures/mira-core-profile-contract.json',
     status: 'local_read_only_runtime_present',
     boundary_mode: 'read_only_profile_projection_pending_proposals',
-    real_now: 'local self-profile and James-profile read-only projection plus pending proposals, with no durable profile rewrite',
+    real_now: 'local self-profile and Operator-profile read-only projection plus pending proposals, with no durable profile rewrite',
     validation_only: false,
     proposal_only: true,
     capability_level: 'tier0_read_only',
@@ -759,7 +759,7 @@ function blockerSummary(inputSignals = {}) {
       severity: 'high',
       summary: 'Durable memory/profile commits remain blocked until review gates and eval coverage are promoted beyond proposal records.',
       blocked_capability: 'durable_memory_profile_commit',
-      unblocks_when: 'James/Architect review, proposal validation, rollback, and eval gates are satisfied for a write path.',
+      unblocks_when: 'Operator/Architect review, proposal validation, rollback, and eval gates are satisfied for a write path.',
     },
     {
       blocker_id: DEFAULT_BLOCKER_IDS[2],

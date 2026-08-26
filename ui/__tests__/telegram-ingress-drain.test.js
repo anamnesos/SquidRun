@@ -18,7 +18,7 @@ function record(updateId, overrides = {}) {
   return {
     updateId,
     text: `message-${updateId}`,
-    from: 'James',
+    from: 'Operator',
     chatId: `chat-${updateId}`,
     targetSession: `source-session-${updateId}`,
     media: null,
@@ -94,7 +94,7 @@ describe('Telegram ingress drain: the current no-hold contract', () => {
     expect(h.deliver.mock.calls[0][0]).toEqual(expect.objectContaining({
       messageId: 'telegram-in-1',
       text: 'message-1',
-      from: 'James',
+      from: 'Operator',
       chatId: 'chat-1',
       routeKey: 'main',
       windowKey: 'main',

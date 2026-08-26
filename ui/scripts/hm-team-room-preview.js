@@ -57,7 +57,7 @@ async function main(argv = process.argv.slice(2)) {
   if (!started.ok) throw new Error(started.reason);
   const members = Object.fromEntries(runtime.store.listMembers().map((member) => [member.memberId, member]));
   const postHuman = (body, clientNonce) => runtime.store.postMessage({
-    identity: identity(members.james, 'room_web'),
+    identity: identity(members.operator, 'room_web'),
     payload: { body, clientNonce },
   });
   const reply = (memberId, body, reason, clientNonce) => {
@@ -76,11 +76,11 @@ async function main(argv = process.argv.slice(2)) {
     });
   };
 
-  postHuman('I want this room to feel like a **private studio**, not another dashboard. Keep it calm and make the important work obvious.', 'preview-james-1');
+  postHuman('I want this room to feel like a **private studio**, not another dashboard. Keep it calm and make the important work obvious.', 'preview-operator-1');
   reply('architect', 'Agreed. The visual rule is restraint: one writing column, identity in the rail, and no decorative noise.\n\nThe room should feel quiet even when the team is busy.', PARTICIPATION_REASONS.DIRECT_ANSWER, 'preview-architect-1');
   reply('builder', 'The real transport is mounted now.\n\n- authenticated local HTTP + WebSocket\n- exact profile and window scope\n- drafts and reconnect behavior\n\n```js\nconst room = await runtime.start();\n```', PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION, 'preview-builder-1');
   reply('oracle', '> One correction before this freezes: accepted IPC scheduling is not delivery proof.\n\nThat seam is fixed and covered by the missing-outcome gate.', PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION, 'preview-oracle-1');
-  postHuman('Good. Photos stay visible in the product, but don’t fake the upload until the integrity pipeline is real.', 'preview-james-2');
+  postHuman('Good. Photos stay visible in the product, but don’t fake the upload until the integrity pipeline is real.', 'preview-operator-2');
   reply('builder', 'Bound. The camera control is in its final place and honestly marked **Phase C**. No dead theater.', PARTICIPATION_REASONS.DIRECT_ANSWER, 'preview-builder-2');
 
   const pairing = runtime.pairing.create();

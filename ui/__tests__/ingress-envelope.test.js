@@ -47,7 +47,7 @@ describe('ingress-envelope', () => {
 
   test('normalizes telegram customer work as approval required', () => {
     const envelope = normalizeTelegramIngress({
-      message: 'send the invoice to Phil',
+      message: 'send the invoice to Customer',
       profileName: 'main',
       windowKey: 'main',
       chatId: '123',

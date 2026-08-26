@@ -81,7 +81,7 @@ describe('team-room contracts', () => {
   test('keeps room names presentational while role identities stay immutable', () => {
     expect(DEFAULT_ROOM_MEMBERS.map(({ memberId, displayName, role }) => ({ memberId, displayName, role })))
       .toEqual([
-        { memberId: 'james', displayName: 'James', role: 'james' },
+        { memberId: 'operator', displayName: 'You', role: 'operator' },
         { memberId: 'architect', displayName: 'Mira', role: 'architect' },
         { memberId: 'builder', displayName: 'Rook', role: 'builder' },
         { memberId: 'oracle', displayName: 'Vera', role: 'oracle' },
@@ -102,7 +102,7 @@ describe('team-room contracts', () => {
   });
 
   test.each([
-    [PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION, NOTIFICATION_CLASSES.NEEDS_JAMES],
+    [PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION, NOTIFICATION_CLASSES.NEEDS_OPERATOR],
     [PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION, NOTIFICATION_CLASSES.FAILURE],
     [PARTICIPATION_REASONS.REAL_QUESTION, NOTIFICATION_CLASSES.QUESTION],
   ])('requires explicit attention class %s/%s for badge and push', (participationReason, notificationClass) => {
@@ -111,7 +111,7 @@ describe('team-room contracts', () => {
       author: { memberId: 'builder', memberKind: 'agent' },
       participationReason,
       metadata: { notificationClass },
-    }, { memberId: 'james' })).toEqual({
+    }, { memberId: 'operator' })).toEqual({
       level: 'ping',
       shouldBadge: true,
       shouldNotify: true,
@@ -130,7 +130,7 @@ describe('team-room contracts', () => {
       authorId: 'oracle',
       author: { memberId: 'oracle', memberKind: 'agent' },
       participationReason,
-    }, { memberId: 'james' })).toEqual({
+    }, { memberId: 'operator' })).toEqual({
       level: 'quiet',
       shouldBadge: false,
       shouldNotify: false,
@@ -143,7 +143,7 @@ describe('team-room contracts', () => {
       authorId: 'builder',
       author: { memberId: 'builder', memberKind: 'agent' },
       participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
-    }, { memberId: 'james' })).toEqual({
+    }, { memberId: 'operator' })).toEqual({
       level: 'quiet',
       shouldBadge: false,
       shouldNotify: false,
@@ -153,13 +153,13 @@ describe('team-room contracts', () => {
 
   test('validates notification class against reason and forbids human-triggered buzzes', () => {
     expect(normalizeClientPost({
-      body: 'James needs to choose.',
+      body: 'Operator needs to choose.',
       clientNonce: 'notify-ok',
       participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
-      notificationClass: NOTIFICATION_CLASSES.NEEDS_JAMES,
+      notificationClass: NOTIFICATION_CLASSES.NEEDS_OPERATOR,
     }, builderIdentity)).toEqual(expect.objectContaining({
       ok: true,
-      post: expect.objectContaining({ metadata: { notificationClass: NOTIFICATION_CLASSES.NEEDS_JAMES } }),
+      post: expect.objectContaining({ metadata: { notificationClass: NOTIFICATION_CLASSES.NEEDS_OPERATOR } }),
     }));
     expect(normalizeClientPost({
       body: 'Mismatched class.',
@@ -173,26 +173,26 @@ describe('team-room contracts', () => {
     expect(normalizeClientPost({
       body: 'Human messages never self-page.',
       clientNonce: 'notify-human',
-      notificationClass: NOTIFICATION_CLASSES.NEEDS_JAMES,
+      notificationClass: NOTIFICATION_CLASSES.NEEDS_OPERATOR,
     }, {
-      memberId: 'james', roomId: 'main', profileName: 'main', memberKind: 'human',
-      role: 'james', source: 'room_web',
+      memberId: 'operator', roomId: 'main', profileName: 'main', memberKind: 'human',
+      role: 'operator', source: 'room_web',
     })).toEqual(expect.objectContaining({ ok: false, reason: 'human_notification_class_forbidden' }));
   });
 
   test('fails quiet for own, human-authored, and incomplete messages', () => {
     expect(classifyRoomMessageAttention({
-      authorId: 'james',
-      author: { memberId: 'james', memberKind: 'human' },
+      authorId: 'operator',
+      author: { memberId: 'operator', memberKind: 'human' },
       participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
-    }, { memberId: 'james' })).toEqual(expect.objectContaining({
+    }, { memberId: 'operator' })).toEqual(expect.objectContaining({
       shouldNotify: false,
       reason: 'own_message',
     }));
 
     expect(classifyRoomMessageAttention({
-      authorId: 'james',
-      author: { memberId: 'james', memberKind: 'human' },
+      authorId: 'operator',
+      author: { memberId: 'operator', memberKind: 'human' },
       participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
     }, { memberId: 'builder' })).toEqual(expect.objectContaining({
       shouldNotify: false,
@@ -202,7 +202,7 @@ describe('team-room contracts', () => {
     expect(classifyRoomMessageAttention({
       authorId: 'builder',
       participationReason: PARTICIPATION_REASONS.REAL_QUESTION,
-    }, { memberId: 'james' })).toEqual(expect.objectContaining({
+    }, { memberId: 'operator' })).toEqual(expect.objectContaining({
       shouldNotify: false,
       reason: 'non_agent_message',
     }));
@@ -422,15 +422,15 @@ describe('team-room contracts', () => {
       participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
       priorPosts: [{
         messageId: 'trm-prior',
-        authorId: 'james',
+        authorId: 'operator',
         participationReason: PARTICIPATION_REASONS.DIRECT_ANSWER,
         body: 'Someone else already said yes.',
       }],
     })).toEqual({ covered: false, reason: 'direct_mention' });
   });
 
-  test('James activates all agents and an agent excludes its author', () => {
-    expect(deriveActivationTargets({ memberId: 'james', roomId: 'main', profileName: 'main' }, DEFAULT_ROOM_MEMBERS))
+  test('Operator activates all agents and an agent excludes its author', () => {
+    expect(deriveActivationTargets({ memberId: 'operator', roomId: 'main', profileName: 'main' }, DEFAULT_ROOM_MEMBERS))
       .toEqual(['architect', 'builder', 'oracle']);
     expect(deriveActivationTargets(builderIdentity, DEFAULT_ROOM_MEMBERS))
       .toEqual(['architect', 'oracle']);
@@ -439,7 +439,7 @@ describe('team-room contracts', () => {
   test('activation prompt carries durable IDs, attachment paths, and the exact choice to reply or stay silent', () => {
     const result = buildActivationPrompt({
       messageId: 'trm-1',
-      authorId: 'james',
+      authorId: 'operator',
       rootMessageId: 'trm-1',
       body: 'Look at this photo.',
       attachments: [{

@@ -36,7 +36,7 @@ describe('normalizeRole — the one true role contract', () => {
   });
 
   test('broader parties are NOT pane roles — normalizeRole refuses them', () => {
-    for (const party of ['user', 'james', 'mira', 'system']) {
+    for (const party of ['user', 'operator', 'mira', 'system']) {
       expect(normalizeRole(party)).toBeNull();
     }
   });
@@ -49,7 +49,7 @@ describe('normalizeRole — the one true role contract', () => {
 describe('normalizeRoleParty — validated where legal, never coerced to a pane', () => {
   test('accepts known roles and the four broader parties', () => {
     expect(normalizeRoleParty('ORACLE')).toBe('oracle');
-    expect(normalizeRoleParty(' james ')).toBe('james');
+    expect(normalizeRoleParty(' operator ')).toBe('operator');
     expect(normalizeRoleParty('system')).toBe('system');
     expect(normalizeRoleParty('mira')).toBe('mira');
     expect(normalizeRoleParty('user')).toBe('user');
@@ -74,9 +74,9 @@ describe('normalizeScopeEnvelope — defaults at ingress only, null over fiction
   });
 
   test('explicit values survive; windowKey follows a custom profile when absent', () => {
-    const out = normalizeScopeEnvelope({ profileName: 'sideprofile', sessionId: 'app-session-500' });
-    expect(out.profileName).toBe('sideprofile');
-    expect(out.windowKey).toBe('sideprofile');
+    const out = normalizeScopeEnvelope({ profileName: 'client', sessionId: 'app-session-500' });
+    expect(out.profileName).toBe('client');
+    expect(out.windowKey).toBe('client');
     expect(out.sessionId).toBe('app-session-500');
     expect(normalizeScopeEnvelope({ windowKey: 'squid-room' }).windowKey).toBe('squid-room');
   });

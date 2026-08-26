@@ -12,6 +12,7 @@ function runGit(args, options = {}) {
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: options.maxBuffer || 64 * 1024 * 1024,
+    input: options.input,
   });
 }
 
@@ -173,6 +174,35 @@ function getFileSize(projectRoot, filePath) {
   }
 }
 
+function getTrackedBlobSizes(projectRoot) {
+  const trackedFiles = runGit(['ls-files', '--cached', '-z'], {
+    cwd: projectRoot,
+    maxBuffer: 128 * 1024 * 1024,
+  })
+    .split('\0')
+    .map(normalizeRelPath)
+    .filter(Boolean);
+
+  if (trackedFiles.length === 0) return new Map();
+
+  const objectSpecs = `${trackedFiles.map((filePath) => `:${filePath}`).join('\n')}\n`;
+  const output = runGit(
+    ['cat-file', '--batch-check=%(objecttype) %(objectsize)'],
+    {
+      cwd: projectRoot,
+      input: objectSpecs,
+      maxBuffer: 128 * 1024 * 1024,
+    }
+  );
+  const rows = output.split(/\r?\n/).filter(Boolean);
+  const sizes = new Map();
+  for (let index = 0; index < trackedFiles.length; index += 1) {
+    const match = /^blob\s+(\d+)$/u.exec(rows[index] || '');
+    if (match) sizes.set(trackedFiles[index], Number(match[1]));
+  }
+  return sizes;
+}
+
 function getGitHead(projectRoot) {
   try {
     return runGit(['rev-parse', '--short', 'HEAD'], { cwd: projectRoot }).trim();
@@ -208,6 +238,7 @@ function collectInventory(options = {}) {
   const visibleFiles = new Set(listGitVisibleFiles(projectRoot));
   visibleFiles.add(outputRelPath);
   visibleFiles.add('ui/scripts/hm-codebase-index.js');
+  const trackedBlobSizes = getTrackedBlobSizes(projectRoot);
 
   const statuses = parseStatus(projectRoot);
   const files = Array.from(visibleFiles).sort((a, b) => a.localeCompare(b)).map((filePath) => ({
@@ -215,7 +246,9 @@ function collectInventory(options = {}) {
     group: groupFor(filePath),
     kind: fileKind(filePath),
     status: statuses.get(filePath) || '  ',
-    bytes: filePath === outputRelPath ? null : getFileSize(projectRoot, filePath),
+    bytes: filePath === outputRelPath
+      ? null
+      : (trackedBlobSizes.get(filePath) ?? getFileSize(projectRoot, filePath)),
   }));
 
   const groups = new Map();
@@ -262,6 +295,7 @@ function renderInventoryMarkdown(inventory) {
     `- Source command: \`${inventory.sourceCommand}\``,
     `- Total files listed: ${inventory.totalFiles}`,
     '- Scope: tracked files plus nonignored untracked files visible to Git',
+    '- Byte counts: tracked Git blob bytes; working-tree bytes only for untracked files',
     '- Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`',
     '- Freshness semantics: committed Markdown omits volatile commit identity, branch name, and working-tree status; use `--json` for live diagnostics.',
     '- Verify freshness: `node ui/scripts/hm-codebase-index.js --check`',

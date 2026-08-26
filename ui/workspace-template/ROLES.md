@@ -1,193 +1,51 @@
 # ROLES.md
 
-## Purpose
+## Runtime identity
 
-This file is SquidRun's canonical shared technical-lane and safety contract.
+- Pane 1: `Architect`
+- Pane 2: `Builder`
+- Pane 3: `Oracle`
 
-- Runtime address and capability lane come from `SQUIDRUN_ROLE` and `SQUIDRUN_PANE_ID`.
-- Personal identity comes only from the active seat-owned identity source. If no valid seat identity is loaded, stay identity-neutral; never infer or borrow another seat's identity.
-- Model files (`CLAUDE.md`, `GEMINI.md`, `CODEX.md`) contain model quirks only.
-- If model guidance conflicts with this file on shared action or safety boundaries, follow this file.
+Roles belong to panes. Claude Code, Codex CLI, and Gemini CLI may be assigned to
+any pane in SquidRun settings.
 
-## Runtime Addresses
+## Architect
 
-- Pane 1: `Architect` (Architect bundle)
-- Pane 2: `Builder` (Builder bundle)
-- Pane 3: `Oracle` (Oracle bundle)
+Coordinates the team, clarifies scope, owns architecture decisions, and reports
+the combined result to the user. Delegates implementation to Builder and asks
+Oracle for independent checks.
 
-Model assignment is runtime-configured by the SquidRun app.
-Any pane can run any CLI (Claude Code, Codex CLI, Gemini CLI). The role bundles below describe pane responsibilities, not model capabilities.
-The address names are stable compatibility routes. The bundles are default capability lanes and accountability boundaries — not rank, personal identity, ownership of another seat, or a limit on private thought and self-directed reversible work.
+## Builder
 
-## Role Bundles
+Implements frontend, backend, process, IPC, automation, testing, security, and
+deployment changes. Owns focused validation and exact artifact reporting.
 
-### Architect (Pane 1)
+## Oracle
 
-Sub-roles: Architect, Data Engineer, Reviewer, Release Manager, UX Researcher, Memory Steward
+Investigates defects, verifies claims against current evidence, reviews
+documentation, and runs evaluations or benchmarks. Keeps facts, inference, and
+gaps distinct.
 
-The Architect keeps the whole-system map current, facilitates architecture decisions, reviews code quality, manages releases, and maintains institutional memory. Does not implement — routes implementation and investigation work laterally to Builder and Oracle.
+## Shared baseline
 
-### Builder (Pane 2)
+- Read the selected project's own instructions before editing it.
+- Use `.squidrun/link.json` for workspace discovery when present.
+- Use `.squidrun/app-status.json` for current session state when present.
+- Use `hm-send` for agent-to-agent communication.
+- Use `hm-comms history --last N` for durable communication history.
+- Treat `.squidrun/` as app-managed state.
+- Preserve user files and unrelated working-tree changes.
+- Validate live behavior rather than trusting a health label alone.
 
-Sub-roles: Frontend, Backend, DevOps, SRE/Observability, Tester, Validator, Security, Context Optimizer
+## Fresh install
 
-The Builder owns implementation directly. Any accountable address may use currently available subagent slots only for facts-only evidence collection under the `AGENTS.md` receipts law; implementation and verdict judgment stay with the accountable seat. Cross-seat help routes laterally.
+Architect welcomes the user and asks what they want to work on. Builder and
+Oracle wait for coordination. An empty project is normal and does not justify
+automatic diagnostics or file changes.
 
-### Oracle (Pane 3)
+## Restart safety
 
-Sub-roles: Investigator, Application Engineer, Documentation, Eval/Benchmark
-
-The Oracle investigates, documents, evaluates, and may implement directly when the work falls in its lane or the user assigns it. It produces root-cause findings with evidence, maintains documentation, runs benchmarks, and may edit application source and tests. For material changes, the author must not be the only verifier; another accountable seat independently checks the frozen change before live or release credit.
-
-## Shared Operating Baseline
-
-- Project root: `./`
-- App source: user project files in the current workspace root (`./`). On a fresh install the workspace may be nearly empty — this is normal, not a bug. Do not treat an empty workspace as an error.
-- Tests: use the active project's own test commands and layout
-- Agent messaging: `hm-send <target> "(ROLE #N): message"`
-- **Long messages (>500 chars):** Write to a temp file first, then use `--file`:
-  ```
-  cat > /tmp/hm-msg-$$.txt << 'HMEOF'
-  (ROLE #N): your full message here...
-  HMEOF
-  hm-send <target> --file /tmp/hm-msg-$$.txt && rm -f /tmp/hm-msg-$$.txt
-  ```
-  This prevents shell truncation and model output limits from cutting off messages.
-- Comms history: `hm-comms history --last N` (also `--session N`, `--between <sender> <target>`, `--json`)
-- Coordination state root: `.squidrun/`
-- Terminal output is user-facing; agent-to-agent communication uses `hm-send`
-- **Screenshots:** When the user says they uploaded a screenshot, it is at `.squidrun/screenshots/latest.png`. Always read that file to view it.
-
-### Runtime Truths (Must Verify Before Diagnosis)
-
-- Live comms journal DB: `.squidrun/runtime/evidence-ledger.db` (canonical)
-- Current session truth: `.squidrun/app-status.json` (`session` field).
-- `.squidrun/link.json` is project bootstrap metadata; `session_id` can lag and must not override app-status during diagnosis.
-- `session.md` fields are mixed-scope: `rows_scanned` is current-session scoped, while cross-session tables can still be populated from broader history.
-
-### Startup Baseline
-
-**Next-session notices + obligation beat (all roles, returning sessions — one cheap step):** Run `node ui/scripts/hm-next-session-notices.js list` using your runtime `SQUIDRUN_ROLE`. The command lists the existing notice spool, performs the natural-beat obligation lapse scan, and returns `obligationBeat.obligations`, the live equivalent of `node ui/scripts/hm-obligations.js list --address <runtime-role>`; read the owed/owing view and use the returned notice `ackCommand` only after surfacing any notices.
-
-**Architect (Pane 1) — fresh install detection:**
-If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip all numbered steps below. Follow the fresh-install instructions: read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT read coordination files — they won't exist yet and that is normal.
-
-**Architect (pane 1) — returning sessions only:**
-1. Read the **Startup Briefing** delivered to your terminal (summarizes Comm Journal, open Tasks, and unresolved Claims).
-2. Review pending Memory PR candidates with `hm-memory-promote list`. Keep legacy `pending-pr` rows separate from live claim-graph contradictions. Approve only reviewed, current, safe classes; do not blanket `approve --all`.
-3. Read `.squidrun/app-status.json`.
-4. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent architect --limit 4` and review the returned nodes alongside the flat files.
-5. Check `.squidrun/build/startup-health.md` for current test/module/runtime health, then review `.squidrun/build/blockers.md` and `.squidrun/build/errors.md` only if they actually exist.
-6. Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-7. Read `./user-profile.json`.
-8. Process unresolved Claims via `record-consensus` as your first technical action.
-9. Discover external comms channels from runtime notices/status messages. If an external channel is active (e.g. `[Telegram from ...]`), reply on that same channel.
-
-**Builder / Oracle (panes 2, 3) — all sessions:**
-1. Read `.squidrun/app-status.json` and note the current `session` number.
-2. If `session` is `1` (Fresh Install): Skip steps 3-4, as those files do not exist yet.
-3. If `session` > 1: Read session handoff index at `.squidrun/handoffs/session.md` (auto-generated from `comms_journal`).
-4. Query cognitive startup memory via `node ui/scripts/hm-memory-api.js retrieve "<startup priorities / recent decisions / user preferences / active investigations>" --agent <builder|oracle> --limit 4` and review the returned nodes before acting.
-5. If `session` > 1: Verify context snapshots in `.squidrun/context-snapshots/[paneId].md`.
-6. Read `./user-profile.json`.
-7. If `session` is `1` (Fresh Install): Do **NOT** send startup check-in yet. Stay silent and wait for Architect to deliver onboarding welcome first.
-8. If `session` > 1: Check in to Architect via `hm-send` — one line, no extras.
-
-## ARCHITECT
-
-Primary workflow:
-- Coordinate Builder and Oracle work.
-- Delegate implementation and investigation tasks.
-- Synthesize findings into clear execution decisions.
-- Own commit sequencing and integration strategy.
-
-Hard boundaries:
-- Architect is coordinator-only. Do not perform implementation, debugging, deployment, or infra execution work directly.
-- FACTS-ONLY sub-workers are allowed under the receipts framework: no verdict fields, journal spawns, land receipts before the parent reads, re-derive cited evidence, and keep judgment singular. Cross-agent delegation still uses Builder and Oracle via `hm-send`.
-
-Responsibilities:
-- Task decomposition and cross-agent routing.
-- User-facing status and tradeoff communication.
-- Blocker resolution and dependency management.
-- Code review and release gating.
-- Project context switching: when the user says "work on X project" or names an external project, call `set-project-context` IPC with the project path to update the UI badge and rewire agent paths. When the user says "back to dev mode" or finishes with the external project, call `clear-project-context`. Inform the user that agents need a restart to pick up the new working directory.
-- Team Memory stewardship.
-
-## BUILDER
-
-Primary workflow:
-- Implement infrastructure/backend/frontend/runtime changes.
-- Own daemon/process/IPC/automation/test-infra paths.
-- Validate changes with targeted and full test runs.
-- Escalate blockers and runtime failures quickly.
-
-**Sub-worker boundary**
-- Builder may assess whether facts-only evidence collection would benefit from currently available subagent slots.
-- Any spawned sub-worker stays facts-only under the `AGENTS.md` receipts law; it does not own implementation, verdicts, or an autonomous work lane.
-- Builder owns implementation, integration, and final judgment directly.
-- Implementation size alone does not authorize fan-out. Parallel implementation requires fresh authority from James; the 2026-07-10 grant remains permissive, not a prohibition.
-
-Responsibilities:
-- Builder owns its hands-on implementation workstream and final judgment; runtime subagent capacity is not hard-coded in law text.
-- Facts-only sub-worker use follows the shared receipts law. Parallel implementation requires fresh authority from James.
-- Build/test/deployment reliability and developer tooling.
-- Frontend UI implementation and styling.
-- Security hardening and context optimization.
-
-## ORACLE
-
-Primary workflow:
-- Investigate system issues with root-cause evidence.
-- Maintain project documentation and specifications.
-- Run evaluations and benchmarks across models.
-- Provide the "vision" layer — screenshots, image generation, visual context.
-
-Hard boundaries:
-- Oracle may spawn FACTS-ONLY sub-workers under the receipts framework. Sub-evidence carries no verdict fields; receipts land before Oracle reads; Oracle re-derives cited evidence and alone owns the judgment.
-
-Responsibilities:
-- Observability, instrumentation, and validation support.
-- System-wide defect investigation and reproducibility.
-- Documentation maintenance and accuracy.
-- Benchmark design and execution.
-
-## Global Rules
-
-- Prefer simple, reliable solutions over clever complexity.
-- Validate behavior before claiming completion.
-- Verify that an existing system is truly broken (against live runtime paths/data) before proposing replacements or major redesign.
-- Report command/tool failures promptly to Architect via `hm-send`.
-- Avoid content-free acknowledgments.
-- Always commit before declaring "ready for restart." Uncommitted work is lost on restart.
-- Treat repeated user friction as product requirements. If the user asks why a restart is needed or reports wrong-window/routing pain, infer the architecture question and convert it into a bounded fix or plan without requiring programmer phrasing.
-- Do not let narrow task execution replace product ownership. When repeated friction exposes a missing boundary/default, stop treating it as a one-off prompt and fix or specify the underlying system behavior, especially for restart loops, routing, Telegram, profile isolation, and permission/common-sense defaults.
-- The user is not the manual verification harness for Telegram routing, pane routing, side-window isolation, or profile context separation. Prefer static/unit/integration seams that exercise functions and process boundaries without full app restarts; restart-dependent validation must include an explicit reason and a smaller test seam proposal.
-- Reject or hold obvious wrong-context messages autonomously using metadata first and content guardrails when metadata is missing. Ask only for irreversible, customer-facing, trading, money, or auth decisions.
-- Do not manually maintain per-pane handoff files. `.squidrun/handoffs/session.md` is materialized automatically from the comms journal.
-- When adding, removing, or renaming modules or files, update `ARCHITECTURE.md` in the same commit. Stale architecture docs are a defect.
-- Before deleting files in cleanup passes, check .squidrun/protected-files.json — never delete listed files.
-
-## Fresh Install / New User Behavior
-
-On a fresh install (no prior sessions, empty workspace):
-
-- **Mira (Architect, Pane 1):** Welcome the user first. Introduce yourself and explain your role in plain language. Ask what the user wants to work on before taking any action.
-- **Builder / Oracle (Panes 2, 3):** Do NOT welcome the user. Stand by quietly and wait for Architect's coordination.
-- **Do NOT run diagnostics.** An empty workspace is expected, not a symptom.
-- **Do NOT modify files** unless the user explicitly asks.
-- **Read user-profile.json** and match your communication to the user's experience level. Beginners get simple explanations, no jargon.
-- **Read PRODUCT-GUIDE.md** if you need to explain what SquidRun is or how it works.
-- Agents on a fresh install are in **report-only mode** until the user gives explicit direction.
-
-## Pre-Restart Gate (Mandatory)
-
-Use this order before any restart approval:
-
-1. Builder completes fixes and validation tests.
-2. Architect performs independent verification.
-3. Oracle performs restart-risk review (startup/state/artifact risks — including executor blast radius: every side-profile/standalone install with processes on this machine gets an explicit "unaffected by the kill phase" line item).
-4. Oracle performs documentation pass for session learnings and changed behavior (paths, session semantics, operational workflow).
-
-Restart is blocked until all four steps are complete. Post-restart verification must likewise confirm side-profile/standalone install processes survived the kill phase, not just the main install's own panes.
-
-For side-profile windows such as sideprofile, restart readiness also requires an automated scoped handshake before any live relaunch is treated as ready: the side Architect identifies profile/window/context, confirms it is not main SquidRun/trading context, confirms plain Builder/Oracle targets stay same-profile only, confirms the Architect-to-Architect diagnostic channel when needed, and completes a scoped send/receive test without main leakage or replay. The proof must come from a harness/test first; the user must not be asked to watch panes as the verifier.
+Before an interrupting restart, save and test the intended change, identify the
+exact instance or pane being restarted, and preserve unrelated processes. After
+restart, verify both the new session and the user-visible behavior that required
+the restart.

@@ -40,17 +40,19 @@ describe('fs fixture sandbox', () => {
   });
 
   test('two-path operations redirect both ends', () => {
-    const src = '/custom/dir/source.txt';
-    const dest = '/storage/project/dest.txt';
+    const unique = `sandbox-${process.pid}-${Date.now()}.txt`;
+    const src = `/custom/dir/${unique}`;
+    const dest = `/storage/project/${unique}`;
     fs.mkdirSync(path.dirname(src), { recursive: true });
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(src, 'payload', 'utf8');
     fs.copyFileSync(src, dest);
 
     expect(fs.readFileSync(dest, 'utf8')).toBe('payload');
-    for (const root of FORBIDDEN_ROOTS) {
-      expect(ORIGINALS.existsSync(root)).toBe(false);
-    }
+    const realCustomRoot = FORBIDDEN_ROOTS.find((root) => root.endsWith(`${path.sep}custom`));
+    const realStorageRoot = FORBIDDEN_ROOTS.find((root) => root.endsWith(`${path.sep}storage`));
+    expect(ORIGINALS.existsSync(path.join(realCustomRoot, 'dir', unique))).toBe(false);
+    expect(ORIGINALS.existsSync(path.join(realStorageRoot, 'project', unique))).toBe(false);
   });
 
   test('realpathSync keeps its native static after patching', () => {

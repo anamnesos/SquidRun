@@ -413,7 +413,7 @@ describe('mira presence runtime state v0', () => {
     expect(proof.checks.every((check) => check.ok === true)).toBe(true);
     expect(proof.durable_load).toEqual({
       own_state_loaded: true,
-      james_context_loaded: true,
+      operator_context_loaded: true,
       permissions_loaded: true,
       presence_state_loaded: true,
       redacted_growth_sources_loaded: true,
@@ -423,9 +423,9 @@ describe('mira presence runtime state v0', () => {
         name: 'Mira',
         fake_internal_state_claims_blocked: true,
       }),
-      james_context: expect.objectContaining({
-        user_name: 'James',
-        knows_about_james_loaded: true,
+      operator_context: expect.objectContaining({
+        user_name: 'Operator',
+        knows_about_operator_loaded: true,
       }),
       permissions: expect.objectContaining({
         read_local_redacted_context: true,
@@ -672,7 +672,7 @@ describe('mira presence runtime state v0', () => {
 
   test('visible-leakage gate rejects accepted_critique / proof_test_state strings in any visible reply', () => {
     const state = fullState();
-    expect(findVisibleLeakageViolations(state, 'hi James, just checking in')).toEqual([]);
+    expect(findVisibleLeakageViolations(state, 'hi Operator, just checking in')).toEqual([]);
     const leaked = `${state.accepted_critique} (visible)`;
     const violations = findVisibleLeakageViolations(state, leaked);
     expect(violations.length).toBeGreaterThan(0);

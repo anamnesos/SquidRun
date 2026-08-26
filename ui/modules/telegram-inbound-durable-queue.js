@@ -259,8 +259,8 @@ function attemptsPath(dir) {
  * else, which made one question unanswerable: *when* was this attempted, and by
  * which process?
  *
- * That gap is why update 808499316 could not be resolved. Proof for it existed
- * — James was answered — but "is this receipt NEWER than the attempt it claims
+ * That gap is why update 700100102 could not be resolved. Proof for it existed
+ * — Operator was answered — but "is this receipt NEWER than the attempt it claims
  * to prove?" had no attempt timestamp to compare against, so the only honest
  * answer was the one that wedged the channel for eight hours.
  *
@@ -345,7 +345,7 @@ function readAttemptRecords(dir) {
     }
     // A malformed provenance field is NOT downgraded to "absent". Absent means
     // an older writer; malformed means the record is not what it claims to be,
-    // and guessing which is a decision about showing James a message twice.
+    // and guessing which is a decision about showing Operator a message twice.
     records.set(id, {
       state: entry.state,
       atMs: normalizeAttemptAtMs(entry.atMs),
@@ -407,7 +407,7 @@ function appendAttempt(dir, updateId, entryState, provenance = {}) {
 // id, both deliberately — that is what makes replay idempotent. The consequence
 // is that a queued record can never be superseded by appending a corrected copy.
 //
-// Update 808499316 needs exactly that: it WAS consumed and answered (Telegram
+// Update 700100102 needs exactly that: it WAS consumed and answered (Telegram
 // 22314 / ledger 78453), so re-delivering it would duplicate real business work,
 // but nothing in the automatic path can prove it after the fact because its
 // attempt predates attempt timestamps. It must be retired without delivery.

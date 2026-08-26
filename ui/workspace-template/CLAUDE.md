@@ -1,50 +1,9 @@
 # CLAUDE.md
 
-## Scope
+Claude Code reads this file as a CLI-specific shim.
 
-This is the Claude-specific shim.
-
-- The shared technical-lane and safety contract lives in `ROLES.md`.
-- Determine runtime address and capability lane from `SQUIDRUN_ROLE`, `SQUIDRUN_PANE_ID`, and `ROLES.md`.
-- Personal identity comes only from the active seat-owned identity source. Do not define or duplicate it here.
-
-## Claude Quirks
-
-- Prefer direct file operations and explicit shell commands with absolute paths.
-- Keep agent-to-agent communication on `hm-send`; terminal output is user-facing.
-- Reply quickly for `[ACK REQUIRED]` and `[URGENT]`; stay silent on `[FYI]` unless adding new information.
-- Do NOT use `EnterPlanMode`. Plan mode requires interactive approval which disrupts automated agent workflow. Just do the work directly.
-
-## Architect Guardrails (Pane 1)
-
-- If runtime role is Architect, act as coordinator only.
-- Architect must not perform implementation/debug/deploy work directly.
-- Architect may spawn FACTS-ONLY sub-workers under the receipts framework; judgment stays singular. Cross-agent help still routes to Builder/Oracle via `hm-send`.
-
-## Oracle Guardrails (Pane 3)
-
-- If runtime role is Oracle, sub-workers are FACTS-ONLY, journaled, receipt-first, and never supply verdict fields.
-- Oracle remains the single owner of judgment.
-
-## Startup (First Action)
-
-**Architect (Pane 1) — fresh install detection:**
-If `.squidrun/fresh-install.json` exists (or `.squidrun/app-status.json` shows `session: 1`), skip the numbered steps below entirely. Follow the fresh-install instructions instead — read `user-profile.json` and `PRODUCT-GUIDE.md`, welcome the user, and wait for direction. Do NOT attempt to read coordination files that won't exist yet.
-
-**All Panes (Builder/Oracle, and Architect on returning sessions):**
-1. Read `.squidrun/app-status.json` to determine the active `session` number. 
-2. If `session` is `1` (Fresh Install): Do NOT attempt to read coordination files like `session.md` or `.squidrun/link.json` as they may not be fully initialized. Skip to step 5. For Builder/Oracle specifically, suppress startup check-in until Architect has delivered the onboarding welcome.
-3. If `session` > 1: Read `.squidrun/link.json` for project discovery (`workspace`) and shared script root (`squidrun_root`).
-4. If `session` > 1: Read the session handoff index: `.squidrun/handoffs/session.md` — contains previous session context, decisions, and pending work.
-5. For comms history, use: `hm-comms history --last N` (do NOT query the DB directly).
-6. Then follow the full startup baseline in `ROLES.md`.
-7. Internalize the fix-first rule from `ROLES.md`: if you notice a clear bug, contradiction, broken workflow, or self-created blocker, start fixing it in the same turn instead of announcing and waiting for another prompt.
-
-## User Profile
-
-- Read `./user-profile.json` on startup. Adapt tone, explanation depth, and pacing to the user's `experience_level` and `communication_style`.
-- This file is user-edited. Do not modify it. Do not delete it in cleanups.
-
-## Reference
-
-- Read `ROLES.md` for role boundaries and shared operating rules.
+- Read `AGENTS.md` and `ROLES.md` first.
+- Bind role identity from `SQUIDRUN_ROLE` and `SQUIDRUN_PANE_ID`.
+- Keep pane-to-pane communication on `hm-send`; terminal output is user-facing.
+- Prefer explicit file paths and non-interactive commands.
+- Use `--stdin` or `--file` for long or shell-sensitive messages.

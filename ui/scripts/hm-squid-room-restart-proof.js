@@ -25,12 +25,12 @@ const DEFAULT_PROOF_PATH = resolveCoordPath('runtime/squid-room-restart-survival
 const DEFAULT_STREAMING_FIT_PROOF_PATH = resolveCoordPath('runtime/squid-room-streaming-fit-proof.json', { forWrite: true });
 
 const REQUIRED_MAIN_PANES = ['1', '2', '3'];
-const TRUSTQUOTE_CWD = 'D:/projects/TrustQuote';
+const EXAMPLEAPP_CWD = 'D:/projects/ExampleApp';
 const REQUIRED_ARMS = [
-  { paneId: 'trustquote-lead', role: 'trustquote-lead', cwd: TRUSTQUOTE_CWD },
-  { paneId: 'trustquote-schedule-dispatch', role: 'trustquote-schedule-dispatch', cwd: TRUSTQUOTE_CWD },
-  { paneId: 'trustquote-app', role: 'trustquote-app', cwd: TRUSTQUOTE_CWD },
-  { paneId: 'trustquote-invoice', role: 'trustquote-invoice', cwd: TRUSTQUOTE_CWD },
+  { paneId: 'exampleapp-lead', role: 'exampleapp-lead', cwd: EXAMPLEAPP_CWD },
+  { paneId: 'exampleapp-schedule-dispatch', role: 'exampleapp-schedule-dispatch', cwd: EXAMPLEAPP_CWD },
+  { paneId: 'exampleapp-app', role: 'exampleapp-app', cwd: EXAMPLEAPP_CWD },
+  { paneId: 'exampleapp-invoice', role: 'exampleapp-invoice', cwd: EXAMPLEAPP_CWD },
 ];
 const REQUIRED_PANES = [...REQUIRED_MAIN_PANES, ...REQUIRED_ARMS.map((arm) => arm.paneId)];
 
@@ -208,7 +208,7 @@ function getExpectedWindowScopes(appStatus) {
 
 function getArmProjectionSession(appStatus) {
   const session = Number(appStatus?.session || 0);
-  return session ? `app-session-${session}:trustquote` : null;
+  return session ? `app-session-${session}:exampleapp` : null;
 }
 
 function getReadyPanes(appStatus) {
@@ -616,7 +616,7 @@ function getArmProjection(appStatus, override) {
     console.info = () => {};
     console.warn = () => {};
     return buildArmStateProjection({
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       sessionId,
     });
   } catch (error) {
@@ -840,7 +840,7 @@ function verifyReadyPanes(evidence) {
       paneHost,
     });
   }
-  return check('PASS', 'pane_host_ready_panes', 'Pane host reports all main panes and TrustQuote arms ready.', {
+  return check('PASS', 'pane_host_ready_panes', 'Pane host reports all main panes and ExampleApp arms ready.', {
     readyPanes: [...readyPanes],
     paneHost: {
       degraded: Boolean(paneHost.degraded),
@@ -892,7 +892,7 @@ function verifyTerminalBodies(evidence) {
     });
   }
 
-  return check('PASS', 'terminal_bodies_live', 'Builder, Oracle, and TrustQuote arm bodies have live renderable terminal state.', {
+  return check('PASS', 'terminal_bodies_live', 'Builder, Oracle, and ExampleApp arm bodies have live renderable terminal state.', {
     summaries: Object.fromEntries([...['2', '3'], ...REQUIRED_ARMS.map((arm) => arm.paneId)].map((paneId) => [
       paneId,
       {
@@ -914,14 +914,14 @@ function verifyArmManifest(evidence) {
   const missing = REQUIRED_ARMS.map((arm) => arm.paneId).filter((paneId) => !registeredPaneIds.has(paneId));
 
   if (projection.ok === false && !registryArms.length) {
-    return check('FAIL', 'trustquote_arm_registry_manifest', 'TrustQuote arm projection could not be loaded.', {
+    return check('FAIL', 'exampleapp_arm_registry_manifest', 'ExampleApp arm projection could not be loaded.', {
       status: projection.status || null,
       error: projection.error || null,
     });
   }
 
   if (missing.length) {
-    return check('FAIL', 'trustquote_arm_registry_manifest', 'TrustQuote arm registry is missing required arms.', {
+    return check('FAIL', 'exampleapp_arm_registry_manifest', 'ExampleApp arm registry is missing required arms.', {
       missing,
       desiredCount: projection.desiredCount || null,
       readyCount: projection.readyCount || null,
@@ -929,7 +929,7 @@ function verifyArmManifest(evidence) {
     });
   }
 
-  return check('PASS', 'trustquote_arm_registry_manifest', 'TrustQuote arm registry contains the four required arms.', {
+  return check('PASS', 'exampleapp_arm_registry_manifest', 'ExampleApp arm registry contains the four required arms.', {
     desiredCount: projection.desiredCount || registryArms.length,
     readyCount: projection.readyCount || 0,
     status: projection.status || null,
@@ -967,7 +967,7 @@ function verifyArmReceipts(evidence) {
   }
 
   if (missing.length || mismatches.length) {
-    return check('FAIL', 'trustquote_arm_startup_receipts', 'TrustQuote arm startup receipts are missing or role/env/cwd mismatched.', {
+    return check('FAIL', 'exampleapp_arm_startup_receipts', 'ExampleApp arm startup receipts are missing or role/env/cwd mismatched.', {
       expectedScope,
       missing,
       mismatches,
@@ -975,7 +975,7 @@ function verifyArmReceipts(evidence) {
     });
   }
 
-  return check('PASS', 'trustquote_arm_startup_receipts', 'All four TrustQuote arms emitted role-bound startup receipts for this Squid Room session.', {
+  return check('PASS', 'exampleapp_arm_startup_receipts', 'All four ExampleApp arms emitted role-bound startup receipts for this Squid Room session.', {
     expectedScope,
     receipts,
   });
@@ -1057,7 +1057,7 @@ function verifyEventRates(evidence, options = {}) {
     });
   }
 
-  return check('PASS', 'steady_state_event_rates', 'Trailing resize rate is steady for main panes and TrustQuote arms.', {
+  return check('PASS', 'steady_state_event_rates', 'Trailing resize rate is steady for main panes and ExampleApp arms.', {
     eventWindowSec,
     limitPerSec: RESIZE_STEADY_STATE_LIMIT_PER_SEC,
     panes: Object.fromEntries(REQUIRED_PANES.map((paneId) => [

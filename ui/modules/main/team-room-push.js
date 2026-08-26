@@ -285,10 +285,10 @@ class TeamRoomPushManager {
     this._requireReady();
     const notificationClass = normalizeRoomNotificationClass(message.metadata?.notificationClass);
     if (!notificationClass) return { ok: true, sent: 0, reason: 'notification_not_requested' };
-    if (message.author?.memberKind !== 'agent' || message.authorId === 'james') {
+    if (message.author?.memberKind !== 'agent' || message.authorId === 'operator') {
       return { ok: true, sent: 0, reason: 'notification_author_ineligible' };
     }
-    if (this.isViewerPresent('james')) {
+    if (this.isViewerPresent('operator')) {
       return { ok: true, sent: 0, reason: 'viewer_present' };
     }
     let changed = this._pruneInactive();

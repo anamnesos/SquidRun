@@ -2,17 +2,15 @@
 
 /**
  * PARITY LAW (tell-sensors-v2): ui/modules/the-tell/normalize-job-type.js is
- * a MECHANICAL PORT of TrustQuote's lib/services/pricing/normalizeJobType.ts
- * (the wedge normalizer — source of truth). This contract regenerates the
- * port from the CURRENT TS source and diffs it against the committed file:
- * any drift (someone edited the TS or hand-edited the port) is a red suite.
- * Regenerate with the same transform below, never by hand.
+ * an upstream TypeScript normalizer. A clean public checkout has no sibling
+ * application source, so cross-repository parity is opt-in through
+ * SQUIDRUN_JOB_TYPE_NORMALIZER_SOURCE. Local behavior fixtures always run.
  */
 
 const fs = require('fs');
 const path = require('path');
 
-const TS_PATH = 'D:/projects/TrustQuote/lib/services/pricing/normalizeJobType.ts';
+const TS_PATH = process.env.SQUIDRUN_JOB_TYPE_NORMALIZER_SOURCE || '';
 const PORT_PATH = path.join(__dirname, '..', 'modules', 'the-tell', 'normalize-job-type.js');
 
 function transformTsToJs(ts) {
@@ -28,7 +26,7 @@ function transformTsToJs(ts) {
 }
 
 const tsAvailable = fs.existsSync(TS_PATH);
-(tsAvailable ? describe : describe.skip)('the-tell normalizer parity with the wedge (source of truth)', () => {
+(tsAvailable ? describe : describe.skip)('the-tell optional upstream normalizer parity', () => {
   test('the committed port is byte-identical to a fresh transform of the TS source', () => {
     const freshBody = transformTsToJs(fs.readFileSync(TS_PATH, 'utf8'));
     const committed = fs.readFileSync(PORT_PATH, 'utf8');
@@ -36,7 +34,10 @@ const tsAvailable = fs.existsSync(TS_PATH);
     expect(committed).toContain(freshBody.trim());
   });
 
-  test('port groups the real live-draft types like the wedge family model', () => {
+});
+
+describe('the-tell local normalizer behavior', () => {
+  test('groups representative job types consistently', () => {
     const { normalizeJobType } = require('../modules/the-tell/normalize-job-type');
     // real values from the S467 live probe (10 perpetual drafts)
     expect(normalizeJobType('Whole Home Water Repipe (2 Bath)')).toBe('repipe');

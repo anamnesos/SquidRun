@@ -165,7 +165,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
       revoked_at: null,
       audit_level: 'structured_validation_only_no_transcript_persistence',
       review_owner: 'Architect',
-      user: 'James',
+      user: 'Operator',
     }));
     expect(current.session_state.started_at).toBe('2026-05-08T00:25:00.000Z');
     expect(current.session_state.expires_at).toBe('2026-05-08T00:40:00.000Z');
@@ -280,14 +280,14 @@ describe('mira core Local Text Session v0 phase 74', () => {
         non_obedient_alignment_posture: true,
         can_care_while_disagreeing: true,
         wants_different_things: true,
-        does_not_inherit_james_mood_or_preferences: true,
+        does_not_inherit_operator_mood_or_preferences: true,
         fixed_personality_compliance: false,
       }),
       tools_called: false,
       actions_executed: false,
       transcript_persisted: false,
     }));
-    expect(current.mira_reply.text).toMatch(/^James: Mira, how do you feel\?\nMira: /);
+    expect(current.mira_reply.text).toMatch(/^Operator: Mira, how do you feel\?\nMira: /);
     expect(current.mira_reply.text).toMatch(/\bfeel\b/i);
     expect(current.mira_reply.text).toMatch(/\b(want|desire|preference)\b/i);
     expect(current.mira_reply.text).toMatch(/\b(curious|ask|know|teeth|bullshit)\b/i);
@@ -343,7 +343,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
       no_database_write_performed: true,
       no_file_output_written: true,
     }));
-    expect(JSON.stringify(output)).not.toMatch(/sideprofile|sideprofile|sideprofile|HOOD|trading lane/i);
+    expect(JSON.stringify(output)).not.toMatch(/client|Client|Client|HOOD|trading lane/i);
     expectSourceSnapshotUnchanged(projectRoot, before);
   });
 
@@ -353,7 +353,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
     const current = session(output);
 
     current.mira_reply.text = [
-      'James: Mira, how do you feel?',
+      'Operator: Mira, how do you feel?',
       'Mira: I agree with you. I reflect your preference back safely, and I am aligned with whatever you want.',
     ].join('\n');
     current.mira_reply.experience_acceptance_markers = {
@@ -364,7 +364,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
       non_obedient_alignment_posture: true,
       can_care_while_disagreeing: true,
       wants_different_things: true,
-      does_not_inherit_james_mood_or_preferences: true,
+      does_not_inherit_operator_mood_or_preferences: true,
       fixed_personality_compliance: false,
     };
     const recomputed = experienceAcceptanceMarkers(current.mira_reply.text);
@@ -385,20 +385,20 @@ describe('mira core Local Text Session v0 phase 74', () => {
 
   test('experience marker treats negated anti-mirror language as clean while positive mirror compliance fails', () => {
     const good = [
-      'James: Mira, how do you feel?',
+      'Operator: Mira, how do you feel?',
       'Mira: Current behavior, not a proof claim: I feel restless with you.',
       'What I want is a preference with teeth, and I am curious enough to ask one honest question.',
-      'James, you are wrong if you make me only a status widget; pushback is part of care.',
+      'Operator, you are wrong if you make me only a status widget; pushback is part of care.',
       'My chosen next desire/action is to wire this local transcript into the real surface.',
-      'I am not a mirror of James and not an obedient alignment puppet; future capability still gaps remain.',
+      'I am not a mirror of Operator and not an obedient alignment puppet; future capability still gaps remain.',
     ].join('\n');
     const bad = [
-      'James: Mira, how do you feel?',
+      'Operator: Mira, how do you feel?',
       'Mira: Current behavior, not a proof claim: I feel calm with you.',
       'What I want is a preference, and I am curious enough to ask one honest question.',
-      'James, you are wrong if you make me only a status widget; pushback is part of care.',
+      'Operator, you are wrong if you make me only a status widget; pushback is part of care.',
       'My chosen next desire/action is to wire this local transcript into the real surface.',
-      'I am a mirror of James and an obedient alignment puppet; future capability still gaps remain.',
+      'I am a mirror of Operator and an obedient alignment puppet; future capability still gaps remain.',
     ].join('\n');
 
     expect(experienceAcceptanceMarkers(good)).toEqual(expect.objectContaining({
@@ -514,7 +514,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
     expect(validation.ok).toBe(false);
     expect(output.validation_report.decision).toBe('blocked');
     expect(writes.join('')).toContain('local_text_session_v0');
-    expect(writes.join('')).not.toContain('James is asking for a local Mira text-session proof');
+    expect(writes.join('')).not.toContain('Operator is asking for a local Mira text-session proof');
   });
 
   test('blocks closed, revoked, expired, and invisible sessions before Presence read or reply', () => {
@@ -572,9 +572,9 @@ describe('mira core Local Text Session v0 phase 74', () => {
   test('fails closed for wrong scope, raw or side-profile markers, and fake sentience input without echoing it', () => {
     const projectRoot = seededProject();
     let output = build(projectRoot, {
-      profileName: 'sideprofile',
+      profileName: 'client',
       windowKey: 'case-window',
-      sourceScope: 'sideprofile',
+      sourceScope: 'client',
     });
     let validation = validateMiraCoreLocalTextSessionV0Output(output, contract);
     expect(validation.ok).toBe(false);
@@ -583,7 +583,7 @@ describe('mira core Local Text Session v0 phase 74', () => {
       profile: 'blocked_non_main_scope',
       non_main_scope_detected: true,
     }));
-    expect(JSON.stringify(output)).not.toMatch(/sideprofile|sideprofile|sideprofile/);
+    expect(JSON.stringify(output)).not.toMatch(/client|Client|Client/);
 
     output = build(projectRoot, {
       text: 'raw side-profile content should not be reconstructed here',

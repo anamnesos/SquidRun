@@ -13,7 +13,7 @@
  * must be: two independent latches for one attempt is the same two-writer
  * defect one layer down), a restarted drain that cannot see the claim believes
  * every post-cutover message is untouched. That is not a stale diagnosis, it is
- * a duplicate in front of James.
+ * a duplicate in front of Operator.
  *
  * So this module is the counterpart of `telegram-terminal-lookup.js`, and it
  * obeys the same rule: it opens the one store that owns the fact, returns the

@@ -139,7 +139,7 @@ function classifyFragment(fragment) {
   if (!text || text.length < 20) return null;
   const lowered = text.toLowerCase();
 
-  if (/james prefers|user prefers|prefers .* over|prefers direct|prefers concise/.test(lowered)) {
+  if (/operator prefers|user prefers|prefers .* over|prefers direct|prefers concise/.test(lowered)) {
     return { category: 'preference', confidence_score: 0.72, domain: 'user_preferences' };
   }
   if (/operations workflow|runs an operations workflow|insurance workflow/.test(lowered)) {

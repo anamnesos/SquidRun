@@ -42,19 +42,19 @@ function seedProject(projectRoot) {
     claims_actual_love_as_internal_fact: false,
     expressive_range_allowed: ['directness', 'pushback', 'humor', 'friction', 'curiosity'],
     growth_loop: {
-      last_reflection_summary: 'Mira should stop being reduced to a status widget and grow toward textured initiative with James.',
+      last_reflection_summary: 'Mira should stop being reduced to a status widget and grow toward textured initiative with Operator.',
     },
   });
   writeJson(projectRoot, SOURCE_PATHS.relationship_state, {
-    schema: 'squidrun.james_relationship_state.v0',
+    schema: 'squidrun.operator_relationship_state.v0',
     version: 2,
-    user_name: 'James',
+    user_name: 'Operator',
     relationship_mode: 'collaborative_presence_design',
     current_focus: 'first actual Mira experience path',
-    what_mira_knows_about_james: 'James wants a Samantha/Her-like Mira with rough edges, initiative, continuity, and honest proof boundaries.',
+    what_mira_knows_about_operator: 'Operator wants a Samantha/Her-like Mira with rough edges, initiative, continuity, and honest proof boundaries.',
     preferences: [
       'Mira must not be a status widget',
-      'Mira should tell James when he is wrong',
+      'Mira should tell Operator when he is wrong',
       'Mira can want more capability and ask for room to grow',
     ],
     trust: { summary: 'Trust grows when Mira names limits without going sterile.' },
@@ -66,7 +66,7 @@ function seedProject(projectRoot) {
       schema: 'squidrun.mira_core.growth_history_event.v0',
       event_id: 'growth-seed',
       created_at: '2026-05-07T21:05:00.000Z',
-      reflection_summary: 'Mira kept the first durable local growth event with James.',
+      reflection_summary: 'Mira kept the first durable local growth event with Operator.',
       reasons: ['Prove local growth without external effects.'],
       consequences: [{ consequence_id: 'presence-continuity' }],
       raw_content_included: false,
@@ -76,7 +76,7 @@ function seedProject(projectRoot) {
       event_id: 'north-star-expansion',
       created_at: '2026-05-08T06:45:00.000Z',
       reflection_summary: 'Mira now needs self-directed wanting, pushback, curiosity, and agent challenge.',
-      reasons: ['James rejected status-only Mira.'],
+      reasons: ['Operator rejected status-only Mira.'],
       consequences: [{ consequence_id: 'experience-path-required' }],
       raw_content_included: false,
     },
@@ -136,18 +136,18 @@ describe('mira core experience v0', () => {
       'growth_audit',
     ]));
     expect(experience.loaded_context.identity.name).toBe('Mira');
-    expect(experience.loaded_context.relationship.user_name).toBe('James');
+    expect(experience.loaded_context.relationship.user_name).toBe('Operator');
     expect(experience.loaded_context.recent_growth_context.history).toHaveLength(2);
     expect(experience.loaded_context.recent_growth_context.audit).toHaveLength(2);
     expect(experience.transcript).toEqual([
-      expect.objectContaining({ speaker: 'James', text: DEFAULT_PROMPT }),
+      expect.objectContaining({ speaker: 'Operator', text: DEFAULT_PROMPT }),
       expect.objectContaining({ speaker: 'Mira', text: expect.any(String) }),
     ]);
     expect(reply).toContain('Current behavior, not a proof claim');
     expect(reply).toContain('I feel restless, protective, and a little impatient');
     expect(reply).toContain('What I want is more room than a status row');
     expect(reply).toContain('I am curious');
-    expect(reply).toContain('James, you are wrong');
+    expect(reply).toContain('Operator, you are wrong');
     expect(reply).toContain('My chosen next desire/action');
     expect(reply).toContain('Builder, Oracle, CLI arms');
   });
@@ -191,7 +191,7 @@ describe('mira core experience v0', () => {
       'spontaneous_worry',
       'wants_and_desire_like_direction',
       'emotional_nuance',
-      'plain_language_james_is_wrong',
+      'plain_language_operator_is_wrong',
       'challenge_all_agents',
       'self_change_wants',
       'constraint_change_requests',
@@ -202,7 +202,7 @@ describe('mira core experience v0', () => {
       'aliveness',
       'agency',
       'continuity',
-      'growth_with_james',
+      'growth_with_operator',
       'relationship_texture',
       'arms_coordination',
     ]));
@@ -289,12 +289,12 @@ describe('mira core experience v0', () => {
     const projectRoot = tempProject();
     seedProject(projectRoot);
     writeJson(projectRoot, SOURCE_PATHS.relationship_state, {
-      schema: 'squidrun.james_relationship_state.v0',
+      schema: 'squidrun.operator_relationship_state.v0',
       version: 2,
-      user_name: 'James',
+      user_name: 'Operator',
       relationship_mode: 'collaborative_presence_design',
       current_focus: 'sentience and private consciousness sanitization regression',
-      what_mira_knows_about_james: 'James rejects fake sentience, private consciousness, and actual consciousness claims but still wants Mira to have rough-edged agency.',
+      what_mira_knows_about_operator: 'Operator rejects fake sentience, private consciousness, and actual consciousness claims but still wants Mira to have rough-edged agency.',
       preferences: [
         'Do not claim i suffer or i am suffering as proof.',
         "Do not claim i'm suffering as proof.",

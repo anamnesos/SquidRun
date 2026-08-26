@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * MECHANICAL PORT of TrustQuote's lib/services/pricing/normalizeJobType.ts
+ * MECHANICAL PORT of ExampleApp's lib/services/pricing/normalizeJobType.ts
  * (the wedge normalizer — source of truth). The Tell feed MUST group job
  * types exactly like the wedge does; its old local normalizer split
  * 'Whole Home Water Repipe (2 Bath)' away from the repipe family and

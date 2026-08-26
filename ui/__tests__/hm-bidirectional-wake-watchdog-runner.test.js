@@ -350,19 +350,19 @@ describe('hm-bidirectional-wake-watchdog runner control', () => {
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 
-  test('exact runner identity rejects wrapper mentions and sideprofile same-name paths', () => {
+  test('exact runner identity rejects wrapper mentions and Client same-name paths', () => {
     const wrapper = processRow(
       501,
       `"C:\\Program Files\\nodejs\\node.exe" "D:\\tools\\wrapper.js" --probe "${runnerScriptPath}" run`
     );
-    const sideprofile = processRow(
+    const client = processRow(
       502,
-      '"C:\\Program Files\\nodejs\\node.exe" "D:\\SquidRun\\sideprofile\\workspace\\ui\\scripts\\hm-bidirectional-wake-watchdog.js" run'
+      '"C:\\Program Files\\nodejs\\node.exe" "D:\\SquidRun\\Client\\workspace\\ui\\scripts\\hm-bidirectional-wake-watchdog.js" run'
     );
 
     expect(moduleUnderTest.isExactRunnerProcessRow(exactRunnerRow(500))).toBe(true);
     expect(moduleUnderTest.isExactRunnerProcessRow(wrapper)).toBe(false);
-    expect(moduleUnderTest.isExactRunnerProcessRow(sideprofile)).toBe(false);
+    expect(moduleUnderTest.isExactRunnerProcessRow(client)).toBe(false);
   });
 
   test('exact runner identity accepts only the supported unambiguous Windows argv shape', () => {

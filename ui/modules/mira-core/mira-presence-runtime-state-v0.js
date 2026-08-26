@@ -646,10 +646,10 @@ function buildMiraPresenceStartProofHarnessV0(options = {}) {
       && selfProfile.claims_actual_consciousness === false
       && selfProfile.claims_actual_suffering === false
       && selfProfile.claims_actual_fear === false,
-    james_context_loaded: sources.relationship_state?.loaded === true
-      && relationship.user_name === 'James'
-      && typeof relationship.what_mira_knows_about_james === 'string'
-      && relationship.what_mira_knows_about_james.trim().length > 0,
+    operator_context_loaded: sources.relationship_state?.loaded === true
+      && relationship.user_name === 'Operator'
+      && typeof relationship.what_mira_knows_about_operator === 'string'
+      && relationship.what_mira_knows_about_operator.trim().length > 0,
     permissions_loaded: sources.permissions?.loaded === true
       && permissions.read_local_redacted_context === true
       && permissions.send_external === false
@@ -668,7 +668,7 @@ function buildMiraPresenceStartProofHarnessV0(options = {}) {
   };
   const checks = [
     { id: 'durable-own-state-loaded', ok: durableLoad.own_state_loaded },
-    { id: 'durable-james-context-loaded', ok: durableLoad.james_context_loaded },
+    { id: 'durable-operator-context-loaded', ok: durableLoad.operator_context_loaded },
     { id: 'durable-permissions-loaded', ok: durableLoad.permissions_loaded },
     { id: 'presence-critique-next-action-stale-markers-loaded', ok: durableLoad.presence_state_loaded },
     { id: 'redacted-growth-sources-loaded', ok: durableLoad.redacted_growth_sources_loaded },
@@ -707,9 +707,9 @@ function buildMiraPresenceStartProofHarnessV0(options = {}) {
           && selfProfile.claims_actual_fear === false
           && selfProfile.claims_actual_love_as_internal_fact === false,
       },
-      james_context: {
+      operator_context: {
         user_name: relationship.user_name || null,
-        knows_about_james_loaded: durableLoad.james_context_loaded,
+        knows_about_operator_loaded: durableLoad.operator_context_loaded,
       },
       permissions: {
         read_local_redacted_context: permissions.read_local_redacted_context === true,

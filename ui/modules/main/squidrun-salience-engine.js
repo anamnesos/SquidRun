@@ -245,8 +245,8 @@ function buildNoAuthorityPolicy(input = {}) {
   return {
     mode: 'rank_only_no_permission',
     grantsPermission: false,
-    dispatcherPhase: 'phase3_james_checkpoint',
-    jamesCheckpointRequired: riskClass === 'approval_required',
+    dispatcherPhase: 'phase3_operator_checkpoint',
+    operatorCheckpointRequired: riskClass === 'approval_required',
   };
 }
 

@@ -111,7 +111,7 @@ describe('Stop hook installation — making phase 2 reachable', () => {
     fs.mkdirSync(codexDir, { recursive: true });
     // The live shape: Stop already carries the outbound routing guard. An
     // installer that owned the event instead of joining it would silently
-    // disarm a guard that exists to stop misrouted replies to James.
+    // disarm a guard that exists to stop misrouted replies to Operator.
     const guard = "node 'D:/projects/squidrun/ui/scripts/stop-telegram-routing-guard.js'";
     fs.writeFileSync(path.join(codexDir, 'hooks.json'), JSON.stringify({
       hooks: { Stop: [{ hooks: [{ type: 'command', command: guard }] }] },

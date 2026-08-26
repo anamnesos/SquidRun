@@ -4,7 +4,7 @@
    fBm nebula clouds + a power-law starfield ONCE to offscreen layers
    and composites them with parallax and bounded particles (~30fps,
    paused when hidden, still frame under reduced motion).
-   v2's CSS-gradient cosmos was retired whole (James S466: "make the
+   v2's CSS-gradient cosmos was retired whole (Operator S466: "make the
    background something different — massive changes"); git remembers it
    at c932a5bd if archaeology ever needs the old sky.
    ═══════════════════════════════════════════════════════════════ */

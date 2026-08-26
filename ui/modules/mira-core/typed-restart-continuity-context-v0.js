@@ -156,7 +156,7 @@ function sourceAge(generatedAt, nowMs, staleAfterMs) {
 
 // S468 role-scope-consolidation: the old body PASSED THROUGH unknown roles
 // ((role || null)) — junk flowed into typed lane rows. Canon: validate as
-// RoleParty (pane roles + user/james/mira/system), unknown -> null.
+// RoleParty (pane roles + user/operator/mira/system), unknown -> null.
 const { normalizeRoleParty } = require('../role-scope-core');
 
 function normalizeRole(value) {

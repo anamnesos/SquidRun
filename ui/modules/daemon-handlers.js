@@ -31,7 +31,7 @@ const diagnosticLog = require('./diagnostic-log');
 const { stripAnsi } = require('./ansi');
 const { showToast } = require('./notifications');
 const uiView = require('./ui-view');
-const { TRUSTQUOTE_PROJECT_PATH } = require('./workspace-pane-shell');
+const { EXAMPLEAPP_PROJECT_PATH } = require('./workspace-pane-shell');
 const {
   DEFAULT_INJECT_IPC_REASSEMBLY_TTL_MS,
   getUtf8ByteLength,
@@ -734,8 +734,8 @@ function getRendererWindowKey() {
 }
 
 function resolveVisibleProjectDisplayPath(projectPath = null) {
-  return getRendererWindowKey() === 'trustquote'
-    ? TRUSTQUOTE_PROJECT_PATH
+  return getRendererWindowKey() === 'exampleapp'
+    ? EXAMPLEAPP_PROJECT_PATH
     : projectPath;
 }
 

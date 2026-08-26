@@ -48,7 +48,7 @@ const { evaluateConsumptionProof } = require('../modules/main/telegram-consumpti
 const GENERATION = 'app-terminal-exec-1';
 const UPDATE_ID = 909100501;
 const MESSAGE_ID = `telegram-in-${UPDATE_ID}`;
-const CHAT_ID = REDACTED;
+const CHAT_ID = 7000000001;
 const NOW = 1785870000000;
 
 let tempRoot = null;
@@ -135,7 +135,7 @@ async function runSequence() {
         updateId: UPDATE_ID,
         chatId: CHAT_ID,
         text: 'terminal execution body',
-        from: 'james',
+        from: 'operator',
         targetSession: 'app-session-490',
       },
       appGeneration: GENERATION,
@@ -143,7 +143,7 @@ async function runSequence() {
       role: 'architect',
       obligorAddress: 'architect',
       mode: MODES.FULL,
-      composeFinalBody: async () => '[Telegram from james]: terminal execution body',
+      composeFinalBody: async () => '[Telegram from operator]: terminal execution body',
       now: () => NOW,
       nonce: () => 'n_terminal_exec',
     });

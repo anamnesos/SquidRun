@@ -284,11 +284,11 @@ describe('config.js', () => {
         source: 'profile:scoped',
       }));
       expect(resolveWebSocketPortInfo({
-        env: { SQUIDRUN_PROFILE: 'sideprofile' },
-        profileName: 'sideprofile',
+        env: { SQUIDRUN_PROFILE: 'client' },
+        profileName: 'client',
       })).toEqual(expect.objectContaining({
         port: 9901,
-        source: 'profile:sideprofile',
+        source: 'profile:client',
       }));
     });
 

@@ -41,9 +41,9 @@ describe('Team Room history windowing', () => {
         clockMs = day.date.getTime() + index * 1000;
         const posted = store.postMessage({
           identity: {
-            memberId: 'james',
+            memberId: 'operator',
             memberKind: 'human',
-            role: 'james',
+            role: 'operator',
             paneId: null,
             source: 'room_web',
             roomId: 'main',

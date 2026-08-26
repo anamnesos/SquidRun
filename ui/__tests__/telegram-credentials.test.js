@@ -50,8 +50,8 @@ describe('telegram-credentials', () => {
   test('fills every telegram env key from a full settings file into an empty env', () => {
     const root = makeDataRoot({
       botToken: '123456789:fake_install_bot_token_do_not_use',
-      ownerChatId: REDACTED-CHAT-ID,
-      chatAllowlist: [REDACTED-CHAT-ID],
+      ownerChatId: 7000000002,
+      chatAllowlist: [7000000002],
       relayMode: 'off',
     });
     const env = {};
@@ -68,8 +68,8 @@ describe('telegram-credentials', () => {
       'TELEGRAM_CHAT_ID',
     ]);
     expect(env.TELEGRAM_BOT_TOKEN).toBe('123456789:fake_install_bot_token_do_not_use');
-    expect(env.TELEGRAM_CHAT_ID).toBe('REDACTED-CHAT-ID');
-    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('REDACTED-CHAT-ID');
+    expect(env.TELEGRAM_CHAT_ID).toBe('7000000002');
+    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('7000000002');
     expect(env.TELEGRAM_CHAT_ALLOWLIST_STRICT).toBe('1');
     expect(env[BRIDGE_RELAY_MODE_ENV_KEY]).toBe('off');
     expect(result.relayMode).toBe('off');
@@ -108,8 +108,8 @@ describe('telegram-credentials', () => {
     // settings supply the recipient, sending one person’s message under another bot.
     const root = makeDataRoot({
       botToken: '123456789:side_install_token',
-      ownerChatId: REDACTED-CHAT-ID,
-      chatAllowlist: [REDACTED-CHAT-ID],
+      ownerChatId: 7000000002,
+      chatAllowlist: [7000000002],
     });
     const env = { TELEGRAM_BOT_TOKEN: '999999999:inherited_main_token' };
 
@@ -124,16 +124,16 @@ describe('telegram-credentials', () => {
   test('an empty env takes the whole identity from the file', () => {
     const root = makeDataRoot({
       botToken: '123456789:side_install_token',
-      ownerChatId: REDACTED-CHAT-ID,
-      chatAllowlist: [REDACTED-CHAT-ID],
+      ownerChatId: 7000000002,
+      chatAllowlist: [7000000002],
     });
     const env = {};
 
     const result = applyTelegramEnvOverlay({ env, dataRoot: root });
 
     expect(env.TELEGRAM_BOT_TOKEN).toBe('123456789:side_install_token');
-    expect(env.TELEGRAM_CHAT_ID).toBe('REDACTED-CHAT-ID');
-    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('REDACTED-CHAT-ID');
+    expect(env.TELEGRAM_CHAT_ID).toBe('7000000002');
+    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('7000000002');
     expect(result.identitySource).toBe('file');
   });
 
@@ -181,13 +181,13 @@ describe('telegram-credentials', () => {
   test('allowlist entries are normalized, deduplicated, and invalid entries dropped', () => {
     const root = makeDataRoot({
       botToken: '123456789:file_token',
-      chatAllowlist: [REDACTED-CHAT-ID, 'REDACTED-CHAT-ID', ' 111111 ', 'not-a-chat-id', null],
+      chatAllowlist: [7000000002, '7000000002', ' 111111 ', 'not-a-chat-id', null],
     });
     const env = {};
 
     applyTelegramEnvOverlay({ env, dataRoot: root });
 
-    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('REDACTED-CHAT-ID,111111');
+    expect(env.TELEGRAM_CHAT_ALLOWLIST).toBe('7000000002,111111');
     expect(env.TELEGRAM_CHAT_ALLOWLIST_STRICT).toBe('1');
   });
 

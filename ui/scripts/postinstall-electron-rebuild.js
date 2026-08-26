@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const path = require('path');
+const fs = require('fs');
 const { spawnSync } = require('child_process');
 
 const rootDir = path.resolve(__dirname, '..');
@@ -71,13 +72,48 @@ function probeBetterSqlite3() {
   };
 }
 
-function runElectronRebuild() {
-  const binName = process.platform === 'win32' ? 'electron-rebuild.cmd' : 'electron-rebuild';
-  const rebuildPath = path.join(rootDir, 'node_modules', '.bin', binName);
-  return spawnSync(rebuildPath, ['-f', '-o', 'better-sqlite3'], {
-    cwd: rootDir,
+function resolveElectronRebuildCli(projectRoot = rootDir) {
+  const packageEntry = require.resolve('@electron/rebuild', {
+    paths: [projectRoot],
+  });
+  let packageDir = path.dirname(packageEntry);
+  let manifestPath = null;
+  while (true) {
+    const candidate = path.join(packageDir, 'package.json');
+    if (fs.existsSync(candidate)) {
+      const candidateManifest = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      if (candidateManifest.name === '@electron/rebuild') {
+        manifestPath = candidate;
+        break;
+      }
+    }
+    const parent = path.dirname(packageDir);
+    if (parent === packageDir) break;
+    packageDir = parent;
+  }
+  if (!manifestPath) {
+    throw new Error('could not locate the @electron/rebuild package manifest');
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const relativeCli = typeof manifest.bin === 'string'
+    ? manifest.bin
+    : manifest.bin?.['electron-rebuild'];
+  if (!relativeCli || typeof relativeCli !== 'string') {
+    throw new Error('@electron/rebuild package does not declare its CLI entrypoint');
+  }
+  return path.resolve(path.dirname(manifestPath), relativeCli);
+}
+
+function runElectronRebuild({
+  projectRoot = rootDir,
+  nodePath = process.execPath,
+  rebuildCliPath = resolveElectronRebuildCli(projectRoot),
+  spawnImpl = spawnSync,
+} = {}) {
+  return spawnImpl(nodePath, [rebuildCliPath, '-f', '-o', 'better-sqlite3'], {
+    cwd: projectRoot,
     stdio: 'inherit',
-    shell: process.platform === 'win32',
+    shell: false,
   });
 }
 
@@ -130,4 +166,14 @@ function main() {
   console.log(`[postinstall] better-sqlite3 rebuilt and verified under Electron (${formatProbe(finalProbe)}).`);
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  formatProbe,
+  parseProbePayload,
+  probeBetterSqlite3,
+  resolveElectronRebuildCli,
+  runElectronRebuild,
+};

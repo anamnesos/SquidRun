@@ -78,7 +78,7 @@ describe('hm-startup-health wrapper preflights', () => {
     const exitCode = startupHealth.runStartupHealth([
       tempRoot,
       '--profile',
-      'sideprofile',
+      'client',
       '--no-bidirectional-wake-watchdog-auto-start',
     ], {
       stderr: { write: jest.fn() },
@@ -91,7 +91,7 @@ describe('hm-startup-health wrapper preflights', () => {
       [expect.stringContaining('hm-bidirectional-wake-watchdog.js'), 'start'],
       expect.any(Object)
     );
-    expect(healthSnapshot.main).toHaveBeenCalledWith([tempRoot, '--profile', 'sideprofile', '--markdown']);
+    expect(healthSnapshot.main).toHaveBeenCalledWith([tempRoot, '--profile', 'client', '--markdown']);
   });
 
   test('does not mistake value-taking wrapper options for the project root', () => {

@@ -7,13 +7,13 @@ const path = require('path');
 const SCRIPT_ROOT = __dirname;
 const UI_ROOT = path.resolve(SCRIPT_ROOT, '..');
 const PROJECT_ROOT = path.resolve(UI_ROOT, '..');
-const DEFAULT_INSTANCE_NAME = 'sideprofile';
+const DEFAULT_INSTANCE_NAME = 'client';
 const RELEASE_SCHEMA = 'squidrun.split_release.v1';
 const DEFAULT_RECOMMENDED_DATA_ROOTS = Object.freeze({
-  sideprofile: 'D:\\SquidRun\\sideprofile',
+  client: 'D:\\SquidRun\\Client',
 });
 const DEFAULT_INSTANCE_WEBSOCKET_PORTS = Object.freeze({
-  sideprofile: 9901,
+  client: 9901,
 });
 
 function usage() {
@@ -21,12 +21,12 @@ function usage() {
     'Usage: node ui/scripts/hm-stage-split-release.js [options]',
     '',
     'Options:',
-    '  --instance <name>       Installed instance name (default: sideprofile)',
+    '  --instance <name>       Installed instance name (default: client)',
     '  --version <version>     Release version (default: ui/package.json version)',
     '  --source-app <path>     Packaged app dir (default: ui/dist/win-unpacked)',
     '  --output-dir <path>     Release output dir (default: ui/dist/split-releases/<instance>/squidrun-<version>)',
     '  --recommended-data-root <path>  Advisory cutover root recorded in release manifest',
-    '  --websocket-port <port> Per-install WebSocket port (default for sideprofile: 9901)',
+    '  --websocket-port <port> Per-install WebSocket port (default for client: 9901)',
     '  --force                 Allow overwriting files in the staged app directory',
     '  --json                  Print machine-readable result',
     '  --help                  Show this help',

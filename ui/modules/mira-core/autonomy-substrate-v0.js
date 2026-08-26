@@ -14,7 +14,7 @@ const MAX_READ_BYTES = 12000;
 
 const DEFAULT_READ_TARGETS = Object.freeze({
   self_profile: 'workspace/knowledge/mira-self-profile.json',
-  relationship_state: 'workspace/knowledge/james-relationship-state.json',
+  relationship_state: 'workspace/knowledge/operator-relationship-state.json',
   growth_history: 'workspace/knowledge/relationship-growth-history.jsonl',
   project_readme: 'README.md',
 });
@@ -267,7 +267,7 @@ function buildSelfProfileUpdateProposals(transcript = {}, qualityGate = {}, inpu
       proposed_growth_reflection: {
         summary: 'Mira should grow a self-directed curiosity loop: choose local questions, inspect permissioned local sources, and update her self-profile only with evidence.',
         reasons: [
-          'James explicitly expanded the target from prompt cleanup to autonomy, choice, curiosity, personality formation, and world-looking.',
+          'Operator explicitly expanded the target from prompt cleanup to autonomy, choice, curiosity, personality formation, and world-looking.',
           'The visible conversation should stay clean while backend machinery tracks drives, reads, evidence, and repair gates.',
         ],
       },

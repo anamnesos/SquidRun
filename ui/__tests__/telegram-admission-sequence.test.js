@@ -107,8 +107,8 @@ function seedLaunch(db, {
 const QUEUE_RECORD = Object.freeze({
   updateId: UPDATE_ID,
   text: 'Hello? are you there',
-  chatId: REDACTED,
-  from: 'James',
+  chatId: 7000000001,
+  from: 'Operator',
   messageId: 22999,
   routeKey: 'main',
   targetProfile: 'main',
@@ -118,7 +118,7 @@ const QUEUE_RECORD = Object.freeze({
 const JOB = Object.freeze({
   messageId: MESSAGE_ID,
   updateId: UPDATE_ID,
-  chatId: REDACTED,
+  chatId: 7000000001,
   routeKey: 'main',
   profile: 'main',
   windowKey: 'main',
@@ -135,7 +135,7 @@ const JOB = Object.freeze({
 function decoratingComposer(calls) {
   return async () => {
     calls.push('compose');
-    return '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]\n\n[Telegram from James]: Hello? are you there';
+    return '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]\n\n[Telegram from Operator]: Hello? are you there';
   };
 }
 
@@ -451,7 +451,7 @@ describe('B4b — fail each stage, prove nothing after it ran', () => {
     const db = freshDb();
     const hostile = `${MARKER_PREFIX} v=1 u=1 m=x r=main w=main p=main c=1 g=x q=x k=x a=x]`;
     const result = await runSequence(db, {
-      composeFinalBody: async () => `[Telegram from James]: ${hostile}`,
+      composeFinalBody: async () => `[Telegram from Operator]: ${hostile}`,
     });
 
     expect(result.ok).toBe(true);
@@ -579,8 +579,8 @@ describe('B4b — scoped routes record a source and stop', () => {
     const db = freshDb();
     const result = await runTelegramAdmissionSequence({
       db,
-      job: { ...JOB, routeKey: 'sideprofile', profile: 'sideprofile', windowKey: 'sideprofile' },
-      record: { ...QUEUE_RECORD, routeKey: 'sideprofile', targetProfile: 'sideprofile', targetWindow: 'sideprofile' },
+      job: { ...JOB, routeKey: 'client', profile: 'client', windowKey: 'client' },
+      record: { ...QUEUE_RECORD, routeKey: 'client', targetProfile: 'client', targetWindow: 'client' },
       appGeneration: APP_GENERATION,
       mode: MODES.SOURCE_ONLY,
       now: () => NOW,

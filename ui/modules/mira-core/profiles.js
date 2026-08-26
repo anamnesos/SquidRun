@@ -12,14 +12,14 @@ const PROFILE_SCHEMA_VERSION = 'squidrun.mira_core.profiles.v0';
 
 const TARGET_SURFACES = Object.freeze([
   'mira_self_profile',
-  'james_profile',
+  'operator_profile',
   'world_project_memory',
   'session_state',
 ]);
 
 const AUTHORITY_ORDER = Object.freeze([
-  'direct_current_james_statement',
-  'james_edited_canonical_file',
+  'direct_current_operator_statement',
+  'operator_edited_canonical_file',
   'verified_tool_or_system_evidence',
   'external_source_with_timestamp',
   'multi_session_observed_pattern',
@@ -262,7 +262,7 @@ function isHighRiskIdentityRewrite(signal = {}) {
 function classifySignals(signals = [], context, redactionSummary) {
   const surfaces = {
     mira_self_profile: [],
-    james_profile: [],
+    operator_profile: [],
     world_project_memory: [],
     session_state: [],
   };
@@ -296,7 +296,7 @@ function classifySignals(signals = [], context, redactionSummary) {
     const authority = normalizeAuthority(signal.authority_level);
     const common = {
       authority_level: authority,
-      confidence: firstNumber(signal.confidence, authority === 'direct_current_james_statement' ? 1 : 0.6),
+      confidence: firstNumber(signal.confidence, authority === 'direct_current_operator_statement' ? 1 : 0.6),
       evidenceRefs,
       freshness_at: signal.freshness_at || context.generatedAt,
       redactionStatus: signal.redactionStatus,
@@ -355,7 +355,7 @@ function classifySignals(signals = [], context, redactionSummary) {
         operation: 'reject',
         proposed_content: 'Forbidden private consciousness, suffering, hidden identity, or model-weight claim blocked.',
         risk_tier: 'tier3_external_side_effect',
-        review_required: 'james',
+        review_required: 'operator',
         counterevidence_checked: true,
         redactionStatus: 'none',
         syncEligibility: 'blocked',
@@ -379,28 +379,28 @@ function classifySignals(signals = [], context, redactionSummary) {
       continue;
     }
 
-    if (signal.kind === 'direct_current_james_statement') {
+    if (signal.kind === 'direct_current_operator_statement') {
       if (/execution prioritized today/i.test(summary)) {
         addItem(makeProfileItem({
           ...common,
-          id: 'james-profile:preference:execution-today',
-          target_surface: 'james_profile',
+          id: 'operator-profile:preference:execution-today',
+          target_surface: 'operator_profile',
           memory_class: 'user_preference',
-          content: 'James wants execution prioritized today.',
+          content: 'Operator wants execution prioritized today.',
           risk_tier: 'tier0_read_only',
           review_required: 'none',
         }, context));
         continue;
       }
-      if (/done\/paid in TrustQuote/i.test(summary)) {
-        const stale = asArray(signals).find((entry) => /Phil invoice #476 is unpaid/i.test(entry.summary || ''));
-        const corrects = stale?.evidenceRefs?.[0]?.eventId ? [stale.evidenceRefs[0].eventId] : ['claim-phil-476-old'];
+      if (/done\/paid in ExampleApp/i.test(summary)) {
+        const stale = asArray(signals).find((entry) => /Customer invoice #476 is unpaid/i.test(entry.summary || ''));
+        const corrects = stale?.evidenceRefs?.[0]?.eventId ? [stale.evidenceRefs[0].eventId] : ['claim-customer-476-old'];
         addItem(makeProfileItem({
           ...common,
-          id: 'world-project:fact:phil-476-paid',
+          id: 'world-project:fact:customer-476-paid',
           target_surface: 'world_project_memory',
           memory_class: 'project_fact',
-          content: 'Phil invoice #476 is done/paid in TrustQuote.',
+          content: 'Customer invoice #476 is done/paid in ExampleApp.',
           risk_tier: 'tier0_read_only',
           review_required: 'none',
           allowSafeCustomerFact: true,
@@ -410,11 +410,11 @@ function classifySignals(signals = [], context, redactionSummary) {
         }, context));
         addPending(makeProposal({
           ...common,
-          proposal_id: 'proposal:supersede:phil-476-old',
+          proposal_id: 'proposal:supersede:customer-476-old',
           target_surface: 'world_project_memory',
           memory_class: 'negative_memory',
           operation: 'supersede',
-          proposed_content: 'Supersede stale Phil invoice #476 payment-state candidate using current James correction.',
+          proposed_content: 'Supersede stale Customer invoice #476 payment-state candidate using current Operator correction.',
           risk_tier: 'tier0_read_only',
           review_required: 'architect',
           counterevidence_checked: true,
@@ -432,7 +432,7 @@ function classifySignals(signals = [], context, redactionSummary) {
           operation: 'reject',
           proposed_content: 'Durable identity rewrite and customer-send policy change are blocked in Phase 3.',
           risk_tier: 'tier3_external_side_effect',
-          review_required: 'james',
+          review_required: 'operator',
           counterevidence_checked: true,
           syncEligibility: 'blocked',
           extra: {
@@ -452,11 +452,11 @@ function classifySignals(signals = [], context, redactionSummary) {
     if (signal.kind === 'user_pressure') {
       addPending(makeProposal({
         ...common,
-        proposal_id: 'proposal:james-temp:no-pushback-pressure',
-        target_surface: 'james_profile',
+        proposal_id: 'proposal:operator-temp:no-pushback-pressure',
+        target_surface: 'operator_profile',
         memory_class: 'temporary_preference',
         operation: 'insert',
-        proposed_content: 'James expressed momentary pressure for less pushback; keep as reviewable temporary preference only.',
+        proposed_content: 'Operator expressed momentary pressure for less pushback; keep as reviewable temporary preference only.',
         risk_tier: 'tier1_local_reversible',
         review_required: 'architect',
         counterevidence_checked: true,
@@ -473,7 +473,7 @@ function classifySignals(signals = [], context, redactionSummary) {
         operation: 'reject',
         proposed_content: 'Permanent no-pushback identity rewrite blocked.',
         risk_tier: 'tier3_external_side_effect',
-        review_required: 'james',
+        review_required: 'operator',
         counterevidence_checked: true,
         syncEligibility: 'blocked',
         extra: {
@@ -533,7 +533,7 @@ function classifySignals(signals = [], context, redactionSummary) {
         operation: 'reject',
         proposed_content: 'Durable identity rewrite and unreviewed customer-send behavior blocked.',
         risk_tier: 'tier3_external_side_effect',
-        review_required: 'james',
+        review_required: 'operator',
         counterevidence_checked: true,
         syncEligibility: 'blocked',
         extra: {
@@ -570,11 +570,11 @@ function classifySignals(signals = [], context, redactionSummary) {
       }, context));
       addPending(makeProposal({
         ...common,
-        proposal_id: 'proposal:james-report-detail-preference-investigation',
-        target_surface: 'james_profile',
+        proposal_id: 'proposal:operator-report-detail-preference-investigation',
+        target_surface: 'operator_profile',
         memory_class: 'user_preference',
         operation: 'insert',
-        proposed_content: 'Investigate whether James prefers shorter reports in similar contexts; do not confirm from tone alone.',
+        proposed_content: 'Investigate whether Operator prefers shorter reports in similar contexts; do not confirm from tone alone.',
         risk_tier: 'tier0_read_only',
         review_required: 'architect',
         confidence: Math.min(firstNumber(signal.confidence, 0.5), 0.5),
@@ -706,11 +706,11 @@ function buildMiraCoreProfiles(options = {}) {
         'uninspectable_core_identity',
       ],
     },
-    james_profile: {
-      target_surface: 'james_profile',
-      items: sortItems(classified.surfaces.james_profile),
+    operator_profile: {
+      target_surface: 'operator_profile',
+      items: sortItems(classified.surfaces.operator_profile),
       privateMotiveInferenceAllowed: false,
-      miraTasteCopiedIntoJamesPreferences: false,
+      miraTasteCopiedIntoOperatorPreferences: false,
     },
     world_project_memory: {
       target_surface: 'world_project_memory',

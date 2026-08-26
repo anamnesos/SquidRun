@@ -89,7 +89,7 @@ function normalizeRuntime(value) {
 /**
  * NEVER LET THE TELEGRAM LANE WEDGE A PROMPT.
  *
- * This adapter sits in front of every prompt James types. A throw here — a
+ * This adapter sits in front of every prompt Operator types. A throw here — a
  * locked database, a missing table on an older build — would block the pane,
  * and a hook that fails a prompt is a worse bug than a missing receipt. The
  * admission path fails CLOSED on its own record (no receipt is written on

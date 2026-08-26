@@ -7,7 +7,7 @@ const proof = require('../modules/main/codex-computer-use-proof');
 const cli = require('../scripts/hm-codex-computer-use-bridge');
 
 const MAIN_ROOT = 'D:\\projects\\squidrun';
-const sideprofile_ROOT = 'D:\\SquidRun\\sideprofile\\workspace';
+const CLIENT_ROOT = 'D:\\SquidRun\\Client\\workspace';
 const PIPE_PATH = '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34';
 const ROTATED_PIPE_PATH = '\\\\.\\pipe\\codex-computer-use-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const BROWSER_PIPE = 'chrome-native-messaging-7d407dc4-9b7e-4488-824a-7a7475447ca5';
@@ -70,7 +70,7 @@ function readyProbeState(pipePath = PIPE_PATH, overrides = {}) {
     paneId: '2',
     profile: 'main',
     config: {
-      configPath: 'C:\\Users\\James\\.codex\\config.toml',
+      configPath: 'C:\\Users\\Example User\\.codex\\config.toml',
       pipePath,
     },
     desktopOwner: {
@@ -147,7 +147,7 @@ describe('Codex Computer Use native bridge ownership', () => {
     const candidates = [
       {
         Name: 'codex.exe',
-        ExecutablePath: 'C:\\Users\\James\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.exe',
+        ExecutablePath: 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.exe',
       },
       {
         Name: 'Codex.exe',
@@ -159,7 +159,7 @@ describe('Codex Computer Use native bridge ownership', () => {
       },
       {
         Name: 'ChatGPT.exe',
-        ExecutablePath: `${sideprofile_ROOT}\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe`,
+        ExecutablePath: `${CLIENT_ROOT}\\OpenAI.Codex_26.721.11231.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe`,
       },
       {
         Name: 'ChatGPT.exe',
@@ -225,8 +225,8 @@ describe('Codex Computer Use native bridge ownership', () => {
   test('does not fall back to the main CODEX_HOME when an explicit profile config is missing', () => {
     const requestedPaths = [];
     const result = bridge.readCodexComputerUseConfig({
-      env: { CODEX_HOME: 'D:\\SquidRun\\sideprofile\\.codex' },
-      homeDir: 'C:\\Users\\James',
+      env: { CODEX_HOME: 'D:\\SquidRun\\Client\\.codex' },
+      homeDir: 'C:\\Users\\Example User',
       readFile: (filePath) => {
         requestedPaths.push(filePath);
         const error = new Error('missing');
@@ -238,7 +238,7 @@ describe('Codex Computer Use native bridge ownership', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('codex_config_missing');
     expect(requestedPaths).toHaveLength(1);
-    expect(requestedPaths[0]).toBe(path.resolve('D:\\SquidRun\\sideprofile\\.codex\\config.toml'));
+    expect(requestedPaths[0]).toBe(path.resolve('D:\\SquidRun\\Client\\.codex\\config.toml'));
   });
 });
 
@@ -309,14 +309,14 @@ describe('Codex Computer Use supported preparation flow', () => {
     expect(listBrowserPipes).toHaveBeenCalledTimes(1);
   });
 
-  test('refuses sideprofile or another side profile before probing or launching', async () => {
+  test('refuses Client or another side profile before probing or launching', async () => {
     const probe = jest.fn();
     const launchOwner = jest.fn();
     const result = await bridge.prepareCodexComputerUseNativeBridge({
       platform: 'win32',
-      projectRoot: sideprofile_ROOT,
-      workspace: sideprofile_ROOT,
-      profile: 'sideprofile',
+      projectRoot: CLIENT_ROOT,
+      workspace: CLIENT_ROOT,
+      profile: 'client',
       launchOwner: true,
     }, { probe, launchOwner });
 
@@ -334,7 +334,7 @@ describe('Codex Computer Use supported preparation flow', () => {
     const result = await bridge.prepareCodexComputerUseNativeBridge({
       platform: 'win32',
       projectRoot: MAIN_ROOT,
-      workspace: sideprofile_ROOT,
+      workspace: CLIENT_ROOT,
       profile: 'main',
       launchOwner: true,
     }, { probe, launchOwner });
@@ -778,8 +778,8 @@ describe('official list_windows verification seam', () => {
     paneId: '2',
     profile: 'main',
     config: {
-      codexHome: 'C:\\Users\\James\\.codex',
-      configPath: 'C:\\Users\\James\\.codex\\config.toml',
+      codexHome: 'C:\\Users\\Example User\\.codex',
+      configPath: 'C:\\Users\\Example User\\.codex\\config.toml',
       pipePath: PIPE_PATH,
     },
     desktopOwner: { running: true },
@@ -939,8 +939,8 @@ describe('official list_windows verification seam', () => {
       bridge: readyBridge,
       trustedClaim: {
         ...trustedClaim,
-        workspace: sideprofile_ROOT,
-        projectRoot: sideprofile_ROOT,
+        workspace: CLIENT_ROOT,
+        projectRoot: CLIENT_ROOT,
       },
       projectRoot: MAIN_ROOT,
       paneId: '2',

@@ -11,12 +11,12 @@
  * passed with the bug present:
  *   - the outcome was driven by THIS machine's profile config, not by the
  *     branch under test, so neither branch was actually exercised on purpose;
- *   - the "positive" case set SQUIDRUN_PROFILE_ROOT_sideprofile, which the
+ *   - the "positive" case set SQUIDRUN_PROFILE_ROOT_CLIENT, which the
  *     resolver does not support, so it asserted nothing about overrides;
- *   - its override literal 'D:\SquidRun\sideprofile' contained invalid escapes
+ *   - its override literal 'C:\Test\SquidRunClient' contained invalid escapes
  *     (\S, \E collapse silently) so the string was not even the path it looked
  *     like;
- *   - it asserted only that the filename contained 'triggers-sideprofile', which
+ *   - it asserted only that the filename contained 'triggers-client', which
  *     is true of a leaked main-root path too — the exact thing being prevented.
  * The resolver is now injectable so both branches are driven deterministically
  * and the positive case asserts the FULL exact path.
@@ -31,7 +31,7 @@ const { getProfileTelegramTriggerPaths, forwardToProfileTrigger } = lane;
 describe('scoped-root resolution fails closed', () => {
   test('THE LEAK CASE: an unresolvable root yields NOTHING, never main root', () => {
     // Injected null => the exact branch that used to fall back to main.
-    const paths = getProfileTelegramTriggerPaths('sideprofile', {}, {
+    const paths = getProfileTelegramTriggerPaths('client', {}, {
       resolveProfileRoot: () => null,
     });
     expect(paths).toEqual([]);
@@ -39,20 +39,20 @@ describe('scoped-root resolution fails closed', () => {
 
   test.each([null, undefined, '', false])('resolver returning %p also fails closed', (value) => {
     expect(
-      getProfileTelegramTriggerPaths('sideprofile', {}, { resolveProfileRoot: () => value })
+      getProfileTelegramTriggerPaths('client', {}, { resolveProfileRoot: () => value })
     ).toEqual([]);
   });
 
   test('a resolvable root yields the FULL EXACT path under that root', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scoped-root-'));
     try {
-      const paths = getProfileTelegramTriggerPaths('sideprofile', {}, {
+      const paths = getProfileTelegramTriggerPaths('client', {}, {
         resolveProfileRoot: () => root,
       });
       // Exact path, not a substring — a filename match would also pass for a
       // leaked main-root path, which is precisely the failure being guarded.
       expect(paths).toEqual([
-        path.join(path.resolve(root), '.squidrun', 'triggers-sideprofile', 'architect.txt'),
+        path.join(path.resolve(root), '.squidrun', 'triggers-client', 'architect.txt'),
       ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -85,7 +85,7 @@ describe('forwardToProfileTrigger refuses to write when the root is unresolvable
   });
 
   test('an empty message is refused before any path work', () => {
-    const res = forwardToProfileTrigger('sideprofile', '   ', {});
+    const res = forwardToProfileTrigger('client', '   ', {});
     expect(res.ok).toBe(false);
     expect(res.reason).toBe('empty_message');
   });

@@ -12,7 +12,7 @@ const VALID_REASONS = new Set([
   'bus_failures',
   'startup_context_corrupt',
   'supervisor_recovery',
-  'james_request',
+  'operator_request',
   'manual_test',
 ]);
 const MAX_CACHED_LIVE_ACCOUNT_AGE_MS = 5 * 60 * 1000;

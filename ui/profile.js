@@ -32,7 +32,7 @@ const PROFILE_SCOPED_FILES = new Set([
 const PROFILE_PORT_OFFSETS = Object.freeze({
   main: 0,
   scoped: 1,
-  sideprofile: 1,
+  client: 1,
 });
 const PROFILE_ROOT_CONFIG_VERSION = 'squidrun.profile-root.v0';
 

@@ -5,8 +5,16 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
+function unexpectedElectronStderr(stderr) {
+  const knownWidgetRejection = /^\[\d+:\d{4}\/\d{6}\.\d{3}:ERROR:(?:.*[\\/])?interface_endpoint_client\.cc(?::\d+|\(\d+\))\] Message \d+ rejected by interface blink\.mojom\.Widget(?:Host)?$/u;
+  return String(stderr || '').split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !knownWidgetRejection.test(line));
+}
+
 describe('Team Room QR pairing browser flow', () => {
-  test('renders the dialog and claims once from the scrubbed fragment in Electron 28', () => {
+  test('renders the dialog and claims once from the scrubbed fragment in the installed Electron runtime', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-qr-jest-'));
     const outputPath = path.join(tempRoot, 'result.json');
     const screenshotPath = path.join(tempRoot, 'pair-dialog.png');
@@ -31,7 +39,11 @@ describe('Team Room QR pairing browser flow', () => {
           TEAM_ROOM_QR_NATIVE_HEADER_SCREENSHOT: nativeHeaderScreenshotPath,
         },
         encoding: 'utf8',
-        timeout: 45_000,
+        // A cold Windows/Electron launch can spend well over 45 seconds in
+        // maximize/restore while the complete CI suite is exercising native
+        // processes. Keep the smoke bounded without killing a healthy child
+        // merely because the runner is under load.
+        timeout: 90_000,
         windowsHide: true,
       });
       const outputDeadline = Date.now() + 35_000;
@@ -54,14 +66,15 @@ describe('Team Room QR pairing browser flow', () => {
         }
         result.smokeRootRemoved = !fs.existsSync(result.smokeRoot);
       }
-      expect({ status: child.status, stderr: child.stderr, output }).toEqual(expect.objectContaining({
+      const unexpectedStderr = unexpectedElectronStderr(child.stderr);
+      expect({ status: child.status, unexpectedStderr, output }).toEqual(expect.objectContaining({
         status: 0,
-        stderr: '',
+        unexpectedStderr: [],
       }));
       expect(result).toEqual(expect.objectContaining({
         ok: true,
-        electron: '28.3.3',
-        node: '18.18.2',
+        electron: require('electron/package.json').version,
+        node: expect.stringMatching(/^\d+\.\d+\.\d+$/u),
         smokeRootRemoved: true,
         consoleErrors: [],
       }));
@@ -136,6 +149,11 @@ describe('Team Room QR pairing browser flow', () => {
         httpOnly: true,
         sameSite: 'strict',
       }));
+      expect(result.harnessWindows).toEqual({
+        desktop: { opacity: 0, focusable: false },
+        phone: { opacity: 0, focusable: false },
+        native: { opacity: 0, focusable: false },
+      });
       expect(fs.statSync(screenshotPath).size).toBeGreaterThan(10_000);
       expect(fs.statSync(headerScreenshotPath).size).toBeGreaterThan(10_000);
       expect(fs.statSync(maximizedHeaderScreenshotPath).size).toBeGreaterThan(10_000);
@@ -143,5 +161,5 @@ describe('Team Room QR pairing browser flow', () => {
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }
-  }, 60_000);
+  }, 105_000);
 });

@@ -216,7 +216,7 @@ describe('Screenshot Handlers', () => {
       expect(result.filename).toMatch(/^capture-pane-3-\d+\.png$/);
     });
 
-    test('fails TrustQuote proof status when readiness validator reports a bootstrapping workroom', async () => {
+    test('fails ExampleApp proof status when readiness validator reports a bootstrapping workroom', async () => {
       fs.existsSync.mockReturnValue(true);
       const image = { toPNG: jest.fn(() => Buffer.from('window-boot-overlay')) };
       ctx.mainWindow.webContents.capturePage = jest.fn().mockResolvedValue(image);

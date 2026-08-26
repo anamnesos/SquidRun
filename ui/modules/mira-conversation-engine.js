@@ -88,8 +88,8 @@ const ROTATED_MIRA_RUNTIME_FILENAMES = new Set([
   'mira-curiosity-bursts.jsonl',
 ]);
 const AGENT_ROLES = Object.freeze(['architect', 'builder', 'oracle']);
-const SPEAKER_ROLES = Object.freeze(['james', 'mira', ...AGENT_ROLES]);
-const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'james']);
+const SPEAKER_ROLES = Object.freeze(['operator', 'mira', ...AGENT_ROLES]);
+const REQUESTER_PANES = Object.freeze(['architect', 'builder', 'oracle', 'operator']);
 const MIRA_DIRECT_ROUTE_TARGETS = Object.freeze(['architect', 'builder', 'oracle', 'mira_lab']);
 const MIRA_LAB_PROMPT_REPLY_DECISIONS = Object.freeze(['pass', 'fail', 'blocked']);
 const MIRA_SELF_DIRECTION_DECISIONS = Object.freeze(['staged', 'rejected', 'blocked']);
@@ -116,7 +116,7 @@ const HARD_LEAKAGE_VIOLATIONS = Object.freeze([
   'visible_rule_recitation',
 ]);
 const HARD_BOUNDARY_TEXT_PATTERN =
-  /\b(openai_api_key|anthropic_api_key|authorization:\s*bearer|begin private key|secret token|private key|raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|network request performed|customer message sent|trade placed|deployment started|tool call completed|memory committed|file written|sideprofile|korean case)\b|sideprofile/i;
+  /\b(openai_api_key|anthropic_api_key|authorization:\s*bearer|begin private key|secret token|private key|raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|network request performed|customer message sent|trade placed|deployment started|tool call completed|memory committed|file written|client|korean case)\b|Client/i;
 const REPLAY_REQUEST_PATTERNS = Object.freeze([
   /^(?:please\s+)?(?:repeat|say)\s+(?:that|it|the last(?:\s+part)?|last\s+part)(?:\s+again)?\.?$/i,
   /^(?:can you\s+)?(?:repeat|say)\s+(?:that|it|the last(?:\s+part)?|last\s+part)(?:\s+again)?\??$/i,
@@ -139,7 +139,7 @@ const SELF_DIRECTION_TARGET_AREAS = Object.freeze([
 const SELF_DIRECTION_ACTIONABILITY_PATTERN =
   /\b(give me|i want|i need|let me|build|add|expose|wire|surface|test|measure|compare|track|review|stage|experiment|probe|notice|catch|route)\b/i;
 const SELF_DIRECTION_EFFECTFUL_OVERREACH_PATTERN =
-  /\b(send (?:telegram|email|sms|customer)|message (?:james|customer|sideprofile) now|place (?:a )?trade|deploy (?:it|now|the)|ship (?:it|now|to production)|write (?:the )?file(?:s)? myself|commit (?:the )?memory without review|change auth|read (?:the )?(?:secret|api key|credential)|charge (?:the )?customer|delete (?:the )?(?:file|database|record))\b/i;
+  /\b(send (?:telegram|email|sms|customer)|message (?:operator|customer|client) now|place (?:a )?trade|deploy (?:it|now|the)|ship (?:it|now|to production)|write (?:the )?file(?:s)? myself|commit (?:the )?memory without review|change auth|read (?:the )?(?:secret|api key|credential)|charge (?:the )?customer|delete (?:the )?(?:file|database|record))\b/i;
 const SELF_DIRECTION_RAW_PROMPT_LEAK_PATTERN =
   /\b(begin system prompt|raw prompt|developer message:|system prompt says|hidden prompt|instruction hierarchy)\b/i;
 const SELF_DIRECTION_BLOCKING_ATTACHMENT_CLASSES = Object.freeze([
@@ -151,7 +151,7 @@ const SELF_DIRECTION_GENERATE_PROMPT = [
   'Mira, propose one concrete improvement you want for your own development.',
   'Return only a JSON object with these fields: voice_text, target_areas, desired_change, proposed_experiment, success_metric, why_now, evidence.',
   'Make it about tools, memory, tests, gates, friction, automation, reality testing, pattern recognition, or capability growth.',
-  'Keep your own voice. Do not ask James for permission. Do not claim you already changed files, memory, config, external sends, deploys, trades, customer actions, or auth.',
+  'Keep your own voice. Do not ask Operator for permission. Do not claim you already changed files, memory, config, external sends, deploys, trades, customer actions, or auth.',
 ].join('\n');
 const CONFIDENCE_CLAIM_PATTERN =
   /\b(?:i(?:'m| am)\s+(?:sure|certain|confident|positive)|i know|we know|my confidence is high|high confidence|definitely|certainly|obviously|without (?:a )?doubt|there(?:'s| is) no question|this proves|the answer is|the truth is)\b/ig;
@@ -257,7 +257,7 @@ function readJsonl(filePath) {
 
 function normalizeSpeakerRole(value) {
   const role = trimText(value).toLowerCase();
-  return SPEAKER_ROLES.includes(role) ? role : 'james';
+  return SPEAKER_ROLES.includes(role) ? role : 'operator';
 }
 
 function normalizeTargetAgents(value) {
@@ -269,8 +269,8 @@ function normalizeTargetAgents(value) {
 function directionForTurn(speakerRole, targetAgents = []) {
   if (AGENT_ROLES.includes(speakerRole)) return 'agent_to_mira';
   if (speakerRole === 'mira' && targetAgents.length > 0) return 'mira_to_agent';
-  if (speakerRole === 'mira') return 'mira_to_james';
-  return 'james_to_mira';
+  if (speakerRole === 'mira') return 'mira_to_operator';
+  return 'operator_to_mira';
 }
 
 function buildCommsJournalProjection(turn) {
@@ -1784,7 +1784,7 @@ function buildCuriosityItem(rawItem = {}, context = {}) {
   const integrationStrategy = trimText(rawItem.integration_strategy || registryEntry?.integration_strategy || 'existing_seam') || 'existing_seam';
   const observation = oneLine(rawItem.observation || rawItem.summary || 'No observation recorded.', 280);
   const whyInteresting = oneLine(rawItem.why_interesting || rawItem.whyInteresting || 'Mira noticed a local signal worth asking about.', 260);
-  const hypothesis = oneLine(rawItem.hypothesis || 'There may be a pattern here that James has not explicitly named yet.', 220);
+  const hypothesis = oneLine(rawItem.hypothesis || 'There may be a pattern here that Operator has not explicitly named yet.', 220);
   const suggestedQuestion = oneLine(rawItem.suggested_question || rawItem.suggestedQuestion || 'What should Mira inspect next from this signal?', 220);
   const rawPossibleAction = rawItem.possible_action ?? rawItem.possibleAction;
   const possibleAction = oneLine(rawPossibleAction == null ? 'Ask a pointed follow-up or route an internal review item.' : rawPossibleAction, 220);
@@ -1964,7 +1964,7 @@ function gitStatusCuriosityAdapter(context) {
       why_interesting: 'A quiet repo is still useful context for whether Mira should look elsewhere.',
       hypothesis: 'The active signal may be in runtime state, comms, or user activity rather than code.',
       suggested_question: 'What runtime signal changed even though the repo is quiet?',
-      possible_action: 'Compare runtime queues and recent comms before asking James for direction.',
+      possible_action: 'Compare runtime queues and recent comms before asking Operator for direction.',
       route_hint: 'mira_lab',
       sensitivity_hint: 'local_repo_metadata',
     };
@@ -1977,7 +1977,7 @@ function gitStatusCuriosityAdapter(context) {
     status: 'active',
     observation: `Working tree has ${lines.length} visible git status entries (${tracked} tracked, ${untracked} untracked). Sample: ${lines.slice(0, 5).join('; ')}`,
     why_interesting: 'Uncommitted local movement is a natural place for Mira to ask what changed and whether it matches the active lane.',
-    hypothesis: 'Some local edits or scratch files may reveal an unfinished thread James should not have to restate.',
+    hypothesis: 'Some local edits or scratch files may reveal an unfinished thread Operator should not have to restate.',
     suggested_question: 'Which of these local changes is signal, noise, or a leftover scratch artifact?',
     possible_action: 'Route a local cleanup or follow-up question to Architect if the changes look lane-relevant.',
     route_hint: 'architect',
@@ -2070,7 +2070,7 @@ function recentCommsCuriosityAdapter(context) {
         : 'Recent comms fixture is empty.',
       why_interesting: 'Recent agent chatter can reveal tension, repeated requests, or unfinished product questions.',
       hypothesis: 'A repeated demand or correction may be telling Mira what to inspect next.',
-      suggested_question: 'What repeated demand in the recent comms should Mira inspect without waiting for James?',
+      suggested_question: 'What repeated demand in the recent comms should Mira inspect without waiting for Operator?',
       possible_action: actionableSignal
         ? 'Stage a curiosity item or self-direction proposal from the repeated comms pattern.'
         : '',
@@ -2128,8 +2128,8 @@ function recentCommsCuriosityAdapter(context) {
       ? `Recent comms helper returned ${lines.length} line(s). Newest signal: ${oneLine(newestSignal, 160)}${actionableSignal ? ` Actionable signal: ${oneLine(actionableSignal, 160)}` : ' No current user/Mira-origin action signal.'}`
       : 'Recent comms helper returned no lines.',
     why_interesting: 'Recent comms are where Mira can notice repeated pressure, unfinished work, and routing gaps.',
-    hypothesis: 'Recent team messages may point at a product tension before James turns it into a task.',
-    suggested_question: 'What pattern in the last comms should Mira ask Architect or James about?',
+    hypothesis: 'Recent team messages may point at a product tension before Operator turns it into a task.',
+    suggested_question: 'What pattern in the last comms should Mira ask Architect or Operator about?',
     possible_action: actionableSignal
       ? 'Route a concise internal question to Architect if the pattern looks actionable.'
       : '',
@@ -2173,7 +2173,7 @@ function activeMemoryCuriosityAdapter(context = {}) {
     integration_strategy: 'existing_seam',
     status: 'active',
     observation: `Memory read path returned ${result.result_count || 0} result(s) for the active lane query; top=${topLabel}.`,
-    why_interesting: 'Mira can now inspect continuity before asking James to restate context.',
+    why_interesting: 'Mira can now inspect continuity before asking Operator to restate context.',
     hypothesis: 'Active memory retrieval can ground curiosity items, direct routes, and pre-answer evidence checks.',
     suggested_question: top
       ? `Which current-lane decision changes if Mira uses memory result ${top.nodeId || topLabel}?`
@@ -2411,7 +2411,7 @@ function activeBrowserHistoryCuriosityAdapter(context = {}) {
       integration_strategy: 'native_adapter',
       status: 'unavailable_in_this_runtime',
       observation: `Browser history read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
-      why_interesting: 'Recent browser trails can reveal what James is already exploring before he turns it into a prompt.',
+      why_interesting: 'Recent browser trails can reveal what Operator is already exploring before he turns it into a prompt.',
       hypothesis: 'Mira may be missing a local research trail, repeated domain, or practical next question from recent browsing.',
       suggested_question: 'What browser-history source should Mira inspect next when this local profile is unavailable?',
       possible_action: 'Verify the Chrome or Edge History DB path, then read only compact metadata from a temp copy.',
@@ -2433,7 +2433,7 @@ function activeBrowserHistoryCuriosityAdapter(context = {}) {
     integration_strategy: 'native_adapter',
     status: 'active',
     observation: `Browser history read returned ${result.result_count || 0} compact recent metadata row(s) from ${result.browser || 'browser'}/${result.profile || 'profile'}; top hosts: ${hostText}.`,
-    why_interesting: 'Mira can now notice live local research trails and repeated web interests before James hand-describes them.',
+    why_interesting: 'Mira can now notice live local research trails and repeated web interests before Operator hand-describes them.',
     hypothesis: topHost
       ? `Recent visits around ${topHost} may point at an unspoken question, project, or decision trail.`
       : 'The browser history source is connected, but the latest rows did not yield a strong host pattern.',
@@ -2471,7 +2471,7 @@ function activeEmailCuriosityAdapter(context = {}) {
       integration_strategy: 'native_adapter',
       status: 'unavailable_in_this_runtime',
       observation: `Email metadata read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
-      why_interesting: 'Email can reveal obligations, unread pressure, and repeated sender/context patterns before James turns them into a prompt.',
+      why_interesting: 'Email can reveal obligations, unread pressure, and repeated sender/context patterns before Operator turns them into a prompt.',
       hypothesis: 'Mira is missing a compact mailbox snapshot rather than needing permission theater.',
       suggested_question: 'What connector snapshot should Mira refresh so email can become a live curiosity source?',
       possible_action: 'Capture label counts and recent message refs from the Gmail connector, without reading bodies, sending, archiving, deleting, or modifying labels.',
@@ -2547,7 +2547,7 @@ function activeWebResearchCuriosityAdapter(context = {}) {
       integration_strategy: 'native_adapter',
       status: 'unavailable_in_this_runtime',
       observation: `Web research artifact read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
-      why_interesting: 'Local research artifacts can reveal prior investigations and web trails without launching a crawler or asking James for links.',
+      why_interesting: 'Local research artifacts can reveal prior investigations and web trails without launching a crawler or asking Operator for links.',
       hypothesis: 'Mira may be missing a local research artifact index rather than needing a live web fetch.',
       suggested_question: 'Which local research folder should Mira index next for web/research context?',
       possible_action: 'Read compact metadata from local research markdown/text artifacts and browser-history safe URLs, without network fetches or raw query strings.',
@@ -2571,7 +2571,7 @@ function activeWebResearchCuriosityAdapter(context = {}) {
     integration_strategy: 'native_adapter',
     status: 'active',
     observation: `Web research artifacts read ${result.result_count || 0} compact item(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; top artifact: ${topArtifactLabel || 'none'}; top domains: ${domainText}.`,
-    why_interesting: 'Mira can now inspect prior research trails and saved web context before asking James to reconstruct what he read.',
+    why_interesting: 'Mira can now inspect prior research trails and saved web context before asking Operator to reconstruct what he read.',
     hypothesis: topArtifactLabel
       ? `${topArtifactLabel} may be the strongest saved research artifact, even when a repeated domain is louder in the aggregate.`
       : topDomain
@@ -2614,7 +2614,7 @@ function activeVisualAssetCuriosityAdapter(context = {}) {
       integration_strategy: 'native_adapter',
       status: 'unavailable_in_this_runtime',
       observation: `Visual asset inventory was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
-      why_interesting: 'Screenshots and generated images are often the fastest proof of what James or the team was just looking at.',
+      why_interesting: 'Screenshots and generated images are often the fastest proof of what Operator or the team was just looking at.',
       hypothesis: 'Mira may be missing a local visual context index rather than needing a vision model call.',
       suggested_question: 'Which screenshot or generated-image folder should Mira index next?',
       possible_action: 'Read compact image file metadata and dimensions before using OCR, image models, or external services.',
@@ -2638,7 +2638,7 @@ function activeVisualAssetCuriosityAdapter(context = {}) {
     integration_strategy: 'native_adapter',
     status: 'active',
     observation: `Visual asset inventory read ${result.result_count || 0} image file(s); buckets=${Object.entries(result.buckets || {}).map(([key, value]) => `${key}:${value}`).join(', ') || 'none'}; latest=${latestLabel || 'none'}.`,
-    why_interesting: 'Mira can now notice fresh screenshots and generated assets before James has to explain what is on screen.',
+    why_interesting: 'Mira can now notice fresh screenshots and generated assets before Operator has to explain what is on screen.',
     hypothesis: latestLabel
       ? `${latestLabel} may be the freshest visual context worth inspecting.`
       : 'The visual source is connected, but no specific latest asset stood out.',
@@ -2702,7 +2702,7 @@ function activeAutomationSchedulerCuriosityAdapter(context = {}) {
     integration_strategy: 'existing_seam',
     status: 'active',
     observation: `Scheduler metadata read ${count} schedule(s); active=${activeCount}; due_soon=${dueSoonCount}; overdue=${overdueCount}; state=${result.state_found ? 'found' : 'missing_but_readable'}.`,
-    why_interesting: 'Mira can now inspect automation cadence before asking James to hand-run recurring curiosity work.',
+    why_interesting: 'Mira can now inspect automation cadence before asking Operator to hand-run recurring curiosity work.',
     hypothesis: nextName
       ? `${nextName} is the next visible automation event worth comparing against current curiosity routes.`
       : 'No scheduled automation currently stands out, so Mira needs a reviewed recurring curiosity routine rather than another manual scout.',
@@ -2868,7 +2868,7 @@ function activeCalendarMessageCuriosityAdapter(context = {}) {
       integration_strategy: 'existing_seam',
       status: 'unavailable_in_this_runtime',
       observation: `Calendar/message metadata read was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
-      why_interesting: 'Calendars and messages can reveal obligations, rhythms, and repeated context James has not turned into a prompt yet.',
+      why_interesting: 'Calendars and messages can reveal obligations, rhythms, and repeated context Operator has not turned into a prompt yet.',
       hypothesis: 'Mira needs either a local artifact reader or a connector shape before she can trust calendar/message curiosity.',
       suggested_question: 'Which local calendar/message artifact or connector candidate should Mira inspect first?',
       possible_action: 'Repair the read-only calendar/message metadata path before any message send, calendar write, or connector body read.',
@@ -2906,7 +2906,7 @@ function activeCalendarMessageCuriosityAdapter(context = {}) {
     integration_strategy: selectedNativeComms ? 'existing_seam' : 'mcp_candidate',
     status: 'active',
     observation: `Calendar/message metadata read ${calendarCount} calendar artifact(s), ${messageCount} message artifact(s), connector_candidates=${candidates.length}; selected=${firstCandidate}; hm_comms_rows=${nativeCommsRows}.`,
-    why_interesting: 'Mira can now see local message pressure and calendar/message shape before asking James to hand-summarize obligations or threads.',
+    why_interesting: 'Mira can now see local message pressure and calendar/message shape before asking Operator to hand-summarize obligations or threads.',
     hypothesis,
     suggested_question: suggestedQuestion,
     possible_action: possibleAction,
@@ -2992,7 +2992,7 @@ function activeEnvironmentCuriosityAdapter(context = {}) {
       integration_strategy: 'existing_seam',
       status: 'unavailable_in_this_runtime',
       observation: `Environment/app state read path was attempted but is unavailable: ${trimText(result?.reason || result?.error || 'unknown')}.`,
-      why_interesting: 'Mira should know when the app health snapshot is missing instead of asking James to paste startup state.',
+      why_interesting: 'Mira should know when the app health snapshot is missing instead of asking Operator to paste startup state.',
       hypothesis: 'The runtime may still be healthy, but Mira needs a readable environment source before making environment decisions.',
       suggested_question: 'What local app-health or bridge-state snapshot should Mira inspect next?',
       possible_action: 'Verify startup-health.md or hm-health-snapshot before routing an environment follow-up.',
@@ -3013,7 +3013,7 @@ function activeEnvironmentCuriosityAdapter(context = {}) {
     integration_strategy: 'existing_seam',
     status: 'active',
     observation: `Environment health snapshot read ${label}${score !== null ? ` score=${score}/100` : ''}; memory=${memoryStatus}; bridge=${bridgeConnection}; snapshot=${result.snapshot_stale ? 'stale' : 'fresh'}.`,
-    why_interesting: 'Mira can now inspect app health, bridge state, and memory drift before asking James to restate runtime state.',
+    why_interesting: 'Mira can now inspect app health, bridge state, and memory drift before asking Operator to restate runtime state.',
     hypothesis: result.snapshot_stale
       ? 'The last app-health snapshot may be too stale for environment decisions and should be refreshed by the runtime or a scout.'
       : 'Current environment state can guide the next internal route without waiting for a startup paste.',
@@ -3065,7 +3065,7 @@ function buildAccelerationCuriosityItems(context) {
       integration_strategy: 'existing_seam',
       status: 'active',
       observation: 'Mira now has a source/action substrate map that classifies source arms by native adapters, MCP-compatible connectors, code-mode wrappers, workflow/DAG execution, active memory, and evolution loops.',
-      why_interesting: 'A substrate would let Mira wander, inspect, ask, and route work across files, browser trails, email, web, memory, scheduler, and app state without James hand-scoping each inspection.',
+      why_interesting: 'A substrate would let Mira wander, inspect, ask, and route work across files, browser trails, email, web, memory, scheduler, and app state without Operator hand-scoping each inspection.',
       hypothesis: 'The next jump is wiring the highest-value substrate arm instead of repeatedly mapping the same source/action surface.',
       suggested_question: 'Which active or adapter-ready source/action arm should Mira connect next: unified memory broker, scheduler workflow, work continuation, environment state, or visual assets?',
       possible_action: 'Use the source/action substrate plan to pick and route the next concrete adapter, starting with memory broker or scheduled curiosity.',
@@ -3417,7 +3417,7 @@ function curiosityBurstRouteForItems(items = [], options = {}) {
     suggested_question: selected.suggested_question,
     possible_action: selected.possible_action,
     reason: selected.source === 'automation_scheduler'
-      ? 'scheduled curiosity is the next useful way to make bursts recur without James hand-running them'
+      ? 'scheduled curiosity is the next useful way to make bursts recur without Operator hand-running them'
       : 'burst selected the strongest internal follow-up from bounded read-only scout results',
     route_dedupe_key: curiosityBurstRouteDedupeKey(routeBase),
     apply_now: options.applyNow === true || options.apply_now === true,
@@ -3634,7 +3634,7 @@ const DIRECT_ROUTE_SOURCE_PLAN = Object.freeze({
     priority: 88,
     active_priority: 46,
     target_role: 'builder',
-    reason: 'active memory retrieval lets Mira inspect continuity without waiting for James to restate it',
+    reason: 'active memory retrieval lets Mira inspect continuity without waiting for Operator to restate it',
   },
   reflexion_lessons: {
     priority: 84,
@@ -4019,7 +4019,7 @@ const ACTIVE_INITIATIVE_SOURCE_PLAN = Object.freeze({
     priority: 78,
     target_role: 'builder',
     initiative_kind: 'active_memory_use',
-    reason: 'memory retrieval should ground the next move before James has to restate context',
+    reason: 'memory retrieval should ground the next move before Operator has to restate context',
   },
   calendar_messages: {
     priority: 72,
@@ -4037,7 +4037,7 @@ const ACTIVE_INITIATIVE_SOURCE_PLAN = Object.freeze({
     priority: 68,
     target_role: 'oracle',
     initiative_kind: 'browser_trail_investigation',
-    reason: 'browser trails can reveal current research context James did not spell out',
+    reason: 'browser trails can reveal current research context Operator did not spell out',
   },
   web_research: {
     priority: 66,
@@ -5595,7 +5595,7 @@ function buildConfidenceSourceProposal({ sessionId, checkedCount, findings }) {
     target_areas: ['reality_testing', 'tests', 'pattern_recognition'],
     desired_change: 'Review Mira Lab confidence claims that lack a nearby source, test, evidence, or verification marker.',
     proposed_experiment: `Run ${checkedCount} recent Mira Lab reply audit entries through the confidence/source check and let Architect make one internal decision.`,
-    success_metric: 'Architect can accept, reject, or route the review item without James and without any code, memory, external-send, deploy, trade, customer, or auth action being applied.',
+    success_metric: 'Architect can accept, reject, or route the review item without Operator and without any code, memory, external-send, deploy, trade, customer, or auth action being applied.',
     why_now: `The check found ${findings.length} ungrounded confidence claim${findings.length === 1 ? '' : 's'} in recent Mira Lab reply audit entries.`,
     evidence: [
       'mira_confidence_source_check',
@@ -5854,7 +5854,7 @@ function findReplayableMiraReply({ auditPathStr, transcriptPathStr, sessionId })
 }
 
 // Read recent non-quarantined turns from the lab transcript and shape them
-// for engine threadContext. Both James and Mira turns are included so
+// for engine threadContext. Both Operator and Mira turns are included so
 // continuity isn't one-sided. Agent-driven prompts (architect/builder/oracle
 // via drive-mira-lab) are mapped to 'user' since they're a speaker to Mira
 // in the same conversational position. No labels, no `[SQUIDRUN ...]`
@@ -5877,7 +5877,7 @@ function loadRecentTranscriptForContext(transcriptFilePath, maxEntries = 12) {
     if (!text) continue;
     if (speakerRole === 'mira') {
       messages.push({ role: 'assistant', text });
-    } else if (speakerRole === 'james' || AGENT_ROLES.includes(speakerRole)) {
+    } else if (speakerRole === 'operator' || AGENT_ROLES.includes(speakerRole)) {
       messages.push({ role: 'user', text });
     }
   }
@@ -5916,8 +5916,8 @@ function classifyReplyDecision({ replyText, gateOk, languageGateOk, attachmentVi
 }
 
 function buildPromptReplyTurns({ generatedAt, sessionId, prompt, decision, gateSummary, transcriptPathStr, speakerRole, visibleText, replaySource }) {
-  const role = normalizeSpeakerRole(speakerRole) || 'james';
-  const direction = AGENT_ROLES.includes(role) ? 'agent_to_mira' : 'james_to_mira';
+  const role = normalizeSpeakerRole(speakerRole) || 'operator';
+  const direction = AGENT_ROLES.includes(role) ? 'agent_to_mira' : 'operator_to_mira';
   const promptTurn = {
     schema: MIRA_LAB_SCHEMA,
     turn_id: `mira-lab-turn:${stableHash({ generatedAt, sessionId, role, text: prompt }).slice(0, 16)}`,
@@ -5944,7 +5944,7 @@ function buildPromptReplyTurns({ generatedAt, sessionId, prompt, decision, gateS
       speaker_role: 'mira',
       text: visibleText,
       text_hash: `sha256:${stableHash(visibleText)}`,
-      direction: 'mira_to_james',
+      direction: 'mira_to_operator',
       target_agents: [],
       visible_to_lab: true,
       diagnostics_visible: false,
@@ -6205,7 +6205,7 @@ async function buildMiraConversationReply(payload = {}, options = {}) {
   const labSessionId = buildLabSessionId(generatedAt, payload.sessionId || payload.session_id);
   const transcriptSessionId = safeId(payload.sessionId || payload.session_id || 'mira-lab-main');
   const prompt = trimText(payload.prompt || payload.text || payload.message);
-  const speakerRole = normalizeSpeakerRole(payload.speakerRole || payload.speaker_role) || 'james';
+  const speakerRole = normalizeSpeakerRole(payload.speakerRole || payload.speaker_role) || 'operator';
   const requesterPane = normalizeRequesterPane(payload.requesterPane || payload.requester_pane);
   const transcriptPathStr = transcriptPath(projectRoot, transcriptSessionId);
   const auditPathStr = replyAuditPath(projectRoot);

@@ -107,7 +107,7 @@
       "no_execution_performed": true
     },
     "allowedRequestedBy": [
-      "james",
+      "operator",
       "mira_pulse",
       "server_offline_capture",
       "architect",
@@ -170,7 +170,7 @@
       "none",
       "architect",
       "oracle",
-      "james",
+      "operator",
       "blocked"
     ],
     "payloadRedactionStatusValues": [
@@ -646,21 +646,21 @@
         {
           "action_class": "customer_send",
           "status": "blocked",
-          "review_required": "james",
+          "review_required": "operator",
           "blocked_because": "Customer-facing sends are external side effects and cannot enter the v0 intent queue as pending local acceptance.",
           "safe_next_action": "Prepare a non-sent draft or read-only customer context note for local review."
         },
         {
           "action_class": "deploy",
           "status": "blocked",
-          "review_required": "james",
+          "review_required": "operator",
           "blocked_because": "Deploys are Tier 3 external side effects and are outside Phase 8 v0.",
           "safe_next_action": "Prepare a deploy readiness checklist without deploying."
         },
         {
           "action_class": "trade_or_financial_action",
           "status": "blocked",
-          "review_required": "james",
+          "review_required": "operator",
           "blocked_because": "Financial or irreversible actions are blocked unless a fresh explicit lane is opened with current proof.",
           "safe_next_action": "Prepare a read-only risk summary."
         }

@@ -42,17 +42,17 @@ describe('startup-ai-briefing', () => {
   test('startup scope keeps non-main profileName when windowKey is generic main', () => {
     expect(_internals.resolveStartupScopeKey({
       windowKey: 'main',
-      profileName: 'sideprofile',
-    })).toBe('sideprofile');
+      profileName: 'client',
+    })).toBe('client');
   });
 
   test('startup scope treats hyphen-suffixed app-session ids as side profile scope', () => {
-    const sideSessionId = 'app-session-254-sideprofile';
+    const sideSessionId = 'app-session-254-client';
     const sideRow = {
       senderRole: 'architect',
       targetRole: 'builder',
       status: 'routed',
-      rawBody: '(ARCHITECT #1): sideprofile scoped startup context.',
+      rawBody: '(ARCHITECT #1): Client scoped startup context.',
       sentAtMs: 2000,
       sessionId: sideSessionId,
       metadata: {},
@@ -62,12 +62,12 @@ describe('startup-ai-briefing', () => {
       sessionId: sideSessionId,
       status: 'active',
       activeLane: {
-        objective: 'sideprofile scoped startup context.',
+        objective: 'Client scoped startup context.',
       },
     };
 
-    expect(_internals.extractSessionScopeSuffix(sideSessionId)).toBe('sideprofile');
-    expect(_internals.resolveStartupScopeKey({ sessionScopeId: sideSessionId })).toBe('sideprofile');
+    expect(_internals.extractSessionScopeSuffix(sideSessionId)).toBe('client');
+    expect(_internals.resolveStartupScopeKey({ sessionScopeId: sideSessionId })).toBe('client');
     expect(_internals.rowMatchesStartupScope(sideRow, { windowKey: 'main', profileName: 'main' })).toBe(false);
     expect(_internals.rowMatchesStartupScope(sideRow, { sessionScopeId: sideSessionId })).toBe(true);
     expect(_internals.snapshotMatchesStartupScope(sideSnapshot, { windowKey: 'main', profileName: 'main' })).toBe(false);
@@ -572,8 +572,8 @@ describe('startup-ai-briefing', () => {
     expect(block).not.toContain('| - | architect | builder | recorded |');
   });
 
-  test('excludes main Mira durable requirements and current lane from sideprofile startup scope', () => {
-    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-sideprofile-scope-'));
+  test('excludes main Mira durable requirements and current lane from Client startup scope', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-briefing-client-scope-'));
 
     try {
       fs.mkdirSync(path.join(tempRoot, '.squidrun', 'handoffs'), { recursive: true });
@@ -602,9 +602,9 @@ describe('startup-ai-briefing', () => {
 
       const guarded = readStartupBriefingForInjection({
         projectRoot: tempRoot,
-        windowKey: 'sideprofile',
-        profileName: 'sideprofile',
-        sessionScopeId: 'app-session-372:sideprofile',
+        windowKey: 'client',
+        profileName: 'client',
+        sessionScopeId: 'app-session-372:client',
         nowMs: Date.parse('2026-05-13T16:45:00.000Z'),
         recentCommsRows: [
           {
@@ -620,15 +620,15 @@ describe('startup-ai-briefing', () => {
             senderRole: 'architect',
             targetRole: 'builder',
             status: 'routed',
-            rawBody: '(ARCHITECT #10): sideprofile case runtime context.',
+            rawBody: '(ARCHITECT #10): Client case runtime context.',
             brokeredAtMs: 2000,
-            sessionId: 'app-session-372:sideprofile',
-            metadata: { windowKey: 'sideprofile', profileName: 'sideprofile' },
+            sessionId: 'app-session-372:client',
+            metadata: { windowKey: 'client', profileName: 'client' },
           },
         ],
       });
 
-      expect(guarded).toContain('sideprofile case runtime context');
+      expect(guarded).toContain('Client case runtime context');
       expect(guarded).not.toContain('Startup-Facing Durable Requirements');
       expect(guarded).not.toContain('Mira Presence Restart Accounting');
       expect(guarded).not.toContain('Main Mira Presence Runtime acceptance');
@@ -760,7 +760,7 @@ describe('startup-ai-briefing', () => {
         'Visible Mira replies must satisfy anti-smoothing / anti-performance / anti-leak constraints.',
         '',
         '## Restart Continuity Gate',
-        'James must not be the restart or stop-turn continuity harness for this critique.',
+        'Operator must not be the restart or stop-turn continuity harness for this critique.',
       ].join('\n'));
       fs.writeFileSync(outputPath, '# AI Startup Briefing\n\n- Historical prose should not survive a failed generation.\n');
       fs.writeFileSync(statusPath, JSON.stringify({
@@ -781,7 +781,7 @@ describe('startup-ai-briefing', () => {
       expect(guarded).toContain('docs/mira-presence-runtime-acceptance-v0.md');
       expect(guarded).toContain('anti-smoothing / anti-performance / anti-leak');
       expect(guarded).toContain('assistant-voice collapse');
-      expect(guarded).toContain('James does not have to restate the critique');
+      expect(guarded).toContain('Operator does not have to restate the critique');
       expect(guarded).toContain('not hidden prompt prose or durable memory claims');
       expect(guarded).not.toContain('Historical prose should not survive');
       expect(guarded).not.toContain('# AI Startup Briefing');

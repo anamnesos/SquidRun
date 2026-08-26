@@ -16,7 +16,7 @@ function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
     schemaVersion: 1,
     instances: [
       {
-        id: 'james-main',
+        id: 'operator-main',
         codexInbox: '.squidrun/coord/codex-inbox.jsonl',
         architectInbox: '.squidrun/coord/architect-inbox.jsonl',
         coordPath: '.squidrun/coord',
@@ -31,7 +31,7 @@ function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
     schemaVersion: 1,
     instances: [
       {
-        id: 'james-main',
+        id: 'operator-main',
         codexInbox: '.squidrun/coord/codex-inbox.jsonl',
         architectInbox: '.squidrun/coord/architect-inbox.jsonl',
         coordPath: '.squidrun/coord',
@@ -59,7 +59,7 @@ describe('operator hub scripts', () => {
     const sent = [];
     const auditPromise = alignmentAudit.runAlignmentAudit({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       auditId: 'align-test',
       timeoutMs: 50,
       pollMs: 10,
@@ -91,7 +91,7 @@ describe('operator hub scripts', () => {
       type: 'alignment_report',
       from: 'architect',
       to: 'codex',
-      instance: 'james-main',
+      instance: 'operator-main',
       auditId: 'align-test',
     }));
     expect(report.entries.map((entry) => entry.identity)).toEqual(['architect', 'builder', 'absent']);

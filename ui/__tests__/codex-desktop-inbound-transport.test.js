@@ -108,7 +108,7 @@ describe('codex-desktop-inbound-transport', () => {
     const runner = makeRunner({
       'where.exe codex': {
         status: 0,
-        stdout: 'C:\\Users\\James\\AppData\\Roaming\\npm\\codex\r\nC:\\Users\\James\\AppData\\Roaming\\npm\\codex.cmd\r\n',
+        stdout: 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\codex\r\nC:\\Users\\Example User\\AppData\\Roaming\\npm\\codex.cmd\r\n',
         stderr: '',
       },
       'codex --version': { status: 0, stdout: 'codex-cli 0.135.0-alpha.2\n', stderr: '' },
@@ -117,7 +117,7 @@ describe('codex-desktop-inbound-transport', () => {
       'codex app-server --help': { status: 0, stdout: 'Usage: codex app-server [OPTIONS] [COMMAND]\n--listen <LISTEN>\n', stderr: '' },
       'codex remote-control --help': { status: 0, stdout: 'Usage: codex remote-control [OPTIONS] [COMMAND]\nCommands: start stop\n', stderr: '' },
       'codex app-server daemon version': { status: 1, stdout: '', stderr: 'Error: codex app-server daemon lifecycle is only supported on Unix platforms\n' },
-      'codex app-server proxy': { status: 1, stdout: '', stderr: 'Error: failed to connect to socket at C:\\Users\\James\\.codex\\app-server-control\\app-server-control.sock\n' },
+      'codex app-server proxy': { status: 1, stdout: '', stderr: 'Error: failed to connect to socket at C:\\Users\\Example User\\.codex\\app-server-control\\app-server-control.sock\n' },
     });
 
     const result = transport.probeCodexDesktopInboundTransport({
@@ -155,7 +155,7 @@ describe('codex-desktop-inbound-transport', () => {
 
   test('summon opens or focuses the workspace but never claims message injection', () => {
     const runner = makeRunner({
-      'where.exe codex': { status: 0, stdout: 'C:\\Users\\James\\AppData\\Roaming\\npm\\codex.cmd\n', stderr: '' },
+      'where.exe codex': { status: 0, stdout: 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\codex.cmd\n', stderr: '' },
       'codex --version': { status: 0, stdout: 'codex-cli 0.135.0-alpha.2\n', stderr: '' },
       'codex --help': { status: 0, stdout: 'Usage: codex [OPTIONS] [COMMAND]\nCommands: app app-server remote-control exec\n', stderr: '' },
       'codex app --help': { status: 0, stdout: 'Usage: codex app [OPTIONS] [PATH]\n', stderr: '' },
@@ -182,7 +182,7 @@ describe('codex-desktop-inbound-transport', () => {
 
   test('CLI probe emits deterministic JSON and exits zero for a blocked report', () => {
     const runner = makeRunner({
-      'where.exe codex': { status: 0, stdout: 'C:\\Users\\James\\AppData\\Roaming\\npm\\codex.cmd\n', stderr: '' },
+      'where.exe codex': { status: 0, stdout: 'C:\\Users\\Example User\\AppData\\Roaming\\npm\\codex.cmd\n', stderr: '' },
       'codex --version': { status: 0, stdout: 'codex-cli 0.135.0-alpha.2\n', stderr: '' },
       'codex --help': { status: 0, stdout: 'Usage: codex [OPTIONS] [COMMAND]\nCommands: app app-server remote-control exec\n', stderr: '' },
       'codex app --help': { status: 0, stdout: 'Usage: codex app [OPTIONS] [PATH]\n', stderr: '' },

@@ -36,7 +36,7 @@ const OBJECTIVE_OVERLAP_STOP_WORDS = new Set([
   'focus',
   'from',
   'handoff',
-  'james',
+  'operator',
   'lane',
   'live',
   'mission',
@@ -471,7 +471,7 @@ function trimContinuitySummary(value, limit = 220) {
 
 function extractPlainLanguageObjective(rawBody) {
   const stripped = stripAgentPrefix(normalizeLaneObjective(redactQuotedDirectiveText(rawBody)));
-  if (!/\bnew\s+lane\s+from\s+james\b/i.test(stripped)) return '';
+  if (!/\bnew\s+lane\s+from\s+operator\b/i.test(stripped)) return '';
   const match = stripped.match(/\bplain[-\s]+language\s+objective\s*:\s*([\s\S]+)$/i);
   if (!match) return '';
   const cleaned = String(match[1] || '')
@@ -506,7 +506,7 @@ function extractNaturalCurrentLaneDirective(rawBody) {
   const plainLanguageObjective = extractPlainLanguageObjective(rawBody);
   if (plainLanguageObjective) {
     return {
-      kind: 'james_plain_language_objective',
+      kind: 'operator_plain_language_objective',
       objective: plainLanguageObjective,
       priority: 128,
     };

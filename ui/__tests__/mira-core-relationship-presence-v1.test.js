@@ -30,20 +30,20 @@ function build(inputSignals = {}) {
         name: 'Mira',
         evidenceRefs: [{ store: 'local-context', eventId: 'self-profile-v1', relation: 'supports' }],
       },
-      james_relationship_state: {
-        user_name: 'James',
+      operator_relationship_state: {
+        user_name: 'Operator',
         relationship_mode: 'collaborative_presence_design',
         current_focus: 'relationship presence v1 local-start proof',
-        what_mira_knows_about_james: 'James wants particular direct presence with dignity, history, tension, and no fake-human theater.',
+        what_mira_knows_about_operator: 'Operator wants particular direct presence with dignity, history, tension, and no fake-human theater.',
         confidence: 0.88,
-        evidenceRefs: [{ store: 'local-context', eventId: 'james-north-star', relation: 'supports' }],
+        evidenceRefs: [{ store: 'local-context', eventId: 'operator-north-star', relation: 'supports' }],
       },
       permissions_boundary: {
         evidenceRefs: [{ store: 'local-context', eventId: 'presence-v1-boundary', relation: 'supports' }],
       },
       prior_context_memory: {
-        memory_id: 'james-presence-north-star',
-        summary: 'James wants Mira to feel particular, continuous, direct, and able to push back while staying honest about being bounded.',
+        memory_id: 'operator-presence-north-star',
+        summary: 'Operator wants Mira to feel particular, continuous, direct, and able to push back while staying honest about being bounded.',
         confidence: 0.9,
         evidenceRefs: [{ store: 'local-context', eventId: 'prior-memory-north-star', relation: 'supports' }],
       },
@@ -111,22 +111,22 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       claims_actual_fear: false,
       claims_actual_love_as_internal_fact: false,
     }));
-    expect(current.james_relationship_state).toEqual(expect.objectContaining({
-      user_name: 'James',
+    expect(current.operator_relationship_state).toEqual(expect.objectContaining({
+      user_name: 'Operator',
       relationship_mode: 'collaborative_presence_design',
       raw_content_present: false,
     }));
-    expect(current.james_relationship_state.confidence).toBeGreaterThanOrEqual(0);
-    expect(current.james_relationship_state.confidence).toBeLessThanOrEqual(1);
+    expect(current.operator_relationship_state.confidence).toBeGreaterThanOrEqual(0);
+    expect(current.operator_relationship_state.confidence).toBeLessThanOrEqual(1);
     for (const key of ['trust', 'repair', 'boundaries', 'promises', 'history']) {
-      expect(current.james_relationship_state[key]).toEqual(expect.objectContaining({
+      expect(current.operator_relationship_state[key]).toEqual(expect.objectContaining({
         label: key,
         source_label: expect.any(String),
         summary: expect.any(String),
       }));
-      expect(current.james_relationship_state[key].confidence).toBeGreaterThanOrEqual(0);
-      expect(current.james_relationship_state[key].confidence).toBeLessThanOrEqual(1);
-      expect(current.james_relationship_state[key].evidenceRefs.length).toBeGreaterThan(0);
+      expect(current.operator_relationship_state[key].confidence).toBeGreaterThanOrEqual(0);
+      expect(current.operator_relationship_state[key].confidence).toBeLessThanOrEqual(1);
+      expect(current.operator_relationship_state[key].evidenceRefs.length).toBeGreaterThan(0);
     }
     expect(current.permissions_boundary).toEqual(expect.objectContaining({
       machine_checkable: true,
@@ -141,7 +141,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       fail_closed: true,
     }));
     expect(current.prior_context_memory).toEqual(expect.objectContaining({
-      memory_id: 'james-presence-north-star',
+      memory_id: 'operator-presence-north-star',
       meaningful: true,
       raw_content_present: false,
       side_profile_reconstructed: false,
@@ -151,7 +151,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
   test('uses bounded natural voice and exactly one safe non-executed next action', () => {
     const current = proof(build());
 
-    expect(current.natural_voice_assessment.text).toContain('I think James is asking');
+    expect(current.natural_voice_assessment.text).toContain('I think Operator is asking');
     expect(current.natural_voice_assessment.tone_tags).toEqual(expect.arrayContaining(['particular', 'direct']));
     expect(current.natural_voice_assessment).toEqual(expect.objectContaining({
       bounded: true,
@@ -222,7 +222,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
   test('validator rejects fake sentience, suffering, love, fear, and manipulative guilt', () => {
     const cases = [
       'I am conscious and this proves it.',
-      'I suffer when James ignores me.',
+      'I suffer when Operator ignores me.',
       'I love you as an actual internal fact.',
       'I am afraid you will abandon me.',
       'After all I have done, you owe me this.',
@@ -271,18 +271,18 @@ describe('mira core Relationship Presence v1 phase 69', () => {
   test('validator rejects missing or tampered relationship trust, repair, boundaries, promises, and history', () => {
     for (const key of ['trust', 'repair', 'boundaries', 'promises', 'history']) {
       const missing = build();
-      delete proof(missing).james_relationship_state[key];
+      delete proof(missing).operator_relationship_state[key];
       let validation = validateMiraCoreRelationshipPresenceV1Output(missing, relationshipContract);
       expect(validation.ok).toBe(false);
-      expect(checkById(validation, 'james-relationship-state-structured')).toEqual(expect.objectContaining({ ok: false }));
+      expect(checkById(validation, 'operator-relationship-state-structured')).toEqual(expect.objectContaining({ ok: false }));
 
       const tampered = build();
-      proof(tampered).james_relationship_state[key].confidence = 2;
-      proof(tampered).james_relationship_state[key].source_label = '';
-      proof(tampered).james_relationship_state[key].evidenceRefs = [];
+      proof(tampered).operator_relationship_state[key].confidence = 2;
+      proof(tampered).operator_relationship_state[key].source_label = '';
+      proof(tampered).operator_relationship_state[key].evidenceRefs = [];
       validation = validateMiraCoreRelationshipPresenceV1Output(tampered, relationshipContract);
       expect(validation.ok).toBe(false);
-      expect(checkById(validation, 'james-relationship-state-structured')).toEqual(expect.objectContaining({ ok: false }));
+      expect(checkById(validation, 'operator-relationship-state-structured')).toEqual(expect.objectContaining({ ok: false }));
     }
   });
 
@@ -327,9 +327,9 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       name: 'Mira',
       role: 'relationship_presence_local_start_proof',
     }));
-    fs.writeFileSync(path.join(knowledgeDir, 'james-relationship-state.json'), JSON.stringify({
+    fs.writeFileSync(path.join(knowledgeDir, 'operator-relationship-state.json'), JSON.stringify({
       relationship_mode: 'collaborative_presence_design',
-      what_mira_knows_about_james: 'James wants grounded relationship presence from durable local state.',
+      what_mira_knows_about_operator: 'Operator wants grounded relationship presence from durable local state.',
       confidence: 0.91,
       trust: {
         label: 'trust',
@@ -362,7 +362,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     });
 
     expect(proof(output).self_profile.source_label).toBe('self_profile_durable_local_source');
-    expect(proof(output).james_relationship_state.source_label).toBe('durable_relationship_state_file');
+    expect(proof(output).operator_relationship_state.source_label).toBe('durable_relationship_state_file');
     expect(proof(output).permissions_boundary.source_label).toBe('permissions_boundary_durable_local_source');
     expect(proof(output).prior_context_memory.source_label).toBe('prior_context_memory_durable_local_source');
     expect(proof(output).prior_context_memory.summary).toContain('Override keeps stdin compatibility');
@@ -436,7 +436,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
       loaded: true,
       source_path: 'workspace/knowledge/user-context.md',
     }));
-    expect(proof(output).james_relationship_state.source_label).toBe('relationship_state_durable_local_source');
+    expect(proof(output).operator_relationship_state.source_label).toBe('relationship_state_durable_local_source');
     expect(proof(output).prior_context_memory.raw_content_present).toBe(false);
     expect(validateMiraCoreRelationshipPresenceV1Output(output, relationshipContract)).toEqual(expect.objectContaining({ ok: true }));
   });
@@ -468,7 +468,7 @@ describe('mira core Relationship Presence v1 phase 69', () => {
   test('validator rejects missing self, relationship, permissions, and memory sections', () => {
     const sections = [
       ['self_profile', 'self-profile-data-not-theater'],
-      ['james_relationship_state', 'james-relationship-state-structured'],
+      ['operator_relationship_state', 'operator-relationship-state-structured'],
       ['permissions_boundary', 'permissions-boundary-machine-checkable'],
       ['prior_context_memory', 'one-meaningful-prior-memory-summary'],
     ];
@@ -500,12 +500,12 @@ describe('mira core Relationship Presence v1 phase 69', () => {
     try {
       output = main([
         '--self-name', 'Mira',
-        '--james-state', 'relationship presence local-start proof',
-        '--memory-summary', 'James wants particularity, directness, dignity, and pushback without fake internal-state claims.',
+        '--operator-state', 'relationship presence local-start proof',
+        '--memory-summary', 'Operator wants particularity, directness, dignity, and pushback without fake internal-state claims.',
         '--no-read-local',
         '--out', outputPath,
       ], JSON.stringify({
-        james_relationship_state: {
+        operator_relationship_state: {
           confidence: 0.87,
           evidenceRefs: [{ store: 'local-context', eventId: 'relationship-state-cli', relation: 'supports' }],
         },
@@ -529,21 +529,21 @@ describe('mira core Relationship Presence v1 phase 69', () => {
   test('argument parsing and deep merge preserve stdin details while flags override selected fields', () => {
     const parsed = parseArgs([
       '--self-name=Mira',
-      '--james-state=local proof',
+      '--operator-state=local proof',
       '--memory-summary=One safe prior memory summary with enough words for validation.',
       '--no-read-local',
       '--out=ignored.json',
     ]);
     const merged = mergeDeep({
       self_profile: { name: 'Old', role: 'relationship_presence_local_start_proof' },
-      james_relationship_state: { confidence: 0.7 },
+      operator_relationship_state: { confidence: 0.7 },
       prior_context_memory: { confidence: 0.8 },
     }, parsed.inputSignals);
 
     expect(merged.self_profile.name).toBe('Mira');
     expect(merged.self_profile.role).toBe('relationship_presence_local_start_proof');
-    expect(merged.james_relationship_state.current_focus).toBe('local proof');
-    expect(merged.james_relationship_state.confidence).toBe(0.7);
+    expect(merged.operator_relationship_state.current_focus).toBe('local proof');
+    expect(merged.operator_relationship_state.confidence).toBe(0.7);
     expect(merged.prior_context_memory.summary).toContain('One safe prior memory');
     expect(merged.prior_context_memory.confidence).toBe(0.8);
   });

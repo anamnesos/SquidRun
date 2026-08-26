@@ -13,6 +13,12 @@ const headerScreenshotPath = String(process.env.TEAM_ROOM_QR_HEADER_SCREENSHOT |
 const maximizedHeaderScreenshotPath = String(process.env.TEAM_ROOM_QR_MAXIMIZED_HEADER_SCREENSHOT || '').trim();
 const nativeHeaderScreenshotPath = String(process.env.TEAM_ROOM_QR_NATIVE_HEADER_SCREENSHOT || '').trim();
 const smokeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-qr-browser-'));
+const HIDDEN_TEST_WINDOW_OPTIONS = Object.freeze({
+  show: false,
+  opacity: 0,
+  skipTaskbar: true,
+  focusable: false,
+});
 app.setPath('userData', path.join(smokeRoot, 'user-data'));
 app.commandLine.appendSwitch('disable-gpu');
 
@@ -142,7 +148,13 @@ async function run() {
       credentialToken: electronCredential.token,
       statePath: path.join(smokeRoot, 'window-state.json'),
       showOnReady: false,
-      windowOptions: { width: 716, height: 1000, minWidth: 320, minHeight: 480 },
+      windowOptions: {
+        ...HIDDEN_TEST_WINDOW_OPTIONS,
+        width: 716,
+        height: 1000,
+        minWidth: 320,
+        minHeight: 480,
+      },
     });
     desktopWindow = created.window;
     desktopWindow.webContents.on('console-message', (_event, level, message) => {
@@ -209,9 +221,12 @@ async function run() {
       fs.writeFileSync(path.resolve(maximizedHeaderScreenshotPath), (await desktopWindow.webContents.capturePage()).toPNG());
     }
     checkpoint('maximized-header-captured');
-    desktopWindow.restore();
-    checkpoint('restore-called');
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // Keep the hidden harness window maximized for the remainder of the smoke.
+    // Restoring an opacity-zero, non-focusable BrowserWindow can wedge the
+    // Windows native window-state transition under full-suite load. Nothing
+    // below depends on restored geometry, and the separate native window still
+    // proves the normal framed layout, so restoring here adds no product
+    // coverage and only exercises an invisible harness-only transition.
     await desktopWindow.webContents.executeJavaScript(`document.querySelector('#remoteAccessButton').click()`);
     await waitForRenderer(desktopWindow, `() => document.querySelector('#remoteAccessLabel')?.textContent.includes('Enable HTTPS Certificates')`, 12_000, 'remote-error');
     const remoteAccessDiagnostic = await desktopWindow.webContents.executeJavaScript(`(() => ({
@@ -275,7 +290,7 @@ async function run() {
         + '#pair=' + document.querySelector('#pairCodeDisplay').textContent.replace(/\\s/gu, '')`
     );
     phoneWindow = new BrowserWindow({
-      show: false,
+      ...HIDDEN_TEST_WINDOW_OPTIONS,
       width: 390,
       height: 844,
       webPreferences: {
@@ -303,12 +318,12 @@ async function run() {
     const pairedCookie = cookies.find((cookie) => cookie.name === 'squidrun_team_room');
     checkpoint('phone-paired', { phone, pairedCookiePresent: Boolean(pairedCookie) });
 
-    // James's currently running main process predates overlay chrome. It loads the
+    // Operator's currently running main process predates overlay chrome. It loads the
     // new static page at bare `/` inside a normal framed BrowserWindow, so prove
     // that exact mixed-version close/reopen path separately from the next-restart
     // `?chrome=overlay` path above.
     nativeWindow = new BrowserWindow({
-      show: false,
+      ...HIDDEN_TEST_WINDOW_OPTIONS,
       width: 716,
       height: 1000,
       title: 'SquidRun Team Room',
@@ -427,6 +442,14 @@ async function run() {
         sameSite: pairedCookie.sameSite,
         expirationDate: pairedCookie.expirationDate,
       } : null,
+      harnessWindows: Object.fromEntries([
+        ['desktop', desktopWindow],
+        ['phone', phoneWindow],
+        ['native', nativeWindow],
+      ].map(([name, windowRef]) => [name, {
+        opacity: windowRef.getOpacity(),
+        focusable: windowRef.isFocusable(),
+      }])),
       consoleErrors,
       screenshot: screenshotPath ? path.resolve(screenshotPath) : null,
       smokeRoot,

@@ -32,7 +32,7 @@ const DEFAULT_ALLOWLIST = Object.freeze([
   },
   {
     path: 'ui/modules/main/system-protected-evals.js',
-    literal: 'app-session-462:sideprofile',
+    literal: 'app-session-462:client',
     count: 2,
     reason: 'Historical Phase 2 cross-scope mismatch exhibit paired with the route-metadata protected eval.',
   },
@@ -52,13 +52,13 @@ const DEFAULT_ALLOWLIST = Object.freeze([
     path: 'ui/__tests__/missing-arm-watchdog.test.js',
     literal: 'app-session-406',
     count: 1,
-    reason: 'Historical TrustQuote watchdog fixture for main-session projection, not current session authority.',
+    reason: 'Historical ExampleApp watchdog fixture for main-session projection, not current session authority.',
   },
   {
     path: 'ui/__tests__/missing-arm-watchdog.test.js',
-    literal: 'app-session-406:trustquote',
+    literal: 'app-session-406:exampleapp',
     count: 14,
-    reason: 'Historical TrustQuote watchdog fixture for scoped-arm liveness, not current session authority.',
+    reason: 'Historical ExampleApp watchdog fixture for scoped-arm liveness, not current session authority.',
   },
   {
     path: 'ui/__tests__/fixtures/mira-core-intent-queue-contract.json',
@@ -98,7 +98,7 @@ const DEFAULT_ALLOWLIST = Object.freeze([
   },
   {
     path: 'ui/__tests__/fixtures/mira-core-snapshot-contract.json',
-    literal: 'app-session-328:sideprofile',
+    literal: 'app-session-328:client',
     count: 1,
     reason: 'Historical Mira snapshot cross-scope contract sample; fixture data only.',
   },

@@ -376,7 +376,7 @@ describe('resource-handlers', () => {
       handlers = {};
       registerResourceHandlers({
         ipcMain: mockIpcMain,
-        WORKSPACE_PATH: '/home/user/workspace',
+        WORKSPACE_PATH: '/sample/workspace',
         resourceUsageCacheTtlMs: 0,
         daemonClient: { getTerminals: () => [] },
       });

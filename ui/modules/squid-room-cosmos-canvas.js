@@ -1,7 +1,7 @@
 /**
  * THE PHOTOGRAPHED COSMOS (v4) — a real Hubble backplate, living layers on top.
  *
- * James (S467): "are you just trying harder on making it look different
+ * Operator (S467): "are you just trying harder on making it look different
  * instead of an actual professional game developer approach?" Correct:
  * studios ship ASSETS, not runtime art. The sky is now a graded NASA
  * photograph of the Tarantula Nebula (assets/squid-room-backplate-v1.jpg,
@@ -70,7 +70,7 @@ function fbm(grid, size, x, y, octaves) {
 
 function paintBase(ctx, w, h, tokens) {
   // Deep night, uniformly dark. The old light-at-the-top water column WAS
-  // the haze James kept seeing (fog-gate: lifted mean luminance across the
+  // the haze Operator kept seeing (fog-gate: lifted mean luminance across the
   // whole band); depth is now told by star density and cloud placement,
   // not by paling the water. No surface bloom — a pale radial wash is fog
   // by definition.

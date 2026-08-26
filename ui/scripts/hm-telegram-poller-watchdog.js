@@ -408,7 +408,7 @@ function formatDurationMinutes(ageMs) {
   return String(Math.max(1, Math.round(Number(ageMs) / 60_000)));
 }
 
-function notifyJames(projectRoot, freshness, options = {}) {
+function notifyOperator(projectRoot, freshness, options = {}) {
   const message = typeof options.message === 'string' && options.message.trim()
     ? options.message.trim()
     : `Telegram inbound was stale for about ${formatDurationMinutes(freshness?.ageMs)} min; I restarted the poller so inbound messages are flowing again.`;
@@ -531,9 +531,9 @@ async function recoverWedgedTelegramPoller(options = {}) {
       writeWatchdogLog(projectRoot, `[recover] standalone lane restart failed reason=${standaloneRestart?.reason || 'unknown'}`);
     }
     const notice = standaloneRestartSuccess && options.dryRun !== true
-      ? (typeof options.notifyJames === 'function'
-        ? await Promise.resolve(options.notifyJames(projectRoot, freshness, { reason }))
-        : notifyJames(projectRoot, freshness, { reason }))
+      ? (typeof options.notifyOperator === 'function'
+        ? await Promise.resolve(options.notifyOperator(projectRoot, freshness, { reason }))
+        : notifyOperator(projectRoot, freshness, { reason }))
       : null;
     return {
       ok: standaloneRestartSuccess,
@@ -571,9 +571,9 @@ async function recoverWedgedTelegramPoller(options = {}) {
       writeWatchdogLog(projectRoot, `[recover] app-control restart succeeded reason=${reason}`);
       const notice = options.dryRun === true
         ? null
-        : (typeof options.notifyJames === 'function'
-          ? await Promise.resolve(options.notifyJames(projectRoot, freshness, { reason }))
-          : notifyJames(projectRoot, freshness, { reason }));
+        : (typeof options.notifyOperator === 'function'
+          ? await Promise.resolve(options.notifyOperator(projectRoot, freshness, { reason }))
+          : notifyOperator(projectRoot, freshness, { reason }));
       return {
         ok: true,
         action: 'app_restart',
@@ -627,9 +627,9 @@ async function recoverWedgedTelegramPoller(options = {}) {
   const standalone = await Promise.resolve(startStandaloneLane());
   const standaloneSuccess = standalone?.ok === true;
   const notice = standaloneSuccess && options.dryRun !== true
-    ? (typeof options.notifyJames === 'function'
-      ? await Promise.resolve(options.notifyJames(projectRoot, freshness, { reason }))
-      : notifyJames(projectRoot, freshness, { reason }))
+    ? (typeof options.notifyOperator === 'function'
+      ? await Promise.resolve(options.notifyOperator(projectRoot, freshness, { reason }))
+      : notifyOperator(projectRoot, freshness, { reason }))
     : null;
 
   if (standaloneSuccess) {

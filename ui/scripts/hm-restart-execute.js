@@ -9,7 +9,7 @@ const { getProjectRoot } = require('../config');
 const { checkDependencyIntegrity } = require('./hm-dependency-integrity');
 const { runRestartLaunchProbe } = require('./hm-restart-launch-probe');
 
-const DEFAULT_INSTANCE_ID = 'james-main';
+const DEFAULT_INSTANCE_ID = 'operator-main';
 const PREFLIGHT_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 const DEFAULT_RELAUNCH_VERIFY_TIMEOUT_MS = 60_000;
@@ -142,7 +142,7 @@ function inferProfileFromInstance(instance = {}, instanceId = '') {
 
 function isMainProfileName(profile = '') {
   const normalized = String(profile || '').trim().toLowerCase();
-  return !normalized || normalized === 'main' || normalized === 'james-main';
+  return !normalized || normalized === 'main' || normalized === 'operator-main';
 }
 
 function inferProfileWorkspaceRoot(callerProjectRoot, registryRoot, instance = {}, profile = '') {

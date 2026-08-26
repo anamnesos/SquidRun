@@ -94,7 +94,7 @@ function findTerminalConsumptionEvidence(input = {}) {
     if (ABSENT_REASONS.has(found.reason)) return null;
     // AMBIGUOUS OR CORRUPT. Two turns claiming one message, or bytes that do
     // not parse, is exactly the state where guessing puts a duplicate in front
-    // of James or retires something he never saw.
+    // of Operator or retires something he never saw.
     throw new Error(`terminal consumption proof unreadable: ${found.reason}`);
   }
 

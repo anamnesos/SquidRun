@@ -55,7 +55,7 @@ const ENTRY = {
   channel: 'telegram',
   direction: 'outbound',
   senderRole: 'mira',
-  targetRole: 'james',
+  targetRole: 'operator',
   rawBody: 'the reply body',
   inboundMessageId: 'telegram-in-1',
   chatId: 1111111111,
@@ -156,9 +156,9 @@ test.each([
 test.each([
   ['different inbound message', { inboundMessageId: 'telegram-in-999' }],
   ['different chat', { chatId: 2222222222 }],
-  ['different window', { windowKey: 'sideprofile' }],
-  ['different profile', { profile: 'sideprofile' }],
-  ['different route', { routeKey: 'sideprofile' }],
+  ['different window', { windowKey: 'client' }],
+  ['different profile', { profile: 'client' }],
+  ['different route', { routeKey: 'client' }],
 ])('ROUTE IDENTITY MISMATCH fails closed: %s', (_l, override) => {
   const dbPath = tempDbPath();
   openStore(dbPath).claimCommsSend(ENTRY);
@@ -210,7 +210,7 @@ test('REAL PRODUCER SHAPE: identity nested under metadata only still claims and 
     channel: 'telegram',
     direction: 'outbound',
     senderRole: 'mira',
-    targetRole: 'james',
+    targetRole: 'operator',
     rawBody: 'chunked reply part 1',
     metadata: {
       inboundMessageId: 'telegram-in-7',
@@ -330,7 +330,7 @@ test.each([
     channel: 'telegram',
     direction: 'outbound',
     senderRole: 'mira',
-    targetRole: 'james',
+    targetRole: 'operator',
     rawBody: ENTRY.rawBody,
     status: 'recorded',
     metadata: legacyMetadata,

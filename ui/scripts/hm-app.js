@@ -23,7 +23,7 @@ function usage() {
   console.log(`  --timeout <ms>              Response timeout (default: ${DEFAULT_RESPONSE_TIMEOUT_MS})`);
   console.log('terminal-scroll-probe options:');
   console.log('  --window-key <key>          Explicit target renderer window key');
-  console.log('  --container-id <id>         Terminal container id, e.g. terminal-trustquote-app');
+  console.log('  --container-id <id>         Terminal container id, e.g. terminal-exampleapp-app');
   console.log('  --op <op>                   scrollLines | dispatchWheel | dispatchKey | dispatchClick | dispatchHover | dispatchSelect | clearHover');
   console.log('  --selector <css>            Target element for dispatchClick/dispatchHover/dispatchSelect (S426 UX-audit ops)');
   console.log('  --value <value>             Value for dispatchSelect');
@@ -38,7 +38,7 @@ function usage() {
   console.log('  node hm-app.js open-squid-room');
   console.log('  node hm-app.js open-visual-capture-window');
   console.log('  node hm-app.js close-app-window --window-key squid-room');
-  console.log('  node hm-app.js terminal-scroll-probe --window-key squid-room --container-id terminal-trustquote-app --op dispatchKey --key PageUp');
+  console.log('  node hm-app.js terminal-scroll-probe --window-key squid-room --container-id terminal-exampleapp-app --op dispatchKey --key PageUp');
 }
 
 function parseArgs(argv) {

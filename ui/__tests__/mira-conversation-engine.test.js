@@ -89,7 +89,7 @@ async function seedThreeAgentConversation(projectRoot, deps = {}) {
   await buildMiraLabTurn({
     sessionId,
     speakerRole: 'architect',
-    text: 'Mira, hold the contradiction: James wants speed and also refuses costume. What do you choose to examine first?',
+    text: 'Mira, hold the contradiction: Operator wants speed and also refuses costume. What do you choose to examine first?',
   }, { projectRoot, ...deps });
   await buildMiraLabTurn({
     sessionId,
@@ -117,7 +117,7 @@ async function seedThreeAgentConversation(projectRoot, deps = {}) {
     sessionId,
     speakerRole: 'mira',
     targetAgents: ['oracle'],
-    text: 'Repeated transcripts where I surprise James with a grounded question, refuse a false premise, and keep continuity without explaining the machinery.',
+    text: 'Repeated transcripts where I surprise Operator with a grounded question, refuse a false premise, and keep continuity without explaining the machinery.',
   }, { projectRoot, ...deps });
   return sessionId;
 }
@@ -226,7 +226,7 @@ describe('Mira Lab sidecar surface', () => {
         target_areas: ['memory', 'tests', 'reality_testing'],
         desired_change: 'Expose a local review queue of recent Mira replies that failed continuity or pushback checks.',
         proposed_experiment: 'Run ten Mira Lab replies through the classifier and ask Architect to label whether the queue caught the real failure.',
-        success_metric: 'At least eight of ten queued items are reviewable without exposing hidden prompts or requiring James to police me.',
+        success_metric: 'At least eight of ten queued items are reviewable without exposing hidden prompts or requiring Operator to police me.',
         evidence: ['ARCH #19 evolution affordance', 'Oracle #5 actionability refinement'],
       },
     }, {
@@ -320,18 +320,18 @@ describe('Mira Lab sidecar surface', () => {
     expect(sendAgentMessage).not.toHaveBeenCalled();
   });
 
-  test('deterministic Mira-origin harness creates, lists, and routes proposal without James or autonomous apply', async () => {
+  test('deterministic Mira-origin harness creates, lists, and routes proposal without Operator or autonomous apply', async () => {
     projectRoot = tempProject();
     const sendAgentMessage = jest.fn(async (target, body) => ({ target, accepted: true, body }));
 
     const created = await generateMiraSelfDirectionProposal({
       sessionId: 'mira-origin-harness',
       proxyProposal: {
-        voice_text: "I want a reality mirror before I start sounding certain. Don't make James babysit that.",
+        voice_text: "I want a reality mirror before I start sounding certain. Don't make Operator babysit that.",
         target_areas: ['reality_testing', 'tests'],
         desired_change: 'Stage a local review item whenever my reply claims certainty without a source or test.',
         proposed_experiment: 'Run five Mira Lab replies through the source check and let Architect route one item.',
-        success_metric: 'Architect can route the item to Builder without James and without applying code, config, or memory.',
+        success_metric: 'Architect can route the item to Builder without Operator and without applying code, config, or memory.',
         evidence: ['deterministic_mira_origin_harness_fixture'],
       },
       notifyArchitect: false,
@@ -353,7 +353,7 @@ describe('Mira Lab sidecar surface', () => {
     const listed = listMiraSelfDirectionProposals({}, { projectRoot });
     expect(listed.count).toBe(1);
     expect(listed.proposals[0].proposal_id).toBe(created.proposal_id);
-    expect(JSON.stringify(listed)).not.toMatch(/james permission|required permission|ask james/i);
+    expect(JSON.stringify(listed)).not.toMatch(/operator permission|required permission|ask operator/i);
 
     const routed = await reviewMiraSelfDirectionProposal({
       proposalId: created.proposal_id,
@@ -388,7 +388,7 @@ describe('Mira Lab sidecar surface', () => {
       target_areas: ['automation', 'reality_testing'],
       desired_change: 'Stage structured self-improvement JSON even when the visible Mira Lab reply is held by a display gate.',
       proposed_experiment: 'Ask Mira for one JSON proposal, hold the visible text, then verify the internal proposal queue receives the concrete change.',
-      success_metric: 'Builder and Oracle can route the proposal from the queue without James restating it.',
+      success_metric: 'Builder and Oracle can route the proposal from the queue without Operator restating it.',
       why_now: 'Mira leadership fails if her concrete proposal is discarded because the visible surface held it.',
       evidence: ['blocked_prompt_reply_with_structured_json'],
     };
@@ -845,7 +845,7 @@ describe('Mira Lab sidecar surface', () => {
       generated_at: '2026-05-12T11:00:00.000Z',
       target_areas: ['automation'],
       review_status: 'pending_architect_review',
-      desired_change: 'Let Mira inspect local signals before James hand-feeds the next prompt.',
+      desired_change: 'Let Mira inspect local signals before Operator hand-feeds the next prompt.',
     });
 
     const result = runMiraCuriosityScout({}, {
@@ -866,7 +866,7 @@ describe('Mira Lab sidecar surface', () => {
           nodeId: 'node-memory-1',
           category: 'mira',
           title: 'Mira continuity',
-          contentExcerpt: 'Mira can retrieve current lane memory before asking James.',
+          contentExcerpt: 'Mira can retrieve current lane memory before asking Operator.',
         }],
       }),
       memoryBrokerCuriosityReader: () => ({
@@ -887,7 +887,7 @@ describe('Mira Lab sidecar surface', () => {
           id: 'mem-plain-english',
           ref: 'workspace/research/mira-continuity.md',
           title: 'Plain English continuity',
-          excerpt: 'James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+          excerpt: 'Operator wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
           contributors: [
             { source: 'cognitive_memory', sourceKind: 'vector_cognitive', rank: 1 },
             { source: 'team_memory', sourceKind: 'graph_team', rank: 2 },
@@ -1245,7 +1245,7 @@ describe('Mira Lab sidecar surface', () => {
       id: 'mem-plain-english',
       title: 'Plain English continuity',
       sourceKind: 'vector_cognitive',
-      excerpt: 'James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+      excerpt: 'Operator wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
     }));
     expect(bySource.memory_broker.memory_broker_sources[0]).toEqual(expect.objectContaining({
       source: 'cognitive_memory',
@@ -1391,7 +1391,7 @@ describe('Mira Lab sidecar surface', () => {
       destructive_action_performed: false,
       deploy_trade_customer_auth_action_performed: false,
     }));
-    expect(JSON.stringify(result)).not.toMatch(/james permission|requires_permission|forbidden/i);
+    expect(JSON.stringify(result)).not.toMatch(/operator permission|requires_permission|forbidden/i);
     expect(readJsonl(curiosityBurstsPath(projectRoot))).toHaveLength(1);
     expect(readJsonl(curiosityItemsPath(projectRoot)).length).toBe(result.item_count);
   });
@@ -2728,7 +2728,7 @@ describe('Mira Lab sidecar surface', () => {
         title: 'Session 345 Summary',
         heading: 'session_summary',
         sourcePath: 'session:345',
-        contentExcerpt: 'Session 345 showed James wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
+        contentExcerpt: 'Session 345 showed Operator wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
       },
     });
 
@@ -2748,9 +2748,9 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.work_order.action).toContain('Session 345 Summary');
     expect(result.evidence).toEqual(expect.arrayContaining([
       'memory_results=5 top=node-aee20bc7-1def-4521-8836-7d065bd1d540 title=Session 345 Summary source=session:345',
-      'memory_excerpt=Session 345 showed James wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
+      'memory_excerpt=Session 345 showed Operator wanted Mira to lead with memory, tools, self-direction, and reality testing instead of waiting for restatement.',
     ]));
-    expect(result.route_message).toContain('memory_excerpt=Session 345 showed James wanted Mira');
+    expect(result.route_message).toContain('memory_excerpt=Session 345 showed Operator wanted Mira');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       external_send_performed: false,
@@ -2793,7 +2793,7 @@ describe('Mira Lab sidecar surface', () => {
         id: 'mem-plain-english',
         ref: 'workspace/research/mira-continuity.md',
         title: 'Plain English continuity',
-        excerpt: 'James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+        excerpt: 'Operator wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
         contributors: [
           { source: 'cognitive_memory', sourceKind: 'vector_cognitive', rank: 1 },
           { source: 'team_memory', sourceKind: 'graph_team', rank: 2 },
@@ -2822,10 +2822,10 @@ describe('Mira Lab sidecar surface', () => {
     expect(result.work_order.action).toContain('vector, graph, and episodic contributors');
     expect(result.evidence).toEqual(expect.arrayContaining([
       'memory_broker_results=2 top=mem-plain-english title=Plain English continuity source_kind=vector_cognitive',
-      'memory_broker_excerpt=James wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
+      'memory_broker_excerpt=Operator wants non-jargon status and Mira to use retrieved context before asking him to restate the lane.',
       'memory_broker_sources=cognitive_memory:1,team_memory:1,evidence_ledger:0',
     ]));
-    expect(result.route_message).toContain('memory_broker_excerpt=James wants non-jargon status');
+    expect(result.route_message).toContain('memory_broker_excerpt=Operator wants non-jargon status');
     expect(result.consequence_controls).toEqual(expect.objectContaining({
       internal_only: true,
       external_send_performed: false,

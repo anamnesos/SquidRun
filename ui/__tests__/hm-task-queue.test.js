@@ -319,7 +319,7 @@ describe('hm-task-queue', () => {
     const parked = queue.parkTask({
       agent: 'builder',
       taskId: enqueued.task.taskId,
-      reason: 'Parked by James priority shift',
+      reason: 'Parked by Operator priority shift',
     });
 
     expect(parked).toEqual(expect.objectContaining({
@@ -329,7 +329,7 @@ describe('hm-task-queue', () => {
         state: 'parked',
         status: 'parked',
         restartPersistence: true,
-        blockedReason: 'Parked by James priority shift',
+        blockedReason: 'Parked by Operator priority shift',
       }),
     }));
 
@@ -575,7 +575,7 @@ describe('hm-task-queue', () => {
     jest.resetModules();
     jest.dontMock('../config');
     const previousProfile = process.env.SQUIDRUN_PROFILE;
-    process.env.SQUIDRUN_PROFILE = 'sideprofile';
+    process.env.SQUIDRUN_PROFILE = 'client';
     jest.doMock('../config', () => ({
       ...require('./helpers/mock-config').mockDefaultConfig,
       resolveCoordPath: (relPath) => {
@@ -583,8 +583,8 @@ describe('hm-task-queue', () => {
         const firstSep = normalized.indexOf(path.sep);
         const first = firstSep >= 0 ? normalized.slice(0, firstSep) : normalized;
         const rest = firstSep >= 0 ? normalized.slice(firstSep + 1) : '';
-        const scopedFirst = process.env.SQUIDRUN_PROFILE === 'sideprofile' && first === 'runtime'
-          ? 'runtime-sideprofile'
+        const scopedFirst = process.env.SQUIDRUN_PROFILE === 'client' && first === 'runtime'
+          ? 'runtime-client'
           : first;
         return path.join(tempRoot, scopedFirst, rest);
       },
@@ -592,9 +592,9 @@ describe('hm-task-queue', () => {
     const scopedQueue = require('../scripts/hm-task-queue');
 
     try {
-      expect(scopedQueue.getQueuePath()).toBe(path.join(tempRoot, 'runtime-sideprofile', 'agent-task-queue.json'));
+      expect(scopedQueue.getQueuePath()).toBe(path.join(tempRoot, 'runtime-client', 'agent-task-queue.json'));
       scopedQueue.enqueueTask({ agent: 'builder', message: 'Scoped queue write' });
-      expect(fs.existsSync(path.join(tempRoot, 'runtime-sideprofile', 'agent-task-queue.json'))).toBe(true);
+      expect(fs.existsSync(path.join(tempRoot, 'runtime-client', 'agent-task-queue.json'))).toBe(true);
       expect(fs.existsSync(path.join(tempRoot, 'runtime', 'agent-task-queue.json'))).toBe(false);
     } finally {
       if (previousProfile === undefined) delete process.env.SQUIDRUN_PROFILE;

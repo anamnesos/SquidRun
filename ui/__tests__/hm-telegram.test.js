@@ -258,22 +258,22 @@ describe('hm-telegram', () => {
       ok: true,
       result: {
         message_id: 20581,
-        chat: { id: REDACTED },
+        chat: { id: 7000000001 },
       },
     });
 
     const result = await hmTelegram.sendTelegram('same-channel answer', {
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-      TELEGRAM_CHAT_ID: 'REDACTED',
+      TELEGRAM_CHAT_ID: '7000000001',
     }, {
       messageId: 'hm-telegram-reply-context-1',
       sessionId: 'app-session-399',
       replyContext: {
-        chatId: 'REDACTED',
-        inboundMessageId: 'telegram-in-808498637',
-        updateId: 808498637,
+        chatId: '7000000001',
+        inboundMessageId: 'telegram-in-700100020',
+        updateId: 700100020,
         telegramMessageId: 20580,
-        sender: 'james',
+        sender: 'operator',
         sessionScopeId: 'app-session-399',
         windowKey: 'main',
         profile: 'main',
@@ -293,9 +293,9 @@ describe('hm-telegram', () => {
       messageId: 'hm-telegram-reply-context-1',
       metadata: expect.objectContaining({
         replyContext: 'telegram',
-        replyToMessageId: 'telegram-in-808498637',
-        inboundMessageId: 'telegram-in-808498637',
-        telegramUpdateId: 808498637,
+        replyToMessageId: 'telegram-in-700100020',
+        inboundMessageId: 'telegram-in-700100020',
+        telegramUpdateId: 700100020,
         inboundTelegramMessageId: 20580,
         replyContextSessionScopeId: 'app-session-399',
       }),
@@ -305,14 +305,14 @@ describe('hm-telegram', () => {
       status: 'acked',
       ackStatus: 'telegram_delivered',
       metadata: expect.objectContaining({
-        replyToMessageId: 'telegram-in-808498637',
-        inboundMessageId: 'telegram-in-808498637',
+        replyToMessageId: 'telegram-in-700100020',
+        inboundMessageId: 'telegram-in-700100020',
         telegramMessageId: 20581,
-        chatId: REDACTED,
+        chatId: 7000000001,
       }),
     }));
     expect(reconcileTelegramReplyObligationFromJournal).toHaveBeenCalledWith({
-      inboundMessageId: 'telegram-in-808498637',
+      inboundMessageId: 'telegram-in-700100020',
     }, {
       dbPath: null,
     });
@@ -571,7 +571,7 @@ describe('hm-telegram strict allowlist (fail-closed installs)', () => {
   test('sendTelegram under strict with a lost allowlist blocks every chat', async () => {
     const result = await hmTelegram.sendTelegram('blocked outbound', {
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-      TELEGRAM_CHAT_ID: 'REDACTED-CHAT-ID',
+      TELEGRAM_CHAT_ID: '7000000002',
       TELEGRAM_CHAT_ALLOWLIST_STRICT: '1',
     });
 
@@ -585,14 +585,14 @@ describe('hm-telegram strict allowlist (fail-closed installs)', () => {
       ok: true,
       result: {
         message_id: 555,
-        chat: { id: REDACTED-CHAT-ID },
+        chat: { id: 7000000002 },
       },
     });
 
     const result = await hmTelegram.sendTelegram('allowed outbound', {
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-      TELEGRAM_CHAT_ID: 'REDACTED-CHAT-ID',
-      TELEGRAM_CHAT_ALLOWLIST: 'REDACTED-CHAT-ID',
+      TELEGRAM_CHAT_ID: '7000000002',
+      TELEGRAM_CHAT_ALLOWLIST: '7000000002',
       TELEGRAM_CHAT_ALLOWLIST_STRICT: '1',
     });
 
@@ -603,7 +603,7 @@ describe('hm-telegram strict allowlist (fail-closed installs)', () => {
   test('sendTelegramPhoto under strict with a lost allowlist is blocked before file access', async () => {
     const result = await hmTelegram.sendTelegramPhoto('does-not-exist.png', 'caption', {
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-      TELEGRAM_CHAT_ID: 'REDACTED-CHAT-ID',
+      TELEGRAM_CHAT_ID: '7000000002',
       TELEGRAM_CHAT_ALLOWLIST_STRICT: '1',
     });
 

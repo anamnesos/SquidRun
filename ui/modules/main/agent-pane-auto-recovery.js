@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { ROLE_ID_MAP, resolveCoordPath } = require('../../config');
-const { getTrustQuoteDayToDayArmSpecs } = require('../trustquote-arm-specs');
+const { getExampleAppDayToDayArmSpecs } = require('../exampleapp-arm-specs');
 const { queryCommsJournalEntries } = require('./comms-journal');
 const { sendAgentAlert } = require('../../scripts/hm-agent-alert');
 const hmPane = require('../../scripts/hm-pane');
@@ -156,8 +156,8 @@ function getDefaultPaneSpecs() {
   for (const [role, paneId] of Object.entries(ROLE_ID_MAP || {})) {
     specs.push({ paneId: String(paneId), role: String(role).toLowerCase(), kind: 'team' });
   }
-  for (const spec of getTrustQuoteDayToDayArmSpecs()) {
-    specs.push({ paneId: String(spec.paneId), role: String(spec.role).toLowerCase(), kind: 'trustquote-arm' });
+  for (const spec of getExampleAppDayToDayArmSpecs()) {
+    specs.push({ paneId: String(spec.paneId), role: String(spec.role).toLowerCase(), kind: 'exampleapp-arm' });
   }
   return specs;
 }

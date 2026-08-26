@@ -87,7 +87,7 @@ function seedLegacy(base, updateId) {
   expect(queue.append(resolved.dir, {
     updateId,
     text: `body ${updateId}`,
-    from: 'james',
+    from: 'operator',
     chatId: CHAT,
     messageId: updateId * 10,
     routeKey: 'main',

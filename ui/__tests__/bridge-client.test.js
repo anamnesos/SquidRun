@@ -455,7 +455,7 @@ describe('bridge-client', () => {
       content: [
         'OPENAI_API_KEY=sk-1234567890abcdefghijklmnop',
         'Authorization: Bearer supersecrettoken123',
-        'read from /Users/jk/.env.production',
+        'read from /sample/profile/.env.production',
       ].join('\n'),
       metadata: {
         structured: {
@@ -463,7 +463,7 @@ describe('bridge-client', () => {
           payload: {
             detail: 'token=ghp_1234567890abcdefghijklmnop',
             secret: 'dont-send-this',
-            sourcePath: 'C:\\Users\\jk\\.env',
+            sourcePath: 'C:\\Users\\ExampleUser\\.env',
           },
         },
       },

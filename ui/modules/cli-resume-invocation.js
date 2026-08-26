@@ -8,7 +8,7 @@ const path = require('path');
 // CLI process is unrecoverable. To preserve mid-task state we ask the CLI to
 // resume its OWN prior conversation on respawn. Resume MUST be keyed by a
 // per-pane id, NEVER by cwd: the 3 core panes all run claude in D:\projects\squidrun
-// (paneProjects null) and the 4 TrustQuote arms all run codex in D:\projects\TrustQuote,
+// (paneProjects null) and project-specific arms all run Codex in their assigned workspace,
 // so any cwd-scoped "resume most recent" would cross-wire panes/arms.
 //
 // Per-CLI strategy, VERIFIED against the installed binaries (claude 2.1.170,

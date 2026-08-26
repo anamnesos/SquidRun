@@ -154,7 +154,7 @@ function buildCapabilityManifest(options = {}) {
       internal_default_executable: true,
       effect_boundaries: [...HARD_EFFECT_BOUNDARIES],
       permission_theater: false,
-      james_clickthrough_required_for_internal_reads: false,
+      operator_clickthrough_required_for_internal_reads: false,
       controller_location: 'squidrun_typed_controller_before_openai_response',
       openai_tools_array_for_now: [],
       execute_reads_false_visibility_not_used_for_drill: true,

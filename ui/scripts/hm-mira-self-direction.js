@@ -32,7 +32,7 @@ const DEFAULT_FIXTURE = Object.freeze({
   target_areas: ['reality_testing', 'tests', 'pattern_recognition'],
   desired_change: 'Stage a local review item whenever my Mira Lab reply claims confidence without a concrete source or test.',
   proposed_experiment: 'Run five recent Mira Lab replies through the confidence/source check and route the staged item to Architect for one decision.',
-  success_metric: 'Architect can accept, reject, or route the proposal without James and without any code, memory, external-send, deploy, trade, customer, or auth action being applied.',
+  success_metric: 'Architect can accept, reject, or route the proposal without Operator and without any code, memory, external-send, deploy, trade, customer, or auth action being applied.',
   why_now: 'Self-direction needs a working loop I can use overnight, not a paragraph promising one later.',
   evidence: ['deterministic_mira_origin_harness_fixture'],
 });

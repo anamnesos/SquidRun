@@ -119,17 +119,17 @@ describe('typed restart continuity context v0', () => {
   test('fails closed for non-main, inactive, invisible, missing, ambiguous, and side-session metadata', () => {
     const base = mainMetadata();
     const cases = [
-      ['profileName_not_main', { profileName: 'sideprofile' }],
-      ['windowKey_not_main', { windowKey: 'sideprofile' }],
-      ['sourceScope_not_main', { sourceScope: 'sideprofile' }],
+      ['profileName_not_main', { profileName: 'client' }],
+      ['windowKey_not_main', { windowKey: 'client' }],
+      ['sourceScope_not_main', { sourceScope: 'client' }],
       ['deviceId_not_VIGIL', { deviceId: 'PHONE' }],
       ['activeState_not_open', { activeState: 'closed' }],
       ['visibleIndicatorPresent_not_true', { visibleIndicatorPresent: false }],
-      ['non_main_session_suffix', { sessionId: 'app-session-372:sideprofile' }],
-      ['sessionScopeId_non_main_session_suffix', { sessionScopeId: 'app-session-372:sideprofile' }],
+      ['non_main_session_suffix', { sessionId: 'app-session-372:client' }],
+      ['sessionScopeId_non_main_session_suffix', { sessionScopeId: 'app-session-372:client' }],
       ['ambiguous_session_scope', { sessionId: 'app-session-372:' }],
       ['missing_or_ambiguous_scope', { profileName: undefined }],
-      ['profileName_not_main', { windowKey: 'main', profileName: 'sideprofile' }],
+      ['profileName_not_main', { windowKey: 'main', profileName: 'client' }],
     ];
 
     for (const [expected, overrides] of cases) {
@@ -154,20 +154,20 @@ describe('typed restart continuity context v0', () => {
     }
   });
 
-  test('dual main and sideprofile sentinels resolve only the main structured sources', () => {
+  test('dual main and Client sentinels resolve only the main structured sources', () => {
     const projectRoot = tempProject();
     try {
       writeCurrentLane(projectRoot);
       writePresenceSummary(projectRoot);
-      writeJson(projectRoot, path.join('.squidrun', 'handoffs-sideprofile', 'current-lane.json'), {
+      writeJson(projectRoot, path.join('.squidrun', 'handoffs-client', 'current-lane.json'), {
         version: 1,
         generatedAt: '2026-05-13T17:00:00.000Z',
-        sessionId: 'app-session-372:sideprofile',
+        sessionId: 'app-session-372:client',
         status: 'active',
-        activeLane: { objective: 'sideprofile CURRENT LANE SENTINEL' },
+        activeLane: { objective: 'CLIENT CURRENT LANE SENTINEL' },
       });
-      writeJson(projectRoot, path.join('.squidrun', 'handoffs-sideprofile', 'mira-presence-runtime-state-summary.json'), {
-        context: { summary: { next_product_action: 'sideprofile PRESENCE SENTINEL' } },
+      writeJson(projectRoot, path.join('.squidrun', 'handoffs-client', 'mira-presence-runtime-state-summary.json'), {
+        context: { summary: { next_product_action: 'CLIENT PRESENCE SENTINEL' } },
       });
 
       const context = buildTypedRestartContinuityContextV0({
@@ -178,8 +178,8 @@ describe('typed restart continuity context v0', () => {
       const rendered = JSON.stringify(context);
       expect(rendered).toContain('MAIN CURRENT LANE SENTINEL');
       expect(rendered).toContain('MAIN PRESENCE ACTION SENTINEL');
-      expect(rendered).not.toContain('sideprofile CURRENT LANE SENTINEL');
-      expect(rendered).not.toContain('sideprofile PRESENCE SENTINEL');
+      expect(rendered).not.toContain('CLIENT CURRENT LANE SENTINEL');
+      expect(rendered).not.toContain('CLIENT PRESENCE SENTINEL');
     } finally {
       fs.rmSync(projectRoot, { recursive: true, force: true });
     }

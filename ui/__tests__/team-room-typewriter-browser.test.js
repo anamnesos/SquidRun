@@ -89,12 +89,12 @@ describe('Team Room typewriter browser behavior', () => {
       }
       expect(result).toEqual(expect.objectContaining({
         ok: true,
-        electron: '28.3.3',
-        node: '18.18.2',
+        electron: require('electron/package.json').version,
+        node: expect.stringMatching(/^\d+\.\d+\.\d+$/u),
         smokeRootRemoved: true,
         consoleErrors: [],
         history: expect.objectContaining({ full: true, active: false, activeCount: 0 }),
-        james: expect.objectContaining({ full: true, active: false }),
+        operator: expect.objectContaining({ full: true, active: false }),
         partial: expect.objectContaining({ active: true }),
         skipped: true,
         reduced: expect.objectContaining({ mediaMatches: true, active: false, full: true }),

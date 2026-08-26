@@ -106,21 +106,21 @@ async function run() {
   try {
     const started = await runtime.start();
     if (!started.ok) throw new Error(started.reason);
-    const credential = runtime._issueCredential('james', 'room_web', 'paired_device', {
+    const credential = runtime._issueCredential('operator', 'room_web', 'paired_device', {
       ttlMs: 60 * 60 * 1000,
     });
     if (!credential.ok) throw new Error(credential.reason);
     const cookie = `squidrun_team_room=${credential.token}`;
     const credentialsRoot = path.join(runtimeRoot, 'credentials');
 
-    const postJames = async (body, clientNonce) => {
+    const postOperator = async (body, clientNonce) => {
       const posted = await requestJson(started.origin, '/api/messages', {
         method: 'POST',
         cookie,
         origin: started.origin,
         body: { body, clientNonce },
       });
-      if (posted.statusCode !== 201) throw new Error(`typewriter_james_post_failed:${posted.payload.reason}`);
+      if (posted.statusCode !== 201) throw new Error(`typewriter_operator_post_failed:${posted.payload.reason}`);
       return posted.payload;
     };
     const replyAs = async (role, rootPayload, body, clientNonce) => {
@@ -144,7 +144,7 @@ async function run() {
     };
 
     const historyBody = 'This agent reply existed before the window opened, so history must render in full immediately.';
-    const historyRoot = await postJames('Seed one historical agent reply.', 'typewriter-history-root');
+    const historyRoot = await postOperator('Seed one historical agent reply.', 'typewriter-history-root');
     const historyReply = await replyAs('architect', historyRoot, historyBody, 'typewriter-history-agent');
 
     const electronCredential = runtime.issueElectronCredential();
@@ -172,19 +172,19 @@ async function run() {
       };
     })()`);
 
-    const jamesBody = 'James messages render instantly, even while the socket is live.';
-    const jamesLive = await postJames(jamesBody, 'typewriter-live-james');
-    await waitForRenderer(windowRef, `() => Boolean(document.querySelector('.message-item[data-message-id="${jamesLive.message.messageId}"]'))`, 8_000, 'live-james');
-    const james = await windowRef.webContents.executeJavaScript(`(() => {
-      const item = document.querySelector('.message-item[data-message-id="${jamesLive.message.messageId}"]');
+    const operatorBody = 'Operator messages render instantly, even while the socket is live.';
+    const operatorLive = await postOperator(operatorBody, 'typewriter-live-operator');
+    await waitForRenderer(windowRef, `() => Boolean(document.querySelector('.message-item[data-message-id="${operatorLive.message.messageId}"]'))`, 8_000, 'live-operator');
+    const operator = await windowRef.webContents.executeJavaScript(`(() => {
+      const item = document.querySelector('.message-item[data-message-id="${operatorLive.message.messageId}"]');
       return {
-        full: item?.querySelector('.message-body')?.innerText === ${JSON.stringify(jamesBody)},
+        full: item?.querySelector('.message-body')?.innerText === ${JSON.stringify(operatorBody)},
         active: item?.dataset.typewriterActive === 'true',
       };
     })()`);
 
     const skipBody = 'This is a deliberately long agent answer so the typewriter remains visible long enough to prove that tapping the bubble reveals the complete saved message immediately. '.repeat(5).trim();
-    const skipReply = await replyAs('builder', jamesLive, skipBody, 'typewriter-live-builder');
+    const skipReply = await replyAs('builder', operatorLive, skipBody, 'typewriter-live-builder');
     const partial = await waitForRenderer(windowRef, `() => {
       const item = document.querySelector('.message-item[data-message-id="${skipReply.message.messageId}"]');
       const text = item?.querySelector('.message-body')?.innerText || '';
@@ -205,7 +205,7 @@ async function run() {
       features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
     });
     await waitForRenderer(windowRef, `() => matchMedia('(prefers-reduced-motion: reduce)').matches`, 2_000, 'reduce-motion-on');
-    const reducedRoot = await postJames('Reply while Reduce Motion is enabled.', 'typewriter-reduced-root');
+    const reducedRoot = await postOperator('Reply while Reduce Motion is enabled.', 'typewriter-reduced-root');
     const reducedBody = 'Reduce Motion makes this full agent reply appear immediately without a caret or partial text.';
     const reducedReply = await replyAs('oracle', reducedRoot, reducedBody, 'typewriter-reduced-oracle');
     const reduced = await waitForRenderer(windowRef, `() => {
@@ -221,8 +221,8 @@ async function run() {
 
     await windowRef.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
     await waitForRenderer(windowRef, `() => !matchMedia('(prefers-reduced-motion: reduce)').matches`, 2_000, 'reduce-motion-off');
-    const boundedRoot = await postJames('Give me the long answer at normal motion.', 'typewriter-bounded-root');
-    const boundedBody = `Long answer: ${'the cadence accelerates instead of making James wait. '.repeat(80)}`.trim();
+    const boundedRoot = await postOperator('Give me the long answer at normal motion.', 'typewriter-bounded-root');
+    const boundedBody = `Long answer: ${'the cadence accelerates instead of making Operator wait. '.repeat(80)}`.trim();
     const boundedStartedAt = Date.now();
     const boundedReply = await replyAs('architect', boundedRoot, boundedBody, 'typewriter-bounded-architect');
     const boundedPartial = await waitForRenderer(windowRef, `() => {
@@ -245,8 +245,8 @@ async function run() {
       ok: history.full
         && !history.active
         && history.activeCount === 0
-        && james.full
-        && !james.active
+        && operator.full
+        && !operator.active
         && partial.active
         && partial.textLength < skipBody.length
         && skipped === true
@@ -259,7 +259,7 @@ async function run() {
       electron: process.versions.electron,
       node: process.versions.node,
       history,
-      james,
+      operator,
       partial,
       skipped,
       reduced,

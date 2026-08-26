@@ -6,9 +6,9 @@
  * =====================================================================
  * `delivery-attempts.jsonl` was the attempt latch before the cutover. The DB
  * claim is the attempt latch after it. Both files exist on disk right now and
- * both will keep existing, because update 808499316 was attempted under the old
+ * both will keep existing, because update 700100102 was attempted under the old
  * regime and can never grow a claim retroactively — writing one now would
- * invent the identity of a delivery that may already have reached James.
+ * invent the identity of a delivery that may already have reached Operator.
  *
  * So the rule is not "prefer the new one". It is:
  *
@@ -124,7 +124,7 @@ function decideClaimDisposition(input = {}) {
   // real ledger.
   //
   // The tuple is the unit: whether or not a live claim also exists, a stored D
-  // event on a closed row of this update means bytes may already be on James's
+  // event on a closed row of this update means bytes may already be on Operator's
   // screen, and that is a contradiction a human resolves, not one the drain
   // routes around.
   // ===================================================================

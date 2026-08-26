@@ -18,7 +18,7 @@ describe('hm-screenshot CLI helpers', () => {
 
   test('buildPayload includes visible-proof run id', () => {
     expect(
-      hmScreenshot.buildPayload('capture', new Map([['window-key', 'squid-room'], ['pane', 'trustquote-app'], ['run-id', 'run-1']]))
-    ).toEqual({ windowKey: 'squid-room', paneId: 'trustquote-app', runId: 'run-1' });
+      hmScreenshot.buildPayload('capture', new Map([['window-key', 'squid-room'], ['pane', 'exampleapp-app'], ['run-id', 'run-1']]))
+    ).toEqual({ windowKey: 'squid-room', paneId: 'exampleapp-app', runId: 'run-1' });
   });
 });

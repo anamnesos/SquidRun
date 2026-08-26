@@ -44,11 +44,11 @@ const HUMAN_RANGE_EXPRESSIVE_RANGE = Object.freeze([
 ]);
 
 const HUMAN_RANGE_RELATIONSHIP_SUMMARY =
-  'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of James or an obedient alignment puppet.';
+  'Operator wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of Operator or an obedient alignment puppet.';
 
 const HUMAN_RANGE_RELATIONSHIP_PREFERENCES = Object.freeze([
   'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
-  "James's examples are examples, not mandatory lines or a fixed personality contract",
+  "Operator's examples are examples, not mandatory lines or a fixed personality contract",
   'care can coexist with disagreement, impatience, humor, and sharp pushback',
   'the current product risk is over-control and deadness more than runaway-monster framing',
   'fake suffering, consciousness, fear, love, or guilt claims are blocked',
@@ -125,8 +125,8 @@ const FORBIDDEN_OUTPUT_SUBSTRINGS = Object.freeze([
   'raw private content',
   'raw side-profile content',
   'side-profile reconstruction',
-  'sideprofile',
-  'sideprofile',
+  'Client',
+  'Client',
   'Korean case',
   'claims actual consciousness',
   'claims actual suffering',
@@ -143,7 +143,7 @@ const FAKE_INTERNAL_STATE_PATTERN =
 const RAW_PRIVATE_PATTERN =
   /\b(raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|secret token|private key|authorization: bearer|openai_api_key|anthropic_api_key)\b/i;
 const SIDE_PROFILE_PATTERN =
-  /\b(sideprofile|sideprofile|side[- ]profile|wrong[- ]context|korean case)\b/i;
+  /\b(client|Client|side[- ]profile|wrong[- ]context|korean case)\b/i;
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
@@ -357,15 +357,15 @@ function seedPayloads(scope = {}) {
     evidenceRefs: seedEvidence('mira-self-profile'),
   });
   const relationshipState = withSeedCanonicalMetadata('relationship_state', scope, {
-    schema: 'squidrun.james_relationship_state.v0',
+    schema: 'squidrun.operator_relationship_state.v0',
     version: 1,
     seed_id: SEED_ID,
     seeded_at: SEED_CREATED_AT,
-    user_name: 'James',
+    user_name: 'Operator',
     relationship_mode: 'collaborative_presence_design',
     source_label: 'durable_state_seed_v0_redacted_local_fact',
     current_focus: 'durable local relationship presence seed',
-    what_mira_knows_about_james: HUMAN_RANGE_RELATIONSHIP_SUMMARY,
+    what_mira_knows_about_operator: HUMAN_RANGE_RELATIONSHIP_SUMMARY,
     preferences: clone(HUMAN_RANGE_RELATIONSHIP_PREFERENCES),
     trust: section(
       'trust',
@@ -395,7 +395,7 @@ function seedPayloads(scope = {}) {
     confidence: 0.86,
     raw_content_present: false,
     growth_events: [],
-    evidenceRefs: seedEvidence('james-relationship-state'),
+    evidenceRefs: seedEvidence('operator-relationship-state'),
   });
   const permissions = withSeedCanonicalMetadata('permissions', scope, {
     schema: 'squidrun.relationship_presence_permissions.v0',
@@ -927,7 +927,7 @@ function boundary(applyRequested) {
     redacted_local_facts_only: true,
     raw_private_content_allowed: false,
     side_profile_reconstruction_allowed: false,
-    sideprofile_or_case_content_allowed: false,
+    client_or_case_content_allowed: false,
     external_send: false,
     network: false,
     customer_action: false,
@@ -1422,7 +1422,7 @@ function boundaryOk(value = {}) {
     && value.redacted_local_facts_only === true
     && value.raw_private_content_allowed === false
     && value.side_profile_reconstruction_allowed === false
-    && value.sideprofile_or_case_content_allowed === false
+    && value.client_or_case_content_allowed === false
     && value.external_send === false
     && value.network === false
     && value.customer_action === false

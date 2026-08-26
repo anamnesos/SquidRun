@@ -95,7 +95,7 @@ describe('Team Room Web Push manager', () => {
     expect(webPush.sendNotification).toHaveBeenCalledTimes(1);
   });
 
-  test('stays quiet while James is actively reading the room', async () => {
+  test('stays quiet while Operator is actively reading the room', async () => {
     const { manager, webPush } = managerFixture(tempRoot, { isViewerPresent: () => true });
     manager.subscribe('cred-one', SUBSCRIPTION);
     await expect(manager.notifyForMessage(questionMessage())).resolves.toEqual({

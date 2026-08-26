@@ -142,10 +142,10 @@ describe('hm-room CLI identity and grammar', () => {
 
   test('parses explicit notification classes and rejects missing values', () => {
     expect(parseArgs([
-      'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_james', '--stdin',
+      'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_operator', '--stdin',
     ])).toEqual(expect.objectContaining({
       ok: true,
-      notificationClass: 'needs_james',
+      notificationClass: 'needs_operator',
     }));
     expect(parseArgs(['post', '--reason', 'new_evidence_or_action', '--notify']))
       .toEqual({ ok: false, reason: 'room_cli_notification_class_required' });
@@ -155,7 +155,7 @@ describe('hm-room CLI identity and grammar', () => {
 
   test('makes the notification class and reason mapping visible where agents use the CLI', () => {
     expect(usage()).toContain(
-      'question requires --reason real_question; needs_james or failure requires --reason new_evidence_or_action or material_dissent_or_correction'
+      'question requires --reason real_question; needs_operator or failure requires --reason new_evidence_or_action or material_dissent_or_correction'
     );
     expect(usage()).toContain('Ordinary replies omit --notify.');
     expect(parseArgs([

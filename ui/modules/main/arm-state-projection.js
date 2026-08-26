@@ -171,7 +171,7 @@ function unavailableProjection(reason, dbPath, nowMs) {
     projectionOnly: true,
     readOnly: true,
     explicitInvocationRequired: true,
-    trustQuoteRoomBehaviorUnchanged: true,
+    exampleAppRoomBehaviorUnchanged: true,
     dispatchEnabled: false,
     executorEnabled: false,
     sideEffects: {
@@ -254,7 +254,7 @@ function buildArmStateProjection(filters = {}, options = {}) {
     projectionOnly: true,
     readOnly: true,
     explicitInvocationRequired: true,
-    trustQuoteRoomBehaviorUnchanged: true,
+    exampleAppRoomBehaviorUnchanged: true,
     dispatchEnabled: false,
     executorEnabled: false,
     sideEffects: {

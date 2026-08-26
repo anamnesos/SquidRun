@@ -182,12 +182,12 @@ describe('memory consistency check', () => {
     const { resolveWorkspacePaths } = require('../modules/memory-search');
 
     const mainRoot = path.join(tempDir, 'main-root');
-    const profileRoot = path.join(tempDir, 'profiles', 'sideprofile', 'workspace');
+    const profileRoot = path.join(tempDir, 'profiles', 'client', 'workspace');
     const mainWorkspace = path.join(mainRoot, 'workspace');
     fs.mkdirSync(path.join(mainWorkspace, 'knowledge'), { recursive: true });
     fs.mkdirSync(path.join(mainWorkspace, 'memory'), { recursive: true });
     fs.mkdirSync(path.join(mainRoot, '.squidrun', 'runtime'), { recursive: true });
-    fs.mkdirSync(path.join(profileRoot, '.squidrun', 'runtime-sideprofile'), { recursive: true });
+    fs.mkdirSync(path.join(profileRoot, '.squidrun', 'runtime-client'), { recursive: true });
     fs.symlinkSync(mainWorkspace, path.join(profileRoot, 'workspace'), process.platform === 'win32' ? 'junction' : 'dir');
 
     fs.writeFileSync(
@@ -219,24 +219,24 @@ describe('memory consistency check', () => {
     });
     mainDb.close();
 
-    const profileDb = createDatabase(path.join(profileRoot, '.squidrun', 'runtime-sideprofile', 'cognitive-memory.db'));
+    const profileDb = createDatabase(path.join(profileRoot, '.squidrun', 'runtime-client', 'cognitive-memory.db'));
     createCognitiveSchema(profileDb);
     profileDb.close();
 
     const result = runMemoryConsistencyCheck({
       projectRoot: profileRoot,
-      profileName: 'sideprofile',
+      profileName: 'client',
     });
 
     expect(result.status).toBe('in_sync');
     expect(result.synced).toBe(true);
     expect(result.evaluatedScope).toBe('shared-main');
     expect(result.scope).toEqual(expect.objectContaining({
-      requestedProfile: 'sideprofile',
+      requestedProfile: 'client',
       reason: 'profile_workspace_junction_to_shared_corpus',
       requestedProjectRoot: path.resolve(profileRoot),
       effectiveProjectRoot: path.resolve(mainRoot),
-      profileCognitiveDbPath: path.resolve(profileRoot, '.squidrun', 'runtime-sideprofile', 'cognitive-memory.db'),
+      profileCognitiveDbPath: path.resolve(profileRoot, '.squidrun', 'runtime-client', 'cognitive-memory.db'),
       cognitiveDbPath: path.resolve(mainDbPath),
     }));
     expect(result.workspaceDir).toBe(fs.realpathSync.native(mainWorkspace));
@@ -490,7 +490,7 @@ describe('memory consistency check', () => {
         '',
         '## Communication Patterns',
         '',
-        '- Channel + input basics: James uses Telegram when away from the PC; voice-transcribed messages are common, so preserve conversational context across the channel switch.',
+        '- Channel + input basics: Operator uses Telegram when away from the PC; voice-transcribed messages are common, so preserve conversational context across the channel switch.',
         ...filler,
       ].join('\n')
     );

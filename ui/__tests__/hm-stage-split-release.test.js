@@ -45,20 +45,20 @@ describe('hm-stage-split-release', () => {
     expect(plan.appDir).toBe(path.join(plan.outputDir, 'app'));
   });
 
-  test('records the acknowledged sideprofile cutover root as advisory metadata', () => {
+  test('records the acknowledged Client cutover root as advisory metadata', () => {
     const uiRoot = path.join(tempRoot, 'ui');
     fs.mkdirSync(path.join(uiRoot, 'dist', 'win-unpacked'), { recursive: true });
     fs.writeFileSync(path.join(uiRoot, 'package.json'), JSON.stringify({ version: '9.8.7' }), 'utf8');
 
-    const plan = buildReleasePlan({ uiRoot, instanceName: 'sideprofile' });
+    const plan = buildReleasePlan({ uiRoot, instanceName: 'client' });
 
-    expect(plan.recommendedDataRoot).toBe('D:\\SquidRun\\sideprofile');
+    expect(plan.recommendedDataRoot).toBe('D:\\SquidRun\\Client');
     expect(plan.webSocketPort).toBe(9901);
   });
 
   test('renders install/update script with explicit data-root and main-profile launch contract', () => {
     const script = renderInstallUpdateScript({
-      instanceName: 'sideprofile',
+      instanceName: 'client',
       version: '1.2.3',
     });
 
@@ -76,7 +76,7 @@ describe('hm-stage-split-release', () => {
 
   test('release manifest records the shared root discovery contract', () => {
     const manifest = buildReleaseManifest({
-      instanceName: 'sideprofile',
+      instanceName: 'client',
       version: '1.2.3',
       appDir: 'D:/release/app',
       installScriptPath: 'D:/release/install-or-update.ps1',
@@ -112,8 +112,8 @@ describe('hm-stage-split-release', () => {
       json: true,
       force: true,
     }));
-    expect(parseArgs(['--recommended-data-root', 'D:\\SquidRun\\sideprofile', '--websocket-port', '9901'])).toEqual(expect.objectContaining({
-      recommendedDataRoot: 'D:\\SquidRun\\sideprofile',
+    expect(parseArgs(['--recommended-data-root', 'D:\\SquidRun\\Client', '--websocket-port', '9901'])).toEqual(expect.objectContaining({
+      recommendedDataRoot: 'D:\\SquidRun\\Client',
       webSocketPort: 9901,
     }));
     expect(sanitizeSlug('Eun Byeol')).toBe('eun-byeol');

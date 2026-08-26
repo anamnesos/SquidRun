@@ -9,7 +9,7 @@ const path = require('path');
 const fs = require('fs');
 const log = require('../logger');
 const { PANE_IDS, PANE_ROLES, resolveCoordPath } = require('../../config');
-const { getTrustQuoteDayToDayArmSpecs } = require('../trustquote-arm-specs');
+const { getExampleAppDayToDayArmSpecs } = require('../exampleapp-arm-specs');
 const {
   buildGeminiCommand,
   hasGeminiCommand,
@@ -26,10 +26,10 @@ const {
 const TRIGGERS_PATH = typeof resolveCoordPath === 'function'
   ? resolveCoordPath('triggers', { forWrite: true })
   : path.join(__dirname, '..', '..', '..', 'workspace', 'triggers');
-const TRUSTQUOTE_ARM_SPECS_BY_PANE_ID = new Map(
-  getTrustQuoteDayToDayArmSpecs().map((spec) => [String(spec.paneId), spec])
+const EXAMPLEAPP_ARM_SPECS_BY_PANE_ID = new Map(
+  getExampleAppDayToDayArmSpecs().map((spec) => [String(spec.paneId), spec])
 );
-const DEFAULT_TRUSTQUOTE_ARM_CLAUDE_MODEL = 'opus';
+const DEFAULT_EXAMPLEAPP_ARM_CLAUDE_MODEL = 'opus';
 const CLAUDE_MODEL_FLAG_PATTERN = /(^|\s)--model(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s"']+)/i;
 
 // Under plain node (jest), require('electron') resolves to a path string -
@@ -39,8 +39,8 @@ try {
   ({ BrowserWindow } = require('electron'));
 } catch (_) { /* non-electron host */ }
 
-function getTrustQuoteArmSpec(paneId) {
-  return TRUSTQUOTE_ARM_SPECS_BY_PANE_ID.get(String(paneId || '').trim()) || null;
+function getExampleAppArmSpec(paneId) {
+  return EXAMPLEAPP_ARM_SPECS_BY_PANE_ID.get(String(paneId || '').trim()) || null;
 }
 
 function isCorePaneId(paneId) {
@@ -48,7 +48,7 @@ function isCorePaneId(paneId) {
 }
 
 function isSwitchablePaneId(paneId) {
-  return isCorePaneId(paneId) || Boolean(getTrustQuoteArmSpec(paneId));
+  return isCorePaneId(paneId) || Boolean(getExampleAppArmSpec(paneId));
 }
 
 function isClaudeCommand(command = '') {
@@ -93,7 +93,7 @@ function rebuildClaudeCommandPreservingFlags(existingCommand = '', claudeModel =
 
 function buildClaudeCommand(claudeModel = '', options = {}) {
   const model = normalizeClaudeModelId(claudeModel)
-    || (options.isArmPane ? DEFAULT_TRUSTQUOTE_ARM_CLAUDE_MODEL : '');
+    || (options.isArmPane ? DEFAULT_EXAMPLEAPP_ARM_CLAUDE_MODEL : '');
   if (options.preserveExistingFlags && isClaudeCommand(options.existingCommand || '')) {
     return rebuildClaudeCommandPreservingFlags(options.existingCommand, model);
   }
@@ -135,7 +135,7 @@ function buildModelCommands(ctx = {}, id = '', options = {}) {
   return {
     commands: {
       'claude': buildClaudeCommand(options.claudeModel, {
-        isArmPane: Boolean(getTrustQuoteArmSpec(id)),
+        isArmPane: Boolean(getExampleAppArmSpec(id)),
         existingCommand,
         preserveExistingFlags: options.preserveClaudeFlags === true,
       }),
@@ -227,7 +227,7 @@ async function executePaneModelSwitch(ctx, payload = {}, deps = {}) {
 
   // Validate paneId
   const id = String(paneId);
-  const armSpec = getTrustQuoteArmSpec(id);
+  const armSpec = getExampleAppArmSpec(id);
   const isArmPane = Boolean(armSpec);
   if (!isSwitchablePaneId(id)) {
     log.warn('ModelSwitch', `Invalid paneId: ${paneId}`);

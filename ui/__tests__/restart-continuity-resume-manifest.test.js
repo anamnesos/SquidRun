@@ -398,9 +398,9 @@ describe('restart-continuity-resume-manifest', () => {
   test('non-main scope is rejected and does not create resume authority', () => {
     const result = manifest.buildRestartContinuityResumeManifest({
       projectRoot: tempRoot,
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-session-418:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-session-418:client',
       nowMs: Date.parse('2026-06-09T06:05:00.000Z'),
     });
 

@@ -11,7 +11,7 @@ Surface:
   python ui/scripts/hm-csm-1b-bench.py --auth-check
   python ui/scripts/hm-csm-1b-bench.py --no-audio-write --json
   python ui/scripts/hm-csm-1b-bench.py --json --output workspace/bench/csm-1b/run-<ts>.json
-  python ui/scripts/hm-csm-1b-bench.py --prompt "Hey James, the build is up." --out-wav workspace/bench/csm-1b/reference.wav
+  python ui/scripts/hm-csm-1b-bench.py --prompt "Hey Operator, the build is up." --out-wav workspace/bench/csm-1b/reference.wav
 """
 from __future__ import annotations
 
@@ -424,7 +424,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--json", action="store_true", help="Print the full JSON report to stdout.")
     parser.add_argument("--output", type=Path, default=None, help="Write JSON report to this path.")
     parser.add_argument("--self-test", action="store_true", help="Run the dotenv loader regression test and exit.")
-    parser.add_argument("--prompt", type=str, default=None, help="Override reference prompt (default: 'Hey James, the build is up.').")
+    parser.add_argument("--prompt", type=str, default=None, help="Override reference prompt (default: 'Hey Operator, the build is up.').")
     parser.add_argument("--out-wav", type=Path, default=None, help="Write reference-run audio to this WAV path.")
     parser.add_argument("--runs-per-prompt", type=int, default=2, help="Total runs per prompt; first is warmup-tagged. Default 2.")
     parser.add_argument("--skip-suite", action="store_true", help="Run only the reference prompt; skip the short/medium/long suite.")
@@ -496,7 +496,7 @@ def main(argv: list[str]) -> int:
     runs_per_prompt = max(1, int(args.runs_per_prompt or 1))
 
     # Reference run — always first, writes WAV (unless --no-audio-write).
-    ref_prompt = args.prompt or "Hey James, the build is up."
+    ref_prompt = args.prompt or "Hey Operator, the build is up."
     ref_metrics, ref_audio = run_trial("reference", ref_prompt, model, processor, return_audio=True)
     ref_metrics.label = "reference:run0"
     report.trials.append(ref_metrics)

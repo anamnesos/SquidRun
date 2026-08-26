@@ -3,7 +3,7 @@
 const {
   EVIDENCE_SOURCE_REFS,
   buildMiraLiveWhatNowAnswerV0,
-  countJamesActionLines,
+  countOperatorActionLines,
   isMiraLiveWhatNowPrompt,
   validateLiveWhatNowAnswer,
 } = require('../modules/mira-core/live-what-now-answer-v0');
@@ -35,7 +35,7 @@ function evidenceOverrides(overrides = {}) {
   };
 }
 
-const ARCHITECT_63_BODY = '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.';
+const ARCHITECT_63_BODY = '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `OPERATOR ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.';
 const BUILDER_21_PROOF_BODY = [
   '(BUILDER #21): A1/A2 visible Mira movement patch is staged for review, no commit.',
   '',
@@ -126,7 +126,7 @@ describe('Mira live what-now answer v0', () => {
           messageId: 'architect-64',
           targetRole: 'oracle',
           brokeredAtMs: Date.parse('2026-05-26T08:52:32.859Z'),
-          rawBody: '(ARCHITECT #64): Cleanup checkpoint closed. Commits: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`; clean tree and post-commit codebase:index:check PASS. New sidecar task: A1/A2 visible Mira movement lane. Builder owns implementation/proposal. Your gate: visible what-now answer must use live evidence, exclude parked/prototype/archive authority, contain exactly one JAMES ACTION line, and prove no send/runtime POST/external action. Return PASS/MODIFY/BLOCK on Builder packet.',
+          rawBody: '(ARCHITECT #64): Cleanup checkpoint closed. Commits: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`; clean tree and post-commit codebase:index:check PASS. New sidecar task: A1/A2 visible Mira movement lane. Builder owns implementation/proposal. Your gate: visible what-now answer must use live evidence, exclude parked/prototype/archive authority, contain exactly one OPERATOR ACTION line, and prove no send/runtime POST/external action. Return PASS/MODIFY/BLOCK on Builder packet.',
         }),
         row({
           messageId: 'builder-21',
@@ -141,7 +141,7 @@ describe('Mira live what-now answer v0', () => {
     expect(answer).toEqual(expect.objectContaining({
       ok: true,
       decision: 'answered_from_live_evidence',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
     }));
     expect(answer.source_status.authority_source).toBe('live_comms_journal');
     expect(answer.source_status.live_comms_journal.source_ref).toBe('architect#63');
@@ -149,7 +149,7 @@ describe('Mira live what-now answer v0', () => {
     expect(answer.answer_text).toContain('Session 382');
     expect(answer.answer_text).toContain('Lane: A1/A2 visible Mira movement lane');
     expect(answer.answer_text).toContain('Next:');
-    expect(countJamesActionLines(answer.answer_text)).toBe(1);
+    expect(countOperatorActionLines(answer.answer_text)).toBe(1);
     expect(answer.shape_check).toEqual({ ok: true, violations: [] });
     expect(answer.source_refs).toHaveLength(7);
     expect(answer.no_effects).toEqual(expect.objectContaining({
@@ -184,7 +184,7 @@ describe('Mira live what-now answer v0', () => {
       expect(ref.present).toBe(false);
     }
     expect(answer.next.kind).toBe('none');
-    expect(countJamesActionLines(answer.answer_text)).toBe(1);
+    expect(countOperatorActionLines(answer.answer_text)).toBe(1);
   });
 
   test('per-source staleness is classified and listed in stale markers', () => {
@@ -289,7 +289,7 @@ describe('Mira live what-now answer v0', () => {
           { text: 'Lane: restart-storm follow-up', source_ref: EVIDENCE_SOURCE_REFS.current_lane },
         ],
         next: { kind: 'lane_continuity', text: 'Land the follow-up commit', source_ref: EVIDENCE_SOURCE_REFS.current_lane },
-        answer_text: 'Session 425, panes ready\nLane: restart-storm follow-up\nNext: Land the follow-up commit\nJAMES ACTION: NONE',
+        answer_text: 'Session 425, panes ready\nLane: restart-storm follow-up\nNext: Land the follow-up commit\nOPERATOR ACTION: NONE',
       };
       return { answer, evidence };
     }
@@ -315,12 +315,12 @@ describe('Mira live what-now answer v0', () => {
       expect(verdict.violations).toContain('invented_next_action');
     });
 
-    test('FAIL: two JAMES ACTION lines', () => {
+    test('FAIL: two OPERATOR ACTION lines', () => {
       const { answer, evidence } = goodAnswerAndEvidence();
-      answer.answer_text += '\nJAMES ACTION: also restart the app';
+      answer.answer_text += '\nOPERATOR ACTION: also restart the app';
       const verdict = validateLiveWhatNowAnswer(answer, evidence);
       expect(verdict.ok).toBe(false);
-      expect(verdict.violations).toContain('james_action_line_count:2');
+      expect(verdict.violations).toContain('operator_action_line_count:2');
     });
 
     test('FAIL: a stale source used as authority for next', () => {

@@ -43,29 +43,29 @@ function hasSqliteDriver() {
 
 function manifest() {
   return {
-    appRoomId: 'trustquote',
-    sessionId: 'app-room:trustquote',
+    appRoomId: 'exampleapp',
+    sessionId: 'app-room:exampleapp',
     mainSessionId: 'app-session-406',
-    leadRole: 'trustquote-lead',
-    leadPaneId: 'trustquote-lead',
-    routeTarget: 'trustquote',
+    leadRole: 'exampleapp-lead',
+    leadPaneId: 'exampleapp-lead',
+    routeTarget: 'exampleapp',
     arms: [
       {
         armKey: 'lead',
-        role: 'trustquote-lead',
-        paneId: 'trustquote-lead',
+        role: 'exampleapp-lead',
+        paneId: 'exampleapp-lead',
         routeTarget: 'architect',
         armKind: 'lead',
-        displayName: 'TrustQuote Lead',
+        displayName: 'ExampleApp Lead',
         dataSources: ['summaries'],
         permissions: { read: ['summaries'] },
         checkInObligation: { required: true },
       },
       {
         armKey: 'invoice',
-        role: 'trustquote-invoice',
-        paneId: 'trustquote-invoice',
-        routeTarget: 'trustquote-invoice',
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
+        routeTarget: 'exampleapp-invoice',
         armKind: 'domain',
         displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments'],
@@ -77,9 +77,9 @@ function manifest() {
 }
 
 function seedCommsCheckin(dbPath, input = {}, nowMs = 1_000) {
-  const sessionId = input.sessionId || 'app-session-406:trustquote';
-  const role = input.role || 'trustquote-lead';
-  const paneId = input.paneId || 'trustquote-lead';
+  const sessionId = input.sessionId || 'app-session-406:exampleapp';
+  const role = input.role || 'exampleapp-lead';
+  const paneId = input.paneId || 'exampleapp-lead';
   const messageId = input.messageId || `hm-${role}-${nowMs}`;
   const store = new EvidenceLedgerStore({ dbPath });
   expect(store.init().ok).toBe(true);
@@ -134,33 +134,33 @@ maybeDescribe('arm state projection', () => {
     expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const checkinRow = seedCommsCheckin(dbPath, {
       messageId: 'hm-lead-ready',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
     }, 2_000);
     expect(recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'startup_check_in',
       messageId: 'hm-lead-ready',
       commsRowId: checkinRow.rowId,
       env: {
-        SQUIDRUN_ROLE: 'trustquote-lead',
-        SQUIDRUN_PANE_ID: 'trustquote-lead',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-lead',
+        SQUIDRUN_PANE_ID: 'exampleapp-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 2_000 }).ok).toBe(true);
 
     expect(tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 3_000, dryRun: true }).ok).toBe(true);
     expect(enqueueArmApplyRequest({
       requestId: 'apply-money-write-projection-1',
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
       actionCategory: 'money_write',
       riskClass: 'safe',
@@ -171,8 +171,8 @@ maybeDescribe('arm state projection', () => {
     const beforeWatchdogs = queryArmMissingWatchdogs({ status: 'expected' }, { dbPath });
     const beforeQueue = queryArmApplyRequests({ status: 'approval_required' }, { dbPath });
     const projection = buildArmStateProjection({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 123_000 });
 
     expect(projection).toEqual(expect.objectContaining({
@@ -181,7 +181,7 @@ maybeDescribe('arm state projection', () => {
       projectionOnly: true,
       readOnly: true,
       explicitInvocationRequired: true,
-      trustQuoteRoomBehaviorUnchanged: true,
+      exampleAppRoomBehaviorUnchanged: true,
       dispatchEnabled: false,
       executorEnabled: false,
       sideEffects: {
@@ -224,38 +224,38 @@ maybeDescribe('arm state projection', () => {
     const seededManifest = {
       ...manifest(),
       metadata: {
-        readinessSessionId: 'app-session-406:trustquote',
+        readinessSessionId: 'app-session-406:exampleapp',
       },
     };
     expect(upsertArmRegistryManifest(seededManifest, { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const leadRow = seedCommsCheckin(dbPath, {
       messageId: 'hm-lead-ready-from-metadata-session',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
-      sessionId: 'app-session-406:trustquote',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
+      sessionId: 'app-session-406:exampleapp',
     }, 2_000);
     expect(recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'startup_check_in',
       messageId: 'hm-lead-ready-from-metadata-session',
       commsRowId: leadRow.rowId,
       env: {
-        SQUIDRUN_ROLE: 'trustquote-lead',
-        SQUIDRUN_PANE_ID: 'trustquote-lead',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-lead',
+        SQUIDRUN_PANE_ID: 'exampleapp-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 2_000 }).ok).toBe(true);
 
     const projection = buildArmStateProjection({
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
     }, { dbPath, nowMs: 3_000 });
 
     expect(projection.registry).toEqual(expect.objectContaining({
-      readinessSessionId: 'app-session-406:trustquote',
+      readinessSessionId: 'app-session-406:exampleapp',
       readyCount: 1,
       missingCount: 1,
     }));
@@ -269,22 +269,22 @@ maybeDescribe('arm state projection', () => {
     expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const billingRow = seedCommsCheckin(dbPath, {
       messageId: 'hm-billing-ready-original',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
     }, 2_000);
     const accepted = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-billing-ready-original',
       commsRowId: billingRow.rowId,
       env: {
-        SQUIDRUN_ROLE: 'trustquote-invoice',
-        SQUIDRUN_PANE_ID: 'trustquote-invoice',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-invoice',
+        SQUIDRUN_PANE_ID: 'exampleapp-invoice',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 2_000 });
     expect(accepted.ok).toBe(true);
@@ -294,33 +294,33 @@ maybeDescribe('arm state projection', () => {
       arm.armKey === 'invoice'
         ? {
           ...arm,
-          role: 'trustquote-finance',
-          paneId: 'trustquote-finance',
-          routeTarget: 'trustquote-finance',
+          role: 'exampleapp-finance',
+          paneId: 'exampleapp-finance',
+          routeTarget: 'exampleapp-finance',
         }
         : arm
     ));
     expect(upsertArmRegistryManifest(renamedManifest, { dbPath, nowMs: 3_000 }).ok).toBe(true);
     const evaluated = evaluateArmRegistryReadiness({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 4_000 });
     expect(evaluated.ok).toBe(true);
     expect(evaluated.registry.arms.find((arm) => arm.armKey === 'invoice')).toEqual(expect.objectContaining({
-      role: 'trustquote-finance',
-      paneId: 'trustquote-finance',
+      role: 'exampleapp-finance',
+      paneId: 'exampleapp-finance',
       status: 'missing',
       lastProofRefs: [],
     }));
 
     const projection = buildArmStateProjection({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 5_000 });
     const moneyArm = projection.arms.find((arm) => arm.armKey === 'invoice');
     expect(moneyArm).toEqual(expect.objectContaining({
-      role: 'trustquote-finance',
-      paneId: 'trustquote-finance',
+      role: 'exampleapp-finance',
+      paneId: 'exampleapp-finance',
       status: 'missing',
       latestAcceptedCheckin: null,
     }));
@@ -333,33 +333,33 @@ maybeDescribe('arm state projection', () => {
     expect(upsertArmRegistryManifest(manifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const lead406 = seedCommsCheckin(dbPath, {
       messageId: 'hm-lead-session-406',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
-      sessionId: 'app-session-406:trustquote',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
+      sessionId: 'app-session-406:exampleapp',
     }, 2_000);
     expect(recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'startup_check_in',
       messageId: 'hm-lead-session-406',
       commsRowId: lead406.rowId,
       env: {
-        SQUIDRUN_ROLE: 'trustquote-lead',
-        SQUIDRUN_PANE_ID: 'trustquote-lead',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-lead',
+        SQUIDRUN_PANE_ID: 'exampleapp-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 2_000 }).ok).toBe(true);
 
     const restarted = buildArmStateProjection({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-407:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-407:exampleapp',
     }, { dbPath, nowMs: 3_000 });
     expect(restarted.registry).toEqual(expect.objectContaining({
-      sessionId: 'app-room:trustquote',
-      readinessSessionId: 'app-session-407:trustquote',
+      sessionId: 'app-room:exampleapp',
+      readinessSessionId: 'app-session-407:exampleapp',
       desiredCount: 2,
       readyCount: 0,
       missingCount: 2,
@@ -371,29 +371,29 @@ maybeDescribe('arm state projection', () => {
 
     const lead407 = seedCommsCheckin(dbPath, {
       messageId: 'hm-lead-session-407',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
-      sessionId: 'app-session-407:trustquote',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
+      sessionId: 'app-session-407:exampleapp',
     }, 4_000);
     expect(recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-407:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-407:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'startup_check_in',
       messageId: 'hm-lead-session-407',
       commsRowId: lead407.rowId,
       env: {
-        SQUIDRUN_ROLE: 'trustquote-lead',
-        SQUIDRUN_PANE_ID: 'trustquote-lead',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-407:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-lead',
+        SQUIDRUN_PANE_ID: 'exampleapp-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-407:exampleapp',
       },
     }, { dbPath, nowMs: 4_000 }).ok).toBe(true);
 
     const current = buildArmStateProjection({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-407:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-407:exampleapp',
     }, { dbPath, nowMs: 5_000 });
     expect(current.registry).toEqual(expect.objectContaining({
       desiredCount: 2,
@@ -415,9 +415,9 @@ maybeDescribe('arm state projection', () => {
       '--db',
       dbPath,
       '--app-room',
-      'trustquote',
+      'exampleapp',
       '--session',
-      'app-session-406:trustquote',
+      'app-session-406:exampleapp',
       '--json',
       '--now-ms',
       '2000',
@@ -433,10 +433,10 @@ maybeDescribe('arm state projection', () => {
       projectionOnly: true,
       readOnly: true,
       explicitInvocationRequired: true,
-      trustQuoteRoomBehaviorUnchanged: true,
+      exampleAppRoomBehaviorUnchanged: true,
     }));
     expect(projection.registry).toEqual(expect.objectContaining({
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       desiredCount: 2,
       readyCount: 0,
       missingCount: 2,
@@ -452,9 +452,9 @@ maybeDescribe('arm state projection', () => {
       '--db',
       missingDbPath,
       '--app-room',
-      'trustquote',
+      'exampleapp',
       '--session',
-      'app-session-406:trustquote',
+      'app-session-406:exampleapp',
       '--json',
     ], {
       cwd: path.join(__dirname, '..', '..'),

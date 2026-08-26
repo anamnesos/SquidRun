@@ -47,8 +47,8 @@ const DEFAULT_CONFIG = Object.freeze({
   ],
   focusRotation: [
     {
-      id: 'james-schedule',
-      instruction: 'Read-only check of TrustQuote calendar events for the next 48 hours; surface only a real conflict, gap, or decision.',
+      id: 'operator-schedule',
+      instruction: 'Read-only check of ExampleApp calendar events for the next 48 hours; surface only a real conflict, gap, or decision.',
     },
     {
       id: 'open-threads-sweep',
@@ -59,8 +59,8 @@ const DEFAULT_CONFIG = Object.freeze({
       instruction: 'Read-only health check of the public site and booking guard; do not submit a booking or create customer contact.',
     },
     {
-      id: 'trustquote-drift',
-      instruction: 'Read-only check for unsent change orders, stale drafts, or other TrustQuote drift; do not mutate production data.',
+      id: 'exampleapp-drift',
+      instruction: 'Read-only check for unsent change orders, stale drafts, or other ExampleApp drift; do not mutate production data.',
     },
     {
       id: 'memory-rule-hygiene',
@@ -72,7 +72,7 @@ const DEFAULT_CONFIG = Object.freeze({
     },
     {
       id: 'one-good-question',
-      instruction: 'Ask James one question only if the answer would unlock a meaningful decision; otherwise choose silence.',
+      instruction: 'Ask Operator one question only if the answer would unlock a meaningful decision; otherwise choose silence.',
     },
   ],
 });
@@ -288,10 +288,10 @@ function buildPrompt({ beatId, scheduledWindow, focus }) {
   const instruction = String(focus.instruction || '').trim().replace(/[.\s]+$/, '');
   return `HEARTBEAT ${beatId} window=${windowLabel} focus=${focus.id}: ${instruction}. `
     + 'This beat is authority for ONE bounded useful action in your role. Use fresh main-scope evidence; do the action now, or record a truthful no-op if nothing is worth doing. '
-    + "Read-only is the default for James's schedule and all customer, money, appointment, external-send, and production-data surfaces unless fresh James authority explicitly permits the effect. "
+    + "Read-only is the default for Operator's schedule and all customer, money, appointment, external-send, and production-data surfaces unless fresh Operator authority explicitly permits the effect. "
     + 'Reversible local improvements are allowed. Never touch trading/PARKED lanes, invoke this runner, create a child beat, or change cadence as a side effect. '
     + 'If heartbeat upkeep itself is your one action, use the validated config/reconcile path, retain at least two daily beats, and log old/new + actor + reason. '
-    + 'Coordinate only when useful. Tell James only a decision-worthy result or genuinely valuable question; silence is valid.';
+    + 'Coordinate only when useful. Tell Operator only a decision-worthy result or genuinely valuable question; silence is valid.';
 }
 
 function exitCodeForStatus(status) {

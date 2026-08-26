@@ -1,8 +1,8 @@
 'use strict';
 
 const {
-  getTrustQuoteDayToDayArmSpecs,
-} = require('./trustquote-arm-specs');
+  getExampleAppDayToDayArmSpecs,
+} = require('./exampleapp-arm-specs');
 const {
   applyWindowChrome,
   resolveWindowChromeClass,
@@ -47,7 +47,7 @@ const PANE_ICON_SVGS = Object.freeze({
   expand: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
   lock: '<svg class="pane-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
 });
-const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze(getTrustQuoteDayToDayArmSpecs().map((spec) => Object.freeze({
+const SQUID_ROOM_EXAMPLEAPP_ARM_PANES = Object.freeze(getExampleAppDayToDayArmSpecs().map((spec) => Object.freeze({
   paneId: spec.paneId,
   label: spec.label,
   role: spec.roleLabel,
@@ -60,7 +60,7 @@ const SQUID_ROOM_TRUSTQUOTE_ARM_PANES = Object.freeze(getTrustQuoteDayToDayArmSp
 })));
 const SQUID_ROOM_PANE_IDS = Object.freeze([
   ...SQUID_ROOM_TEAM_PANE_IDS,
-  ...SQUID_ROOM_TRUSTQUOTE_ARM_PANES.map((pane) => pane.paneId),
+  ...SQUID_ROOM_EXAMPLEAPP_ARM_PANES.map((pane) => pane.paneId),
 ]);
 
 function detectModelFamily(command) {
@@ -519,7 +519,7 @@ function renderSquidRoomPetPane(doc, pane, spec, options = {}) {
   const stage = createElement(doc, 'div', { className: 'sr2-pet-water is-active' });
   // Pedestal-era glow spans (pet-glow/pet-caustics) are GONE (S466):
   // free-swimming creatures sit on nothing, and the static blurred discs
-  // read as smudges under the painted cosmos (James caught them live).
+  // read as smudges under the painted cosmos (Operator caught them live).
   // The creature canvas fills the whole stage: the procedural squid swims
   // the water region (P1.7); speech/name anchor to its head at runtime.
   stage.appendChild(createSquidRoomPetArtwork(doc, spec));
@@ -569,7 +569,7 @@ function ensureSquidRoomPetPanes(doc) {
 }
 
 // WAVE 4 deep space: starfield parallax layers + twinkles + distant galaxy
-// + one pooled shooting star, injected once at body level (James 00:25:
+// + one pooled shooting star, injected once at body level (Operator 00:25:
 // "cosmic universe type background"). Pure CSS animation - perf-lawful.
 // FORMATION: the cosmos is the ARCHITECT's hand-authored subsystem
 // (ui/styles/architect-cosmos-layer.css, integrated verbatim). This hook
@@ -579,7 +579,7 @@ function ensureSquidRoomSpaceLayers(doc) {
   if (!body) return null;
   let canvas = body.querySelector?.('.cosmos-canvas');
   if (canvas) return canvas;
-  // v3 (S466, James: "make the background something different... massive
+  // v3 (S466, Operator: "make the background something different... massive
   // changes"): the CSS-gradient cosmos is retired; the sky is now PAINTED —
   // squid-room-cosmos-canvas.js renders fBm nebula clouds + a power-law
   // starfield once to offscreen layers and composites with parallax +
@@ -746,17 +746,17 @@ function ensureSquidRoomCoreTerminalPanes(doc, teamContainer) {
 }
 
 function ensureSquidRoomLivePaneContainer(doc) {
-  let container = doc.querySelector?.('#squidRoomTrustQuoteLivePanes');
+  let container = doc.querySelector?.('#squidRoomExampleAppLivePanes');
   if (container) return container;
 
-  const app = doc.querySelector?.('.squid-room-app[data-app-room-id="trustquote"]')
-    || doc.querySelector?.('[data-app-room-id="trustquote"]')
+  const app = doc.querySelector?.('.squid-room-app[data-app-room-id="exampleapp"]')
+    || doc.querySelector?.('[data-app-room-id="exampleapp"]')
     || doc.querySelector?.('#squidRoomSurface');
   if (!app) return null;
 
   container = createElement(doc, 'div', {
     className: 'squid-room-live-panes',
-    id: 'squidRoomTrustQuoteLivePanes',
+    id: 'squidRoomExampleAppLivePanes',
   });
   app.appendChild(container);
   return container;
@@ -767,7 +767,7 @@ function ensureSquidRoomLivePanes(doc) {
   if (!container) return [];
 
   const panes = [];
-  for (const spec of SQUID_ROOM_TRUSTQUOTE_ARM_PANES) {
+  for (const spec of SQUID_ROOM_EXAMPLEAPP_ARM_PANES) {
     const command = resolveArmCommandFromSettings(spec.paneId, spec.command);
     const model = detectModelFamily(command);
     let pane = doc.querySelector?.(`.pane[data-pane-id="${spec.paneId}"]`);
@@ -792,7 +792,7 @@ function ensureSquidRoomLivePanes(doc) {
   return panes;
 }
 
-function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_TRUSTQUOTE_ARM_PANES, options = {}) {
+function configureSquidRoomRuntimeOverrides(terminal, livePanes = SQUID_ROOM_EXAMPLEAPP_ARM_PANES, options = {}) {
   if (!terminal || typeof terminal.setPaneRuntimeOverride !== 'function') return;
   const skipStartupInjection = options.skipStartupInjection === true;
   const spawnCommandOnCreate = options.spawnCommandOnCreate !== false;
@@ -946,7 +946,7 @@ module.exports = {
   SQUID_ROOM_PANE_IDS,
   SQUID_ROOM_PET_PANE_SPECS,
   SQUID_ROOM_TEAM_PANE_IDS,
-  SQUID_ROOM_TRUSTQUOTE_ARM_PANES,
+  SQUID_ROOM_EXAMPLEAPP_ARM_PANES,
   configureSquidRoomRuntimeOverrides,
   ensureSquidRoomPetFilters,
   configureWorkspacePaneShell,

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * SquidRun - Electron Main Process
  * Refactored to modular architecture (Session 60, Finding #4)
  */
@@ -28,7 +28,7 @@ require('./modules/noise-bootstrap').installNoiseGuards();
 // Occlusion/throttling policy is window-scoped. Pane-host windows opt out in
 // pane-host-window-manager.js; visual/side windows use normal Chromium pause
 // semantics and receive explicit visibility IPC from the main process.
-// LIVE EYES (James's tooling-freedom mandate): localhost-only CDP endpoint
+// LIVE EYES (Operator's tooling-freedom mandate): localhost-only CDP endpoint
 // so agents can attach playwright/puppeteer to the RUNNING app - live DOM,
 // console, FPS profiling, burst/video capture of motion instead of stills.
 // Chromium binds this to 127.0.0.1 by default. Activates on next restart.

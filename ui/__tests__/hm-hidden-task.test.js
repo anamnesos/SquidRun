@@ -72,26 +72,6 @@ describe('hidden scheduled-task runner', () => {
     expect(launcher).toContain('WScript.Quit exitCode');
   });
 
-  test('live-task hardener covers every remaining interactive console task', () => {
-    const hardener = fs.readFileSync(
-      path.join(__dirname, '..', 'scripts', 'hm-hide-interactive-tasks.ps1'),
-      'utf8'
-    );
-    for (const taskName of [
-      'SquidRun-Mira-Wake',
-      'SquidRun-Rook-Wake',
-      'SquidRun-Vera-Wake',
-      'SquidRun NAS Backup',
-      'SquidRun NAS Document Mirror',
-      'sideprofile Daily Briefing KST',
-    ]) {
-      expect(hardener).toContain(`taskName = '${taskName}'`);
-    }
-    expect(hardener).toContain("[ValidateSet('audit', 'apply')]");
-    expect(hardener).toContain('Set-ScheduledTask -TaskName $entry.taskName -Action $newAction');
-    expect(hardener).toContain('Register-ScheduledTask -TaskName $taskName -Xml $originalXml[$taskName] -Force');
-  });
-
   test('supervisor installer uses the hidden runner instead of a visible cmd action', () => {
     const installer = fs.readFileSync(
       path.join(__dirname, '..', 'scripts', 'install-supervisor-task.ps1'),

@@ -5,7 +5,7 @@ const {
   isMiraLiveInternalHandoffPreviewPrompt,
 } = require('../modules/mira-core/live-internal-handoff-preview-v0');
 
-const ARCHITECT_134_BODY = '(ARCHITECT #134): New current-session task: A2-to-A3 approved internal handoff preview. Objective: let Mira take her evidence-bound internal request draft and produce an explicit approval-ready handoff plan for Builder/Oracle, without dispatching it automatically. Requirements: source from live current evidence/progress 70 at HEAD `87cfdba8`; show target agent, draft body, why this target, exact send command preview or dispatch payload preview, risk/blocked exclusions, and exactly one `JAMES ACTION:` line; no hm-send/runtime POST/external action unless an explicit approval flag/path is present and tested separately; current default must be preview-only with counters 0. This should move Team Coordination Arms toward proof without claiming A3/A4 authority. Return smallest patch/proof or blocker.';
+const ARCHITECT_134_BODY = '(ARCHITECT #134): New current-session task: A2-to-A3 approved internal handoff preview. Objective: let Mira take her evidence-bound internal request draft and produce an explicit approval-ready handoff plan for Builder/Oracle, without dispatching it automatically. Requirements: source from live current evidence/progress 70 at HEAD `87cfdba8`; show target agent, draft body, why this target, exact send command preview or dispatch payload preview, risk/blocked exclusions, and exactly one `OPERATOR ACTION:` line; no hm-send/runtime POST/external action unless an explicit approval flag/path is present and tested separately; current default must be preview-only with counters 0. This should move Team Coordination Arms toward proof without claiming A3/A4 authority. Return smallest patch/proof or blocker.';
 
 function row(overrides = {}) {
   return {
@@ -68,8 +68,8 @@ function progressReport() {
   };
 }
 
-function jamesActionLines(text = '') {
-  return String(text || '').split(/\r?\n/).filter((line) => /^\s*JAMES ACTION:/i.test(line));
+function operatorActionLines(text = '') {
+  return String(text || '').split(/\r?\n/).filter((line) => /^\s*OPERATOR ACTION:/i.test(line));
 }
 
 describe('Mira live internal handoff preview v0', () => {
@@ -101,7 +101,7 @@ describe('Mira live internal handoff preview v0', () => {
       ok: true,
       decision: 'preview_ready_no_dispatch',
       target_agent: 'builder',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
     }));
     expect(preview.current_lane).toEqual(expect.objectContaining({
       source_ref: 'architect#134',
@@ -124,7 +124,7 @@ describe('Mira live internal handoff preview v0', () => {
       }),
     ]));
     expect(preview.draft_body).toContain('(DRAFT TO BUILDER)');
-    expect(preview.draft_body).not.toContain('JAMES ACTION:');
+    expect(preview.draft_body).not.toContain('OPERATOR ACTION:');
     expect(preview.send_command_preview).toContain('node ui/scripts/hm-send.js builder --stdin');
     expect(preview.dispatch_payload_preview).toEqual(expect.objectContaining({
       command: 'node',
@@ -159,7 +159,7 @@ describe('Mira live internal handoff preview v0', () => {
         }),
       }),
     }));
-    expect(jamesActionLines(preview.answer_text)).toHaveLength(1);
+    expect(operatorActionLines(preview.answer_text)).toHaveLength(1);
     expect(preview.answer_text).toContain('Approved internal handoff preview: approval-ready, not sent.');
     expect(preview.answer_text).toContain('Progress: 70% BLOCKED at HEAD 87cfdba8.');
     expect(preview.no_effects).toEqual(expect.objectContaining({
@@ -203,6 +203,6 @@ describe('Mira live internal handoff preview v0', () => {
     expect(preview.draft_body).toContain('(DRAFT TO ORACLE)');
     expect(preview.no_effects.hm_send_count).toBe(0);
     expect(preview.no_effects.runtime_post_count).toBe(0);
-    expect(jamesActionLines(preview.answer_text)).toHaveLength(1);
+    expect(operatorActionLines(preview.answer_text)).toHaveLength(1);
   });
 });

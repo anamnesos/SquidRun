@@ -31,8 +31,8 @@ class FakeDocument {
     this.elements = new Map();
     for (const id of [
       'squidRoomSurface',
-      'squidRoomTrustQuoteStatus',
-      'squidRoomTrustQuoteCounts',
+      'squidRoomExampleAppStatus',
+      'squidRoomExampleAppCounts',
       'squidRoomRefreshBtn',
     ]) {
       this.elements.set(id, new FakeElement(id));
@@ -94,7 +94,7 @@ function projection(overrides = {}) {
       watchdogAdvancesPerformed: 0,
     },
     registry: {
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       desiredCount: 3,
       readyCount: 1,
       missingCount: 2,
@@ -102,9 +102,9 @@ function projection(overrides = {}) {
     arms: [
       {
         armKey: 'lead',
-        displayName: 'TrustQuote Lead',
-        role: 'trustquote-lead',
-        paneId: 'trustquote-lead',
+        displayName: 'ExampleApp Lead',
+        role: 'exampleapp-lead',
+        paneId: 'exampleapp-lead',
         status: 'ready',
         latestAcceptedCheckin: { messageId: 'hm-lead-ready' },
         watchdogSummary: { open: 0, overdue: 0 },
@@ -113,8 +113,8 @@ function projection(overrides = {}) {
       {
         armKey: 'invoice',
         displayName: 'Invoice',
-        role: 'trustquote-invoice',
-        paneId: 'trustquote-invoice',
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
         status: 'missing',
         latestAcceptedCheckin: null,
         watchdogSummary: { open: 1, overdue: 1 },
@@ -123,8 +123,8 @@ function projection(overrides = {}) {
       {
         armKey: 'retired',
         displayName: 'Retired Arm',
-        role: 'trustquote-retired',
-        paneId: 'trustquote-retired',
+        role: 'exampleapp-retired',
+        paneId: 'exampleapp-retired',
         status: 'disabled',
         required: false,
         latestAcceptedCheckin: null,
@@ -143,13 +143,13 @@ function projection(overrides = {}) {
 }
 
 describe('squid-room-surface', () => {
-  test('builds the TrustQuote projection request from the Squid Room session scope', () => {
+  test('builds the ExampleApp projection request from the Squid Room session scope', () => {
     expect(buildProjectionRequest({
       windowKey: 'squid-room',
       sessionScopeId: 'app-session-406:squid-room',
     })).toEqual({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       includeRows: true,
     });
   });
@@ -198,19 +198,19 @@ describe('squid-room-surface', () => {
       ok: true,
       channel: ARM_STATE_PROJECTION_CHANNEL,
       payload: {
-        appRoomId: 'trustquote',
-        sessionId: 'app-session-406:trustquote',
+        appRoomId: 'exampleapp',
+        sessionId: 'app-session-406:exampleapp',
         includeRows: true,
       },
     }));
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith(ARM_STATE_PROJECTION_CHANNEL, {
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       includeRows: true,
     });
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('3 arms');
+    expect(doc.getElementById('squidRoomExampleAppStatus').textContent).toBe('');
+    expect(doc.getElementById('squidRoomExampleAppCounts').innerHTML).toContain('3 arms');
     expect(doc.getElementById('squidRoomSurface').dataset).toEqual(expect.objectContaining({
       projectionStatus: 'loaded',
       projectionOnly: 'true',
@@ -224,7 +224,7 @@ describe('squid-room-surface', () => {
     const doc = new FakeDocument();
     const invoke = jest.fn().mockResolvedValue(projection({
       registry: {
-        appRoomId: 'trustquote',
+        appRoomId: 'exampleapp',
         desiredCount: 3,
         readyCount: 0,
         missingCount: 3,
@@ -239,7 +239,7 @@ describe('squid-room-surface', () => {
     });
     await Promise.resolve();
     expect(invoke).not.toHaveBeenCalled();
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
+    expect(doc.getElementById('squidRoomExampleAppStatus').textContent).toBe('');
 
     windowContext = { windowKey: 'squid-room', sessionScopeId: 'app-session-408:squid-room' };
     const result = await controller.refreshForWindowContext(windowContext);
@@ -247,19 +247,19 @@ describe('squid-room-surface', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       payload: {
-        appRoomId: 'trustquote',
-        sessionId: 'app-session-408:trustquote',
+        appRoomId: 'exampleapp',
+        sessionId: 'app-session-408:exampleapp',
         includeRows: true,
       },
     }));
     expect(invoke).toHaveBeenCalledWith(ARM_STATE_PROJECTION_CHANNEL, {
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-408:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-408:exampleapp',
       includeRows: true,
     });
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('3 arms');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).not.toContain('Missing 3');
+    expect(doc.getElementById('squidRoomExampleAppStatus').textContent).toBe('');
+    expect(doc.getElementById('squidRoomExampleAppCounts').innerHTML).toContain('3 arms');
+    expect(doc.getElementById('squidRoomExampleAppCounts').innerHTML).not.toContain('Missing 3');
   });
 
   test('projection invoke failures render unavailable instead of leaving placeholders', async () => {
@@ -277,8 +277,8 @@ describe('squid-room-surface', () => {
 
     expect(result.ok).toBe(false);
     expect(result.model.status).toBe('Unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('0 arms');
+    expect(doc.getElementById('squidRoomExampleAppStatus').textContent).toBe('Projection unavailable');
+    expect(doc.getElementById('squidRoomExampleAppCounts').innerHTML).toContain('0 arms');
     expect(doc.getElementById('squidRoomSurface').dataset.projectionStatus).toBe('unavailable');
   });
 
@@ -291,7 +291,7 @@ describe('squid-room-surface', () => {
       invoke,
       getWindowContext: () => ({
         windowKey: 'main',
-        sessionScopeId: 'app-session-406:trustquote',
+        sessionScopeId: 'app-session-406:exampleapp',
       }),
     });
 
@@ -311,13 +311,13 @@ describe('squid-room-surface', () => {
       sideEffects: {},
     }, {
       root: doc.getElementById('squidRoomSurface'),
-      status: doc.getElementById('squidRoomTrustQuoteStatus'),
-      counts: doc.getElementById('squidRoomTrustQuoteCounts'),
+      status: doc.getElementById('squidRoomExampleAppStatus'),
+      counts: doc.getElementById('squidRoomExampleAppCounts'),
     });
 
     expect(model.ok).toBe(false);
-    expect(doc.getElementById('squidRoomTrustQuoteStatus').textContent).toBe('Projection unavailable');
-    expect(doc.getElementById('squidRoomTrustQuoteCounts').innerHTML).toContain('0 arms');
+    expect(doc.getElementById('squidRoomExampleAppStatus').textContent).toBe('Projection unavailable');
+    expect(doc.getElementById('squidRoomExampleAppCounts').innerHTML).toContain('0 arms');
   });
 
   test('collapses and expands Builder and Oracle as a local Squid Room team container', () => {
@@ -388,12 +388,12 @@ describe('squid-room-surface', () => {
     expect(labelNode.textContent).toBe('Collapse');
   });
 
-  test('toggles a TrustQuote live pane within its app container', () => {
+  test('toggles a ExampleApp live pane within its app container', () => {
     const body = expandableNode({ classes: ['sr2-room'] });
     const paneLayout = expandableNode();
-    const leadPane = expandableNode({ paneId: 'trustquote-lead' });
+    const leadPane = expandableNode({ paneId: 'exampleapp-lead' });
     const invoicePane = expandableNode({
-      paneId: 'trustquote-invoice',
+      paneId: 'exampleapp-invoice',
       classes: ['pane-expanded'],
     });
     const livePaneContainer = expandableNode({
@@ -405,10 +405,10 @@ describe('squid-room-surface', () => {
       body,
       pane: leadPane,
       paneLayout,
-      expandedPaneId: 'trustquote-invoice',
+      expandedPaneId: 'exampleapp-invoice',
     });
 
-    expect(expanded).toEqual({ handled: true, expandedPaneId: 'trustquote-lead' });
+    expect(expanded).toEqual({ handled: true, expandedPaneId: 'exampleapp-lead' });
     expect(invoicePane.classList.contains('pane-expanded')).toBe(false);
     expect(leadPane.classList.contains('pane-expanded')).toBe(true);
     expect(livePaneContainer.classList.contains('has-expanded-pane')).toBe(true);
@@ -417,7 +417,7 @@ describe('squid-room-surface', () => {
       body,
       pane: leadPane,
       paneLayout,
-      expandedPaneId: 'trustquote-lead',
+      expandedPaneId: 'exampleapp-lead',
     });
 
     expect(collapsed).toEqual({ handled: true, expandedPaneId: null });

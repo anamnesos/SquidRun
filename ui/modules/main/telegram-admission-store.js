@@ -7,7 +7,7 @@
  * The first version wrote a private `telegram_source_rows` table and a private
  * binding, and its 56 tests passed. They were green about tables nothing else
  * reads. After `promoteToAdmittedOwned` returned `admitted_owned`, the general
- * Obligation Kernel still held ZERO debt — so James's unanswered message had
+ * Obligation Kernel still held ZERO debt — so Operator's unanswered message had
  * no owner anywhere the room can see.
  *
  * That is this session's own failure pattern arriving in the foundation built
@@ -127,7 +127,7 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
  * THE CUTOVER. One constant, deliberately not a timestamp and not a session.
  *
  * It names the regime in which the DB claim is the authoritative attempt latch.
- * Records that predate it — 808499316 above all — were attempted under the
+ * Records that predate it — 700100102 above all — were attempted under the
  * legacy `delivery-attempts.jsonl` latch and can never grow a claim
  * retroactively; they are resolved by explicit pinned recovery, not by this
  * kernel deciding they look close enough.
@@ -142,7 +142,7 @@ const TELEGRAM_CUTOVER_ID = 'tg-cutover-v1';
 /**
  * Telegram identity carried in the source row's metadata. Every one of these
  * is verified on re-record: a differing value is a hard conflict, never a
- * merge, because the row is what James said and it does not get edited
+ * merge, because the row is what Operator said and it does not get edited
  * because a second caller disagrees.
  *
  * `obligorAddress` is here BECAUSE IT FEEDS THE OBLIGATION ID. A1 hashed it
@@ -243,7 +243,7 @@ const REQUIRED_SCHEMA_SHAPE = Object.freeze([
   ['telegram_obligation_bindings', "state IN ('open', 'lapsed'"],
   ['telegram_source_identity', 'canonical_payload_sha256'],
   ['telegram_source_identity', 'source_session_id'],
-  ['trg_tg_source_obligor_not_james', 'telegram_source_obligor_james_forbidden'],
+  ['trg_tg_source_obligor_not_operator', 'telegram_source_obligor_operator_forbidden'],
   ['trg_tg_source_identity_immutable', 'telegram_source_identity_immutable'],
   ['trg_tg_source_identity_no_delete', 'telegram_source_identity_delete_forbidden'],
   // A2b proved schema shape but not schema ENFORCEMENT. A database carrying the
@@ -842,13 +842,13 @@ function applyTelegramAdmissionSchemaDdl(db) {
       UNIQUE (cutover_id, route_key, update_id)
     );
 
-    -- JAMES IS THE CREDITOR AND IS REJECTED BEFORE THE ROW EXISTS. Promotion
+    -- OPERATOR IS THE CREDITOR AND IS REJECTED BEFORE THE ROW EXISTS. Promotion
     -- already refused him, but by then a source row had been exposed carrying a
     -- doomed obligation id. The database refuses him at the door.
-    CREATE TRIGGER IF NOT EXISTS trg_tg_source_obligor_not_james
+    CREATE TRIGGER IF NOT EXISTS trg_tg_source_obligor_not_operator
     BEFORE INSERT ON telegram_source_identity
-    FOR EACH ROW WHEN lower(trim(NEW.obligor_address)) = 'james'
-    BEGIN SELECT RAISE(ABORT, 'telegram_source_obligor_james_forbidden'); END;
+    FOR EACH ROW WHEN lower(trim(NEW.obligor_address)) = 'operator'
+    BEGIN SELECT RAISE(ABORT, 'telegram_source_obligor_operator_forbidden'); END;
 
     CREATE TRIGGER IF NOT EXISTS trg_tg_source_identity_immutable
     BEFORE UPDATE ON telegram_source_identity
@@ -1709,7 +1709,7 @@ function recordImmutableSource(db, input = {}) {
     // own foreign key resolves. Telegram work leases never enter this.
     const obligationId = buildObligationId({
       createdFromRowId: sourceRowId,
-      creditorAddress: 'james',
+      creditorAddress: 'operator',
       obligorAddress: input.obligorAddress,
       expectedClass: 'answer',
       stalenessClass: 'turn',
@@ -1717,7 +1717,7 @@ function recordImmutableSource(db, input = {}) {
 
     // THE AUTHORITY ROW. Written before the diagnostic blob, so a failure here
     // cannot leave a source that LOOKS recorded to anything reading metadata.
-    // The `james` trigger fires on this insert, which is why the obligor is
+    // The `operator` trigger fires on this insert, which is why the obligor is
     // refused before any source exists rather than at promotion.
     db.prepare(`
       INSERT INTO telegram_source_identity (
@@ -1952,7 +1952,7 @@ function recordDeliveryStarted(db, input = {}) {
     // its own transaction. Between the two, the only thing standing behind
     // "this claim describes that message" is a foreign key — and a foreign key
     // proves a row exists, never that it still says the same thing. The
-    // authorisation boundary is the one place where being wrong means James
+    // authorisation boundary is the one place where being wrong means Operator
     // sees the wrong message, so it re-derives rather than inherits.
     const source = db.prepare('SELECT * FROM comms_journal WHERE row_id = ?')
       .get(claim.source_row_id);
@@ -2135,7 +2135,7 @@ function closeUnsentClaim(db, input = {}) {
  * could see a claim was the process that had just made one; a restarted drain
  * asked `delivery-attempts.jsonl` — a file the delivery path no longer writes —
  * and got back "never attempted" for a message whose bytes may already be on
- * James's screen. That is the duplicate this whole lane exists to prevent, and
+ * Operator's screen. That is the duplicate this whole lane exists to prevent, and
  * it would have been INTRODUCED by the fix.
  *
  * Every field returned comes out of a stored column. `delivery_started` is read
@@ -2149,7 +2149,7 @@ function closeUnsentClaim(db, input = {}) {
  * distinguish that from "nothing ever happened here". Those two are NOT both
  * safe to attempt, which is what this comment used to say: a closed row that
  * carries a `delivery_started` event is an older build's incoherent pair, and
- * attempting it is a second copy in front of James.
+ * attempting it is a second copy in front of Operator.
  */
 function readTransportClaim(db, input = {}) {
   const durable = assertDurableHandle(db);
@@ -2537,7 +2537,7 @@ function reproveDependentFacts(db, input = {}) {
       stored: obligation.created_from_row_id, expected: source.row_id,
     });
   }
-  if (String(obligation.creditor_address) !== 'james'
+  if (String(obligation.creditor_address) !== 'operator'
     || String(obligation.obligor_address) !== String(obligorAddress)
     || String(obligation.expected_class) !== 'answer'
     || String(obligation.staleness_class) !== 'turn') {
@@ -2583,7 +2583,7 @@ function reproveDependentFacts(db, input = {}) {
   try { createdPayload = JSON.parse(createdEvent.payload_json); } catch { createdPayload = null; }
   if (!createdPayload || String(createdPayload.obligationId) !== String(obligationId)
     || String(createdPayload.obligorAddress) !== String(obligorAddress)
-    || String(createdPayload.creditorAddress) !== 'james') {
+    || String(createdPayload.creditorAddress) !== 'operator') {
     return fail('replay_dependent_fact_conflict:created_event_payload');
   }
   reproved.push('created_event_canonical');
@@ -2692,11 +2692,11 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
   for (const field of required) {
     if (!isNonEmptyString(input[field])) return fail(`owned_field_missing:${field}`);
   }
-  // JAMES IS THE CREDITOR, NEVER THE OBLIGOR, and it is refused HERE rather
+  // OPERATOR IS THE CREDITOR, NEVER THE OBLIGOR, and it is refused HERE rather
   // than being left to the kernel's own CHECK further down: by then a source row
   // has already been exposed carrying a doomed obligation id.
-  if (String(input.obligorAddress).trim().toLowerCase() === 'james') {
-    return fail('james_obligor_forbidden');
+  if (String(input.obligorAddress).trim().toLowerCase() === 'operator') {
+    return fail('operator_obligor_forbidden');
   }
   const atMs = Number(input.atMs);
   if (!Number.isSafeInteger(atMs) || atMs <= 0) return fail('owned_field_missing:atMs');
@@ -2811,7 +2811,7 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     // not re-derive is a mutated blob, not an identity.
     const recomputedObligationId = buildObligationId({
       createdFromRowId: source.row_id,
-      creditorAddress: 'james',
+      creditorAddress: 'operator',
       obligorAddress: String(source.target_role),
       expectedClass: 'answer',
       stalenessClass: 'turn',
@@ -3098,14 +3098,14 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     const creation = store.createObligationInCallerTransaction(
       { rowId: source.row_id, sessionId: source.session_id || null },
       {
-        creditorAddress: 'james',
+        creditorAddress: 'operator',
         obligorAddress: input.obligorAddress,
         expectedClass: 'answer',
         stalenessClass: 'turn',
         leaseId: null,
       },
       {
-        creatorAddress: 'james',
+        creatorAddress: 'operator',
         declarationMode: 'telegram-admission',
         nowMs: atMs,
       }
@@ -3199,7 +3199,7 @@ function promoteToAdmittedOwned(db, input = {}, store = null) {
     // again here would make promotion the second writer of the one column the
     // kernel is supposed to own — the same defect as the generic upsert, one
     // layer down — and it would move `brokered_at_ms` forward to promotion
-    // time, quietly relabelling when James's message reached the pane.
+    // time, quietly relabelling when Operator's message reached the pane.
     //
     // Verified rather than assumed: promotion of a source that was never
     // brokered means a receipt exists for a delivery nothing ever authorised.

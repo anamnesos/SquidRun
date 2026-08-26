@@ -325,7 +325,7 @@ function normalizeJsonSafeObject(value) {
   }
 }
 
-function normalizeJamesCheckpoint(value) {
+function normalizeOperatorCheckpoint(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   if (value.required !== true) return null;
   return {
@@ -428,7 +428,7 @@ function normalizeWorkItem(raw = {}, options = {}) {
     routeHealthRequirement: normalizeRouteHealthRequirement(raw.routeHealthRequirement || raw.routeHealthJson || raw.requireRouteHealth),
     observedSignal: normalizeJsonSafeObject(raw.observedSignal),
     suggestedNextCommand: toOptionalString(raw.suggestedNextCommand || raw.nextCommand, null),
-    jamesCheckpoint: normalizeJamesCheckpoint(raw.jamesCheckpoint),
+    operatorCheckpoint: normalizeOperatorCheckpoint(raw.operatorCheckpoint),
     requiredProofs: Array.isArray(raw.requiredProofs)
       ? raw.requiredProofs.map((proof) => ({
         role: normalizeProofRole(proof.role || proof),
@@ -1186,7 +1186,7 @@ function deriveWorkItemCurrentLaneSnapshot(options = {}) {
       routeHealthRequirement: active.routeHealthRequirement,
       observedSignal: active.observedSignal,
       suggestedNextCommand: active.suggestedNextCommand,
-      jamesCheckpoint: active.jamesCheckpoint,
+      operatorCheckpoint: active.operatorCheckpoint,
       sideEffectCaps: active.sideEffectCaps,
       requiredProofs: active.requiredProofs,
       proofState: active.proofState,

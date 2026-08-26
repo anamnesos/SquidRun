@@ -181,8 +181,8 @@ describe('install-credentials', () => {
       const root = makeDataRoot({
         [TELEGRAM_SETTINGS_RELATIVE_PATH]: {
           botToken: '123456789:fake_install_bot_token_do_not_use',
-          ownerChatId: REDACTED-CHAT-ID,
-          chatAllowlist: [REDACTED-CHAT-ID],
+          ownerChatId: 7000000002,
+          chatAllowlist: [7000000002],
         },
         [RELAY_SETTINGS_RELATIVE_PATH]: {
           relayUrl: 'wss://relay.example.test/socket',

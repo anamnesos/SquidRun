@@ -40,7 +40,7 @@ function seedMemoryDb(dbPath) {
       'Mira source/action substrate continuity',
       'test',
       'fixture',
-      'Mira should use memory retrieval for current lane continuity before asking James to restate the source action substrate context.',
+      'Mira should use memory retrieval for current lane continuity before asking Operator to restate the source action substrate context.',
       0.9,
       3,
       100,

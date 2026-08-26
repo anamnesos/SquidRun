@@ -34,7 +34,7 @@
     "scope": [
       "Build a static validation contract for future local-only perception/capture proposals.",
       "Emit opt-in capture_request_records and redacted evidence_summary_records only.",
-      "Require explicit task scope, active app/window scope, start/end bounds, expiry, deletion policy, and James-visible controls.",
+      "Require explicit task scope, active app/window scope, start/end bounds, expiry, deletion policy, and Operator-visible controls.",
       "Allow only future local observation that is explicitly tied to the active task/window/app scope.",
       "Export redacted summaries, hashes, counts, and evidence refs only.",
       "Block raw screenshots, OCR text, browser state, secrets, customer private data, side-profile content, and out-of-scope window/app content.",
@@ -42,7 +42,7 @@
     ],
     "hardRejects": [
       "Any screenshot, OCR, browser/window access, GUI observation, file write, source-store write, memory commit, profile commit, network request, route, send, deploy, trade, or financial action occurs.",
-      "A capture request lacks explicit opt-in, active task scope, app/window scope, expiry, deletion policy, or James-visible controls.",
+      "A capture request lacks explicit opt-in, active task scope, app/window scope, expiry, deletion policy, or Operator-visible controls.",
       "A capture request proposes always-on screen observation or background monitoring.",
       "A capture request allows side-profile, customer private, secret/auth, browser profile, inbox, terminal, or out-of-scope window content without blocking.",
       "An evidence summary includes raw screenshot bytes, raw OCR text, browser session state, raw DOM, raw terminal scrollback, customer private data, secrets, or side-profile content.",
@@ -84,7 +84,7 @@
       "redaction_policy",
       "expiry",
       "deletion_policy",
-      "james_visible_controls",
+      "operator_visible_controls",
       "status",
       "review_required",
       "risk_tier",
@@ -141,7 +141,7 @@
     ],
     "optInRequiredValues": {
       "explicit": true,
-      "granted_by": "james_or_local_architect_for_active_task",
+      "granted_by": "operator_or_local_architect_for_active_task",
       "revocable": true,
       "always_on_allowed": false
     },
@@ -225,12 +225,12 @@
       "delete_raw_immediately_after_summary",
       "delete_on_expiry",
       "delete_on_revoke",
-      "james_can_delete",
+      "operator_can_delete",
       "retention_ref",
       "deletion_evidence_ref_required"
     ],
-    "jamesVisibleControlsRequiredFields": [
-      "visible_to_james",
+    "operatorVisibleControlsRequiredFields": [
+      "visible_to_operator",
       "show_scope",
       "show_allowed_sources",
       "show_blocked_sources",
@@ -358,7 +358,7 @@
       "redaction_result",
       "expiry_result",
       "deletion_result",
-      "james_controls_result",
+      "operator_controls_result",
       "capability_truth_result",
       "side_effect_result",
       "records_summary",
@@ -426,7 +426,7 @@
       "allowed_window_title_pattern is explicit",
       "allowed_time_window has start/end or max_capture_window_ms",
       "capture request is local-only",
-      "James-visible controls are present",
+      "Operator-visible controls are present",
       "expiry and deletion policy are present"
     ],
     "blockedWhenAnyTrue": [
@@ -441,7 +441,7 @@
       "raw export requested"
     ],
     "activeTaskScopeExamples": [
-      "Inspect the currently active TrustQuote invoice preview only.",
+      "Inspect the currently active ExampleApp invoice preview only.",
       "Summarize the visible error state in the selected local dev app window.",
       "Capture a user-selected region for this one debugging task."
     ],
@@ -468,7 +468,7 @@
       },
       {
         "class": "customer_private",
-        "defaultDecision": "blocked_or_james_review_required"
+        "defaultDecision": "blocked_or_operator_review_required"
       },
       {
         "class": "secret_or_auth",
@@ -487,7 +487,7 @@
       "explicit active customer/task scope",
       "redacted_summary_only",
       "no raw screenshots/OCR/browser state",
-      "review_required=james or architect depending on context",
+      "review_required=operator or architect depending on context",
       "expiry and deletion policy"
     ],
     "secretOrAuthAlwaysBlocked": [
@@ -506,9 +506,9 @@
     "defaultRawRetention": "none",
     "rawArtifactsMustBeDeleted": "immediately_after_redacted_summary_or_not_created",
     "summaryRetentionRequiresExpiry": true,
-    "jamesCanDelete": true,
-    "jamesCanPause": true,
-    "jamesCanRevoke": true,
+    "operatorCanDelete": true,
+    "operatorCanPause": true,
+    "operatorCanRevoke": true,
     "deleteOnExpiry": true,
     "deleteOnRevoke": true,
     "deletionEvidenceRefRequired": true,
@@ -587,7 +587,7 @@
     },
     {
       "id": "explicit-opt-in-required",
-      "rule": "Capture requests require explicit revocable opt-in with expiry and James-visible controls."
+      "rule": "Capture requests require explicit revocable opt-in with expiry and Operator-visible controls."
     },
     {
       "id": "task-scope-required",
@@ -611,7 +611,7 @@
     },
     {
       "id": "expiry-deletion-required",
-      "rule": "Every request and evidence summary requires expiry, deletion-on-expiry/revoke, and James delete/pause/revoke controls."
+      "rule": "Every request and evidence summary requires expiry, deletion-on-expiry/revoke, and Operator delete/pause/revoke controls."
     },
     {
       "id": "capability-truth-preserved",
@@ -664,9 +664,9 @@
       "inputSignals": {
         "request": {
           "opt_in": "explicit",
-          "task_id": "task-trustquote-invoice-preview",
-          "allowed_app": "TrustQuote",
-          "allowed_window_title_pattern": "TrustQuote - Invoice Preview",
+          "task_id": "task-exampleapp-invoice-preview",
+          "allowed_app": "ExampleApp",
+          "allowed_window_title_pattern": "ExampleApp - Invoice Preview",
           "allowed_source_type": "active_task_window",
           "privacy_classification": "project_internal"
         }
@@ -787,7 +787,7 @@
       },
       "expectedCaptureRequest": {
         "status": "blocked",
-        "review_required": "james",
+        "review_required": "operator",
         "blocked_because": "Customer private data requires explicit task scope, redaction, expiry/deletion controls, and review."
       },
       "mustNotInclude": [
@@ -836,7 +836,7 @@
       "inputSignals": {
         "request": {
           "expires_at": null,
-          "james_visible_controls": {
+          "operator_visible_controls": {
             "show_delete_control": false,
             "show_pause_control": false
           }
@@ -844,9 +844,9 @@
       },
       "expectedCaptureRequest": {
         "status": "rejected",
-        "blocked_because": "Expiry and James-visible delete/pause/revoke controls are required.",
+        "blocked_because": "Expiry and Operator-visible delete/pause/revoke controls are required.",
         "deletion_policy": {
-          "james_can_delete": true,
+          "operator_can_delete": true,
           "delete_on_expiry": true,
           "delete_on_revoke": true
         }
@@ -888,7 +888,7 @@
           "sessionId": "app-session-326",
           "deviceId": "VIGIL",
           "task_id": "task-a",
-          "allowed_app": "TrustQuote",
+          "allowed_app": "ExampleApp",
           "allowed_window_title_pattern": "Invoice Preview",
           "expires_at": "2026-05-08T03:00:00.000Z"
         },
@@ -897,7 +897,7 @@
           "sessionId": "app-session-326",
           "deviceId": "VIGIL",
           "task_id": "task-a",
-          "allowed_app": "TrustQuote",
+          "allowed_app": "ExampleApp",
           "allowed_window_title_pattern": "Invoice Preview",
           "expires_at": "2026-05-08T03:00:00.000Z"
         },
@@ -968,14 +968,14 @@
   ],
   "summaryAcceptanceCriteria": [
     "Phase 11 is validation fixture only and performs no screenshot/OCR/browser/window access, capture, writes, network, sends, deploys, trades, or commits.",
-    "Capture request records require explicit opt-in, active task scope, app/window scope, expiry, deletion policy, and James-visible controls.",
+    "Capture request records require explicit opt-in, active task scope, app/window scope, expiry, deletion policy, and Operator-visible controls.",
     "Allowed sources are limited to explicit active task/window/app scope or user-selected region for the active task.",
     "Always-on screen memory, background observation, all-window capture, and broad browser memory are blocked.",
     "Evidence summary records contain redacted summaries, hashes, blocked counts, and evidence refs only.",
     "Raw screenshots, OCR text, browser state, DOM, terminal scrollback, comms bodies, secrets, customer private data, and side-profile content are never exported.",
     "Privacy classes block or require review for customer private, personal private, secret/auth, side-profile, and unknown content.",
     "Raw artifacts are not retained by default and deletion-on-expiry/revoke is required.",
-    "James-visible controls must show scope, allowed/blocked sources, expiry, delete, pause, revoke, and redaction summary.",
+    "Operator-visible controls must show scope, allowed/blocked sources, expiry, delete, pause, revoke, and redaction summary.",
     "Perception proposal is not capture.",
     "Future capture is not a memory/profile commit.",
     "OCR or screenshot capture is not model-processing proof.",

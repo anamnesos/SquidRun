@@ -102,7 +102,7 @@ function evidence({
     terminal('3', `oracle body baseline tail ${terminalSuffix}`),
     ...REQUIRED_ARMS.map((arm) => terminal(
       arm.paneId,
-      `${arm.paneId} TrustQuote arm body baseline tail ${terminalSuffix}`,
+      `${arm.paneId} ExampleApp arm body baseline tail ${terminalSuffix}`,
       arm.cwd,
     )),
   ];
@@ -161,10 +161,10 @@ describe('hm-squid-room-restart-proof', () => {
 
     expect(result.status).toBe('PASS');
     expect(result.checks.find((entry) => entry.id === 'squid_room_window_restore').status).toBe('PASS');
-    expect(result.checks.find((entry) => entry.id === 'trustquote_arm_startup_receipts').status).toBe('PASS');
+    expect(result.checks.find((entry) => entry.id === 'exampleapp_arm_startup_receipts').status).toBe('PASS');
   });
 
-  it('fails when a required TrustQuote arm startup receipt has the wrong cwd', () => {
+  it('fails when a required ExampleApp arm startup receipt has the wrong cwd', () => {
     const before = buildBaselineSnapshot(evidence({ session: 416 }));
     const after = evidence({
       session: 417,
@@ -172,17 +172,17 @@ describe('hm-squid-room-restart-proof', () => {
       windowReason: 'startup_restore',
       windowUpdatedAt: '2026-06-08T23:00:04.000Z',
       receiptOverrides: {
-        'trustquote-lead': { cwd: 'D:/projects/squidrun' },
+        'exampleapp-lead': { cwd: 'D:/projects/squidrun' },
       },
     });
 
     const result = verifyRestartSurvival(after, before);
-    const receiptCheck = result.checks.find((entry) => entry.id === 'trustquote_arm_startup_receipts');
+    const receiptCheck = result.checks.find((entry) => entry.id === 'exampleapp_arm_startup_receipts');
 
     expect(result.status).toBe('FAIL');
     expect(receiptCheck.status).toBe('FAIL');
     expect(receiptCheck.evidence.mismatches).toEqual(expect.arrayContaining([
-      expect.objectContaining({ paneId: 'trustquote-lead', field: 'cwd' }),
+      expect.objectContaining({ paneId: 'exampleapp-lead', field: 'cwd' }),
     ]));
   });
 
@@ -192,98 +192,98 @@ describe('hm-squid-room-restart-proof', () => {
       {
         rowId: 200,
         rawBody: [
-          'Live env proof: SQUIDRUN_ROLE=trustquote-schedule-dispatch; SQUIDRUN_PANE_ID=trustquote-schedule-dispatch;',
+          'Live env proof: SQUIDRUN_ROLE=exampleapp-schedule-dispatch; SQUIDRUN_PANE_ID=exampleapp-schedule-dispatch;',
           'SQUIDRUN_SESSION_SCOPE_ID=app-session-417:squid-room; SQUIDRUN_WINDOW_KEY=squid-room. Main app-status follows.',
-          'cwd=D:/projects/TrustQuote. Standing by.',
+          'cwd=D:/projects/ExampleApp. Standing by.',
         ].join(' '),
       },
     ], { sessionScope });
 
-    expect(receipts['trustquote-schedule-dispatch']).toEqual(expect.objectContaining({
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-schedule-dispatch',
+    expect(receipts['exampleapp-schedule-dispatch']).toEqual(expect.objectContaining({
+      role: 'exampleapp-schedule-dispatch',
+      paneId: 'exampleapp-schedule-dispatch',
       sessionScope,
       windowKey: 'squid-room',
-      cwd: 'D:/projects/TrustQuote',
+      cwd: 'D:/projects/ExampleApp',
     }));
   });
 
-  it('parses TrustQuote cwd when startup prose says online in the project path', () => {
+  it('parses ExampleApp cwd when startup prose says online in the project path', () => {
     const sessionScope = 'app-session-417:squid-room';
     const receipts = parseArmReceipts([
       {
         rowId: 201,
         rawBody: [
-          '(TRUSTQUOTE APP #1): TrustQuote App pane online in D:\\projects\\TrustQuote.',
-          'Env binding: SQUIDRUN_ROLE=trustquote-app, SQUIDRUN_PANE_ID=trustquote-app,',
+          '(EXAMPLEAPP APP #1): ExampleApp App pane online in D:\\projects\\ExampleApp.',
+          'Env binding: SQUIDRUN_ROLE=exampleapp-app, SQUIDRUN_PANE_ID=exampleapp-app,',
           'SQUIDRUN_SESSION_SCOPE_ID=app-session-417:squid-room, SQUIDRUN_PROFILE=main.',
         ].join(' '),
       },
     ], { sessionScope });
 
-    expect(receipts['trustquote-app']).toEqual(expect.objectContaining({
-      role: 'trustquote-app',
-      paneId: 'trustquote-app',
+    expect(receipts['exampleapp-app']).toEqual(expect.objectContaining({
+      role: 'exampleapp-app',
+      paneId: 'exampleapp-app',
       sessionScope,
-      cwd: 'D:\\projects\\TrustQuote',
+      cwd: 'D:\\projects\\ExampleApp',
     }));
   });
 
-  it('parses live TrustQuote arm receipts from comms metadata and Pane/env binding prose', () => {
+  it('parses live ExampleApp arm receipts from comms metadata and Pane/env binding prose', () => {
     const sessionScope = 'app-session-418:squid-room';
     const receipts = parseArmReceipts([
       {
         rowId: 68833,
         sessionId: sessionScope,
-        sender: 'trustquote-app',
+        sender: 'exampleapp-app',
         status: 'routed',
         rawBody: [
-          '(TRUSTQUOTE APP STARTUP RECEIPT): TrustQuote App online in D:\\projects\\TrustQuote.',
-          'Pane/env binding: role=trustquote-app, pane=trustquote-app,',
+          '(EXAMPLEAPP APP STARTUP RECEIPT): ExampleApp App online in D:\\projects\\ExampleApp.',
+          'Pane/env binding: role=exampleapp-app, pane=exampleapp-app,',
           'session=app-session-418:squid-room, window=squid-room.',
         ].join(' '),
       },
       {
         rowId: 68838,
         sessionId: sessionScope,
-        senderRole: 'trustquote-schedule-dispatch',
+        senderRole: 'exampleapp-schedule-dispatch',
         status: 'routed',
         metadata: {
           project: {
-            name: 'TrustQuote',
-            path: 'D:\\projects\\TrustQuote',
+            name: 'ExampleApp',
+            path: 'D:\\projects\\ExampleApp',
             session_id: sessionScope,
           },
-          sender: { role: 'trustquote-schedule-dispatch' },
+          sender: { role: 'exampleapp-schedule-dispatch' },
           session_id: sessionScope,
         },
         rawBody: [
-          '[TRUSTQUOTE SCHEDULE DISPATCH STARTUP CORRECTION / S418]',
-          'Live env proof: SQUIDRUN_ROLE=trustquote-schedule-dispatch;',
-          'SQUIDRUN_PANE_ID=trustquote-schedule-dispatch;',
+          '[EXAMPLEAPP SCHEDULE DISPATCH STARTUP CORRECTION / S418]',
+          'Live env proof: SQUIDRUN_ROLE=exampleapp-schedule-dispatch;',
+          'SQUIDRUN_PANE_ID=exampleapp-schedule-dispatch;',
           'SQUIDRUN_SESSION_SCOPE_ID=app-session-418:squid-room;',
           'SQUIDRUN_PROFILE=main.',
         ].join(' '),
       },
     ], { sessionScope });
 
-    expect(receipts['trustquote-app']).toEqual(expect.objectContaining({
+    expect(receipts['exampleapp-app']).toEqual(expect.objectContaining({
       rowId: 68833,
-      sender: 'trustquote-app',
-      role: 'trustquote-app',
-      paneId: 'trustquote-app',
+      sender: 'exampleapp-app',
+      role: 'exampleapp-app',
+      paneId: 'exampleapp-app',
       sessionScope,
       windowKey: 'squid-room',
-      cwd: 'D:\\projects\\TrustQuote',
+      cwd: 'D:\\projects\\ExampleApp',
       status: 'routed',
     }));
-    expect(receipts['trustquote-schedule-dispatch']).toEqual(expect.objectContaining({
+    expect(receipts['exampleapp-schedule-dispatch']).toEqual(expect.objectContaining({
       rowId: 68838,
-      sender: 'trustquote-schedule-dispatch',
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-schedule-dispatch',
+      sender: 'exampleapp-schedule-dispatch',
+      role: 'exampleapp-schedule-dispatch',
+      paneId: 'exampleapp-schedule-dispatch',
       sessionScope,
-      cwd: 'D:\\projects\\TrustQuote',
+      cwd: 'D:\\projects\\ExampleApp',
       status: 'routed',
     }));
   });
@@ -296,20 +296,20 @@ describe('hm-squid-room-restart-proof', () => {
         status: 'routed',
         metadata_json: JSON.stringify({
           session_id: sessionScope,
-          sender: { role: 'trustquote-invoice' },
-          project: { name: 'TrustQuote', path: 'D:\\projects\\TrustQuote' },
+          sender: { role: 'exampleapp-invoice' },
+          project: { name: 'ExampleApp', path: 'D:\\projects\\ExampleApp' },
         }),
-        rawBody: 'TrustQuote invoice arm online. Ready for routed assignment.',
+        rawBody: 'ExampleApp invoice arm online. Ready for routed assignment.',
       },
     ], { sessionScope });
 
-    expect(receipts['trustquote-invoice']).toEqual(expect.objectContaining({
+    expect(receipts['exampleapp-invoice']).toEqual(expect.objectContaining({
       rowId: 68839,
-      sender: 'trustquote-invoice',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      sender: 'exampleapp-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       sessionScope,
-      cwd: 'D:\\projects\\TrustQuote',
+      cwd: 'D:\\projects\\ExampleApp',
       status: 'routed',
     }));
   });
@@ -320,41 +320,41 @@ describe('hm-squid-room-restart-proof', () => {
       {
         rowId: 68830,
         sessionId: 'app-session-417:squid-room',
-        senderRole: 'trustquote-app',
+        senderRole: 'exampleapp-app',
         status: 'routed',
         metadata: {
-          sender: { role: 'trustquote-app' },
-          project: { path: 'D:\\projects\\TrustQuote' },
+          sender: { role: 'exampleapp-app' },
+          project: { path: 'D:\\projects\\ExampleApp' },
         },
-        rawBody: 'TrustQuote app historical routed receipt with plausible cwd.',
+        rawBody: 'ExampleApp app historical routed receipt with plausible cwd.',
       },
       {
         rowId: 68831,
-        senderRole: 'trustquote-invoice',
+        senderRole: 'exampleapp-invoice',
         status: 'routed',
         metadata: {
-          sender: { role: 'trustquote-invoice' },
-          project: { path: 'D:\\projects\\TrustQuote' },
+          sender: { role: 'exampleapp-invoice' },
+          project: { path: 'D:\\projects\\ExampleApp' },
         },
-        rawBody: 'TrustQuote invoice routed receipt missing session.',
+        rawBody: 'ExampleApp invoice routed receipt missing session.',
       },
       {
         rowId: 68832,
         sessionId: 'app-session-417:squid-room',
-        senderRole: 'trustquote-schedule-dispatch',
+        senderRole: 'exampleapp-schedule-dispatch',
         status: 'routed',
         rawBody: [
-          'Live env proof: SQUIDRUN_ROLE=trustquote-schedule-dispatch;',
-          'SQUIDRUN_PANE_ID=trustquote-schedule-dispatch;',
+          'Live env proof: SQUIDRUN_ROLE=exampleapp-schedule-dispatch;',
+          'SQUIDRUN_PANE_ID=exampleapp-schedule-dispatch;',
           'SQUIDRUN_SESSION_SCOPE_ID=app-session-417:squid-room;',
-          'SQUIDRUN_WORKING_DIR=D:/projects/TrustQuote.',
+          'SQUIDRUN_WORKING_DIR=D:/projects/ExampleApp.',
         ].join(' '),
       },
     ], { sessionScope });
 
-    expect(receipts['trustquote-app']).toBeUndefined();
-    expect(receipts['trustquote-invoice']).toBeUndefined();
-    expect(receipts['trustquote-schedule-dispatch']).toBeUndefined();
+    expect(receipts['exampleapp-app']).toBeUndefined();
+    expect(receipts['exampleapp-invoice']).toBeUndefined();
+    expect(receipts['exampleapp-schedule-dispatch']).toBeUndefined();
   });
 
   it('fails when baseline does not prove active mid-work', () => {

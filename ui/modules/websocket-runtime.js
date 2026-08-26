@@ -27,8 +27,8 @@ const {
   waitForModelPromptReceipt,
 } = require('./model-prompt-receipt');
 const {
-  getTrustQuoteArmPaneIds,
-} = require('./trustquote-arm-specs');
+  getExampleAppArmPaneIds,
+} = require('./exampleapp-arm-specs');
 
 const DEFAULT_PORT = resolveWebSocketPort({
   profileName: process.env.SQUIDRUN_PROFILE || DEFAULT_PROFILE,
@@ -57,12 +57,12 @@ const CANONICAL_ROLE_TO_PANE = new Map(
 const PANE_TO_CANONICAL_ROLE = new Map(
   Array.from(CANONICAL_ROLE_TO_PANE.entries()).map(([role, paneId]) => [paneId, role])
 );
-const TRUSTQUOTE_ARM_TARGET_IDS = new Set(
-  getTrustQuoteArmPaneIds()
+const EXAMPLEAPP_ARM_TARGET_IDS = new Set(
+  getExampleAppArmPaneIds()
     .map((paneId) => String(paneId || '').trim().toLowerCase())
     .filter(Boolean)
 );
-const SIDE_CONTEXT_PATTERN = /\b(sideprofile|eunby[e]?ol|rachel|side-window|case\s+(?:file|folder|context)|scoped\s+case)\b/i;
+const SIDE_CONTEXT_PATTERN = /\b(client|eunby[e]?ol|client|side-window|case\s+(?:file|folder|context)|scoped\s+case)\b/i;
 const MAIN_CONTEXT_PATTERN = /\b(main\s+(?:builder|architect|oracle)|trading|trade|hood|hyperliquid|ci\s+fix)\b/i;
 let wss = null;
 let clients = new Map(); // clientId -> { ws, paneId, role }
@@ -142,9 +142,9 @@ function isCanonicalLocalPaneRoleTarget(target) {
   return Boolean(normalizeRoleId(target));
 }
 
-function isTrustQuoteArmTarget(target) {
+function isExampleAppArmTarget(target) {
   const normalized = String(target || '').trim().toLowerCase();
-  return TRUSTQUOTE_ARM_TARGET_IDS.has(normalized);
+  return EXAMPLEAPP_ARM_TARGET_IDS.has(normalized);
 }
 
 function normalizeScopeProfile(value) {
@@ -532,7 +532,7 @@ function canUseLocalHandlerRoute(routeScope = {}, clientInfo = {}, message = {})
   const targetIdentity = resolveTargetIdentity(target);
   const canonicalLocalTarget = (
     isCanonicalLocalPaneRoleTarget(target)
-    || isTrustQuoteArmTarget(target)
+    || isExampleAppArmTarget(target)
     || (targetIdentity.role && CANONICAL_ROLE_IDS.includes(targetIdentity.role))
   );
   if (!canonicalLocalTarget || (!targetIdentity.role && !targetIdentity.paneId)) return false;
@@ -582,7 +582,7 @@ function resolveTargetIdentity(target) {
     return { role: null, paneId: null };
   }
 
-  if (TRUSTQUOTE_ARM_TARGET_IDS.has(rawTarget)) {
+  if (EXAMPLEAPP_ARM_TARGET_IDS.has(rawTarget)) {
     return {
       role: rawTarget,
       paneId: rawTarget,

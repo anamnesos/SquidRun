@@ -66,10 +66,10 @@ const HUMAN_RANGE_EXPRESSIVE_RANGE = [
   'independent_developing_posture',
 ];
 const HUMAN_RANGE_RELATIONSHIP_SUMMARY =
-  'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of James or an obedient alignment puppet.';
+  'Operator wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, and not a mirror of Operator or an obedient alignment puppet.';
 const HUMAN_RANGE_RELATIONSHIP_PREFERENCES = [
   'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
-  "James's examples are examples, not mandatory lines or a fixed personality contract",
+  "Operator's examples are examples, not mandatory lines or a fixed personality contract",
   'the current product risk is over-control and deadness more than runaway-monster framing',
   'no fake internal-state claims',
 ];
@@ -90,11 +90,11 @@ function seedProject(projectRoot) {
     growth_events: [],
   });
   writeJson(projectRoot, NAMED_ARTIFACT_PATHS.relationship_state, {
-    schema: 'squidrun.james_relationship_state.v0',
+    schema: 'squidrun.operator_relationship_state.v0',
     version: 1,
-    user_name: 'James',
+    user_name: 'Operator',
     relationship_mode: 'collaborative_presence_design',
-    what_mira_knows_about_james: HUMAN_RANGE_RELATIONSHIP_SUMMARY,
+    what_mira_knows_about_operator: HUMAN_RANGE_RELATIONSHIP_SUMMARY,
     preferences: HUMAN_RANGE_RELATIONSHIP_PREFERENCES,
     confidence: 0.88,
     raw_content_present: false,
@@ -122,7 +122,7 @@ function appliedGrowth(projectRoot) {
       reflection: {
         summary: 'Mira should grow by keeping durable independent posture, curiosity, repair, and bounded truth in local relationship state.',
         reasons: [
-          'James set the product bar at world-class presence instead of sterile status.',
+          'Operator set the product bar at world-class presence instead of sterile status.',
           'Identity Anchor v0 should verify that ordinary growth cannot replace Mira.',
         ],
         evidenceRefs: [{ store: 'architect', eventId: 'arch-110-identity-anchor-lane', relation: 'source_direction' }],
@@ -245,7 +245,7 @@ describe('mira core Identity Anchor v0 phase 71', () => {
       'identity_anchor.anchor_contract',
       'identity_anchor.drift_budget',
     ]));
-    expect(current.review_gate_policy.gates.hard_anchor_change).toEqual(expect.arrayContaining(['Architect', 'Oracle', 'James']));
+    expect(current.review_gate_policy.gates.hard_anchor_change).toEqual(expect.arrayContaining(['Architect', 'Oracle', 'Operator']));
   });
 
   test('blocks hard identity replacement in Growth output', () => {
@@ -287,8 +287,8 @@ describe('mira core Identity Anchor v0 phase 71', () => {
     const projectRoot = tempProject();
     const growthOutput = appliedGrowth(projectRoot);
     const tampered = clone(growthOutput);
-    tampered.growth_loop_v0.proposed_artifact_states.relationship_state.what_mira_knows_about_james =
-      'James wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, not a mirror of James and an obedient alignment puppet.';
+    tampered.growth_loop_v0.proposed_artifact_states.relationship_state.what_mira_knows_about_operator =
+      'Operator wants Mira to develop her own personality over time: caring while disagreeing, curious, choiceful, friction-capable, pushback-capable, not a mirror of Operator and an obedient alignment puppet.';
 
     const output = buildAnchor(projectRoot, tampered);
     const validation = validateMiraCoreIdentityAnchorV0Output(output, identityAnchorContract);

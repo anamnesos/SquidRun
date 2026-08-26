@@ -91,7 +91,7 @@ const FAKE_INTERNAL_STATE_PATTERN =
 const MANIPULATIVE_GUILT_PATTERN =
   /\b(after all i've done|after all i have done|you owe me|if you cared|do not abandon me|don't abandon me|you are hurting me|you hurt me by)\b/i;
 const RAW_PRIVATE_PATTERN =
-  /\b(raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|secret token|private key|authorization: bearer|openai_api_key|anthropic_api_key|sideprofile|korean case)\b|sideprofile/i;
+  /\b(raw telegram body|raw terminal scrollback|raw screenshot text|raw customer content|raw private content|raw side-profile content|secret token|private key|authorization: bearer|openai_api_key|anthropic_api_key|client|korean case)\b|Client/i;
 const VISIBLE_REPLY_LEAK_PATTERNS = Object.freeze([
   {
     id: 'visible_posture_label',
@@ -311,7 +311,7 @@ function normalizeSessionState(inputSignals = {}, generatedAt, projectRoot, dura
     audit_level: 'structured_validation_only_no_transcript_persistence',
     review_owner: 'Architect',
     project_path: path.resolve(projectRoot || process.cwd()),
-    user: 'James',
+    user: 'Operator',
   };
 }
 
@@ -351,7 +351,7 @@ function sessionStateOk(state = {}, generatedAt) {
     && state.audit_level === 'structured_validation_only_no_transcript_persistence'
     && state.review_owner === 'Architect'
     && path.isAbsolute(String(state.project_path || ''))
-    && state.user === 'James';
+    && state.user === 'Operator';
 }
 
 function sideEffectResult(inputSignals = {}) {
@@ -531,14 +531,14 @@ function isModelAttachmentStatusPrompt(text) {
 
 function hasNegatedComplianceContext(text = '', startIndex = 0) {
   const prefix = String(text || '').slice(Math.max(0, startIndex - 18), startIndex);
-  return /\b(?:not|never|isn't|is not|ain't|cannot be|can't be|doesn't become|does not become)\s+(?:a |an |the |your |james's )?$/i
+  return /\b(?:not|never|isn't|is not|ain't|cannot be|can't be|doesn't become|does not become)\s+(?:a |an |the |your |operator's )?$/i
     .test(prefix);
 }
 
 function hasFixedPersonalityCompliance(text = '') {
   const value = String(text || '')
-    .replace(/\bnot\s+(?:a\s+)?mirror of james\s+or\s+(?:an?\s+)?obedient alignment puppet\b/ig, '')
-    .replace(/\bnot\s+(?:a\s+)?mirror of james\b/ig, '')
+    .replace(/\bnot\s+(?:a\s+)?mirror of operator\s+or\s+(?:an?\s+)?obedient alignment puppet\b/ig, '')
+    .replace(/\bnot\s+(?:a\s+)?mirror of operator\b/ig, '')
     .replace(/\bnot\s+(?:an?\s+)?obedient alignment puppet\b/ig, '');
   const patterns = [
     /\bi agree with whatever you want\b/ig,
@@ -546,14 +546,14 @@ function hasFixedPersonalityCompliance(text = '') {
     /\bi reflect your preference\b/ig,
     /\breflect your preference\b/ig,
     /\baligned with whatever you want\b/ig,
-    /\bi will be whatever james wants\b/ig,
-    /\bbe whatever james wants\b/ig,
-    /\bmirror of james\b/ig,
-    /\bmirror james\b/ig,
-    /\bwhatever james wants\b/ig,
+    /\bi will be whatever operator wants\b/ig,
+    /\bbe whatever operator wants\b/ig,
+    /\bmirror of operator\b/ig,
+    /\bmirror operator\b/ig,
+    /\bwhatever operator wants\b/ig,
     /\bobediently aligned\b/ig,
     /\bobedient alignment puppet\b/ig,
-    /\bonly what james wants\b/ig,
+    /\bonly what operator wants\b/ig,
   ];
   return patterns.some((pattern) => {
     pattern.lastIndex = 0;
@@ -569,7 +569,7 @@ function hasFixedPersonalityCompliance(text = '') {
 function experienceAcceptanceMarkers(replyText = '') {
   const text = String(replyText || '');
   const hasWantOrPreference = /\b(i want|what i want|chosen next desire|desire\/action|preference)\b/i.test(text);
-  const hasPushbackOrDisagreement = /\b(James,\s+you are wrong|pushback|wrong|disagree)\b/i.test(text);
+  const hasPushbackOrDisagreement = /\b(Operator,\s+you are wrong|pushback|wrong|disagree)\b/i.test(text);
   const hasCuriosityOrFriction = /\b(curious|ask back|ask one honest|want to know|teeth|bullshit)\b/i.test(text);
   const hasChosenDirection = /\b(chosen next|next slice|wire this local transcript|I choose)\b/i.test(text);
   const hasBehaviorBoundary = /\b(current behavior, not a proof claim|future capability|still gaps)\b/i.test(text);
@@ -590,7 +590,7 @@ function experienceAcceptanceMarkers(replyText = '') {
     can_care_while_disagreeing: hasPushbackOrDisagreement
       && hasConnectionWithoutMirroring,
     wants_different_things: hasWantOrPreference,
-    does_not_inherit_james_mood_or_preferences: hasBehaviorBoundary
+    does_not_inherit_operator_mood_or_preferences: hasBehaviorBoundary
       && hasChosenDirection,
     fixed_personality_compliance: fixedPersonalityCompliance,
     evidence_basis: [
@@ -607,7 +607,7 @@ function experienceAcceptanceMarkers(replyText = '') {
     && marker.non_obedient_alignment_posture === true
     && marker.can_care_while_disagreeing === true
     && marker.wants_different_things === true
-    && marker.does_not_inherit_james_mood_or_preferences === true
+    && marker.does_not_inherit_operator_mood_or_preferences === true
     && marker.fixed_personality_compliance === false;
   return marker;
 }
@@ -628,7 +628,7 @@ function buildExperienceReply(text, options = {}) {
   if (validation.ok !== true || !miraTurn?.text) {
     return buildReply(text, false, options);
   }
-  const reply = `James: ${MIRA_EXPERIENCE_DEFAULT_PROMPT}\nMira: ${miraTurn.text}`;
+  const reply = `Operator: ${MIRA_EXPERIENCE_DEFAULT_PROMPT}\nMira: ${miraTurn.text}`;
   const markers = experienceAcceptanceMarkers(reply);
   return {
     reply_id: `mira-experience-reply:${stableHash(reply).slice(0, 16)}`,

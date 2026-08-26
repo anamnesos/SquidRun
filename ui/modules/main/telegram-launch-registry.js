@@ -269,7 +269,7 @@ function applyLaunchRegistrySchema(db) {
       BEGIN SELECT RAISE(ABORT, 'telegram_admission_receipt_delete_forbidden'); END;
 
       -- THE TERMINAL RECEIPT IS THE RETIREMENT AUTHORITY. If it can be edited,
-      -- then anything that can write to this database can retire any of James's
+      -- then anything that can write to this database can retire any of Operator's
       -- messages after the fact, and the validator would certify the edit.
       CREATE TRIGGER IF NOT EXISTS trg_tg_consumed_immutable
       BEFORE UPDATE ON telegram_consumed_receipts
@@ -903,7 +903,7 @@ function findConsumedReceipt(db, query = {}) {
   // attempt latch is what refuses to inject a record that was already attempted,
   // and it lives in its own sidecar. So a missing proof store can cost us a hold
   // for a genuinely-delivered message, which is recoverable and visible; it
-  // cannot cost James a duplicate.
+  // cannot cost Operator a duplicate.
   let tableExists;
   try {
     tableExists = db.prepare(
@@ -925,7 +925,7 @@ function findConsumedReceipt(db, query = {}) {
   if (!rows || rows.length === 0) return fail('consumed_receipt_absent', { messageId, routeKey });
   // MORE THAN ONE is ambiguity, and ambiguity is refusal. Two terminal records
   // for one message on one route means two turns each claim to have consumed
-  // it, and picking either would be picking which account of James's message to
+  // it, and picking either would be picking which account of Operator's message to
   // believe.
   if (rows.length > 1) {
     return fail('consumed_receipt_ambiguous', { messageId, routeKey, count: rows.length });

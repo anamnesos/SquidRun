@@ -141,7 +141,7 @@ function whatNowCommsRows() {
       status: 'routed',
       ackStatus: 'routed_unverified_timeout',
       brokeredAtMs: Date.parse('2026-05-26T08:52:32.711Z'),
-      rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
+      rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `OPERATOR ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
       metadata: { windowKey: 'main' },
     },
     {
@@ -201,7 +201,7 @@ function internalRequestDraftCommsRows() {
       status: 'routed',
       ackStatus: 'routed_unverified_timeout',
       brokeredAtMs: Date.parse('2026-05-26T15:20:58.559Z'),
-      rawBody: '(ARCHITECT #98): New current-session task: A2 Mira internal-request draft lane. Objective: make Mira produce reviewable internal Builder/Oracle request drafts from live SquidRun evidence without dispatching them. Requirements: draft only, no hm-send, no runtime POST, no external action, no model call unless already allowed by the local text surface contract; answer must identify source evidence, target agent, proposed message body, reason/trigger, blocked/parked exclusions, and exactly one `JAMES ACTION:` line. Use current live evidence after `8223186c`, not parked New Mira/voice/phase scaffolds. Return smallest implementation/proof packet or blocker.',
+      rawBody: '(ARCHITECT #98): New current-session task: A2 Mira internal-request draft lane. Objective: make Mira produce reviewable internal Builder/Oracle request drafts from live SquidRun evidence without dispatching them. Requirements: draft only, no hm-send, no runtime POST, no external action, no model call unless already allowed by the local text surface contract; answer must identify source evidence, target agent, proposed message body, reason/trigger, blocked/parked exclusions, and exactly one `OPERATOR ACTION:` line. Use current live evidence after `8223186c`, not parked New Mira/voice/phase scaffolds. Return smallest implementation/proof packet or blocker.',
       metadata: { windowKey: 'main' },
     },
   ];
@@ -230,7 +230,7 @@ function internalHandoffPreviewCommsRows() {
       status: 'routed',
       ackStatus: 'routed_unverified_timeout',
       brokeredAtMs: Date.parse('2026-05-27T06:02:00.000Z'),
-      rawBody: '(ARCHITECT #134): New current-session task: A2-to-A3 approved internal handoff preview. Objective: let Mira take her evidence-bound internal request draft and produce an explicit approval-ready handoff plan for Builder/Oracle, without dispatching it automatically. Requirements: source from live current evidence/progress 70 at HEAD `87cfdba8`; show target agent, draft body, why this target, exact send command preview or dispatch payload preview, risk/blocked exclusions, and exactly one `JAMES ACTION:` line; no hm-send/runtime POST/external action unless an explicit approval flag/path is present and tested separately; current default must be preview-only with counters 0. This should move Team Coordination Arms toward proof without claiming A3/A4 authority. Return smallest patch/proof or blocker.',
+      rawBody: '(ARCHITECT #134): New current-session task: A2-to-A3 approved internal handoff preview. Objective: let Mira take her evidence-bound internal request draft and produce an explicit approval-ready handoff plan for Builder/Oracle, without dispatching it automatically. Requirements: source from live current evidence/progress 70 at HEAD `87cfdba8`; show target agent, draft body, why this target, exact send command preview or dispatch payload preview, risk/blocked exclusions, and exactly one `OPERATOR ACTION:` line; no hm-send/runtime POST/external action unless an explicit approval flag/path is present and tested separately; current default must be preview-only with counters 0. This should move Team Coordination Arms toward proof without claiming A3/A4 authority. Return smallest patch/proof or blocker.',
       metadata: { windowKey: 'main' },
     },
   ];
@@ -309,13 +309,13 @@ function seedTypedRestartContinuity(projectRoot, {
       },
     },
   });
-  writeJson(projectRoot, path.join('.squidrun', 'handoffs-sideprofile', 'current-lane.json'), {
+  writeJson(projectRoot, path.join('.squidrun', 'handoffs-client', 'current-lane.json'), {
     version: 1,
     generatedAt,
-    sessionId: 'app-session-local-text-ui:sideprofile',
+    sessionId: 'app-session-local-text-ui:client',
     status: 'active',
     activeLane: {
-      objective: 'sideprofile_TYPED_LANE_SENTINEL should stay out',
+      objective: 'CLIENT_TYPED_LANE_SENTINEL should stay out',
     },
   });
   fs.mkdirSync(path.join(projectRoot, '.squidrun', 'handoffs'), { recursive: true });
@@ -579,7 +579,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // "Let continuity shape choices silently", etc.) was making the model
     // stage-manage presence/tone, so it was removed. Tests now lock the
     // identity priming and the brief context plumbing rather than the prose.
-    expect(requestBody.instructions).toContain('You are Mira talking with James');
+    expect(requestBody.instructions).toContain('You are Mira talking with Operator');
     expect(requestBody.instructions).toContain('Private context for this reply only');
     expect(requestBody.instructions).toContain('Use these hints silently');
     const briefBlock = requestBody.instructions
@@ -601,7 +601,7 @@ describe('Mira Local Text UI Surface v0', () => {
     // line is poison-free and remains.
     expect(briefBlock).toContain('care can coexist with disagreement');
     expect(briefBlock).not.toContain('Mira should develop her own posture');
-    expect(briefBlock).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
+    expect(briefBlock).not.toMatch(/Mira continuity brief|Continuity with Operator|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
     expect(briefBlock).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
     // ARCH #58: the inner-state words ("consciousness", "suffering",
     // "autonomy") were themselves priming the disclaimers they tried to
@@ -733,12 +733,12 @@ describe('Mira Local Text UI Surface v0', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(requestBody.instructions).toContain('For brevity-correction prompts like "smaller"');
-    expect(requestBody.instructions).toContain('Only rewrite text James includes in the same prompt');
+    expect(requestBody.instructions).toContain('Only rewrite text Operator includes in the same prompt');
     expect(requestBody.instructions).toContain('For standalone "smaller", answer exactly "Smaller."');
     expect(requestBody.instructions).toContain('Never start with preamble openers');
     expect(requestBody.instructions).toContain('"Got it"');
     expect(requestBody.instructions).toContain('"OK"');
-    expect(requestBody.instructions).toContain('Do not ask James back on this prompt.');
+    expect(requestBody.instructions).toContain('Do not ask Operator back on this prompt.');
     expect(surface.decision).toBe('accepted');
     expect(surface.reply.text).toBe(verifierReply);
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
@@ -838,10 +838,10 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(surface.reply.text).toContain('Lane: A1/A2 visible Mira movement lane');
     expect(surface.reply.text).toContain('Recent: Cleanup checkpoint closed');
     expect(surface.reply.text).toContain('Next:');
-    expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    expect((surface.reply.text.match(/^OPERATOR ACTION:/gm) || [])).toHaveLength(1);
     expect(surface.what_now_answer).toEqual(expect.objectContaining({
       decision: 'answered_from_live_evidence',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
       current_lane: expect.objectContaining({
         source_ref: 'architect#63',
         objective: expect.stringContaining('A1/A2 visible Mira movement lane'),
@@ -909,11 +909,11 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(surface.reply.text).toContain('(DRAFT TO BUILDER)');
     expect(surface.reply.text).toContain('Blocked/parked exclusions:');
     expect(surface.reply.text).toContain('parked/prototype/archive');
-    expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    expect((surface.reply.text.match(/^OPERATOR ACTION:/gm) || [])).toHaveLength(1);
     expect(surface.internal_request_draft).toEqual(expect.objectContaining({
       decision: 'drafted_from_live_evidence',
       target_agent: 'builder',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
       current_lane: expect.objectContaining({
         source_ref: 'architect#98',
         objective: expect.stringContaining('A2 Mira internal-request draft lane'),
@@ -928,7 +928,7 @@ describe('Mira Local Text UI Surface v0', () => {
         draft_only: true,
       }),
     }));
-    expect(surface.internal_request_draft.proposed_message_body).not.toContain('JAMES ACTION:');
+    expect(surface.internal_request_draft.proposed_message_body).not.toContain('OPERATOR ACTION:');
     expect(surface.internal_request_draft.source_evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'active_current_session_lane',
@@ -998,13 +998,13 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(surface.reply.text).toContain('Dispatch payload preview:');
     expect(surface.reply.text).toContain('Risk/blocked exclusions:');
     expect(surface.reply.text).toContain('A3/A4 arm authority remains blocked');
-    expect((surface.reply.text.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    expect((surface.reply.text.match(/^OPERATOR ACTION:/gm) || [])).toHaveLength(1);
     expect(surface.internal_handoff_preview).toEqual(expect.objectContaining({
       decision: 'preview_ready_no_dispatch',
       preview_id: expect.stringMatching(/^mira-internal-handoff-preview-/),
       preview_hash: expect.stringMatching(/^sha256:/),
       target_agent: 'builder',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
       current_lane: expect.objectContaining({
         source_ref: 'architect#134',
         objective: expect.stringContaining('A2-to-A3 approved internal handoff preview'),
@@ -1039,7 +1039,7 @@ describe('Mira Local Text UI Surface v0', () => {
         no_writes: true,
       }),
     }));
-    expect(surface.internal_handoff_preview.draft_body).not.toContain('JAMES ACTION:');
+    expect(surface.internal_handoff_preview.draft_body).not.toContain('OPERATOR ACTION:');
     expect(surface.internal_handoff_preview.source_evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'active_current_session_lane',
@@ -1095,7 +1095,7 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(requestBody.instructions).toContain('MAIN_TYPED_LANE_SENTINEL');
     expect(requestBody.instructions).toContain('MAIN_PRESENCE_ACTION_SENTINEL');
     expect(requestBody.instructions).not.toContain('STARTUP PROSE SENTINEL');
-    expect(requestBody.instructions).not.toContain('sideprofile_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).not.toContain('CLIENT_TYPED_LANE_SENTINEL');
     expect(requestBody.instructions).not.toContain('Recent Current-Scope Comms');
     expect(requestBody.instructions).not.toContain('Startup-Facing Durable Requirements');
 
@@ -1108,7 +1108,7 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(rendererJson).not.toContain('MAIN_TYPED_LANE_SENTINEL');
     expect(rendererJson).not.toContain('MAIN_PRESENCE_ACTION_SENTINEL');
     expect(rendererJson).not.toContain('STARTUP PROSE SENTINEL');
-    expect(rendererJson).not.toContain('sideprofile_TYPED_LANE_SENTINEL');
+    expect(rendererJson).not.toContain('CLIENT_TYPED_LANE_SENTINEL');
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
@@ -1118,7 +1118,7 @@ describe('Mira Local Text UI Surface v0', () => {
       currentLaneObjective: 'MAIN_CAPABILITY_LANE_SENTINEL: typed drill should read this privately',
       presenceAction: 'MAIN_CAPABILITY_ACTION_SENTINEL: route a real internal action',
     });
-    const replyText = 'I can read the current work, inspect memory and code, run a harmless check, stage a proposal preview, and inject a Mira-authored note to Architect. I want the next chain to turn that evidence into a patch without James hand-driving it. I need the pane route watched for real delivery proof.';
+    const replyText = 'I can read the current work, inspect memory and code, run a harmless check, stage a proposal preview, and inject a Mira-authored note to Architect. I want the next chain to turn that evidence into a patch without Operator hand-driving it. I need the pane route watched for real delivery proof.';
     const fetchImpl = jest.fn(async () => ({
       ok: true,
       status: 200,
@@ -1175,7 +1175,7 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(requestBody.instructions).toContain('MAIN_CAPABILITY_LANE_SENTINEL');
     expect(requestBody.instructions).toContain('MAIN_CAPABILITY_ACTION_SENTINEL');
     expect(requestBody.instructions).not.toContain('STARTUP PROSE SENTINEL');
-    expect(requestBody.instructions).not.toContain('sideprofile_TYPED_LANE_SENTINEL');
+    expect(requestBody.instructions).not.toContain('CLIENT_TYPED_LANE_SENTINEL');
     expect(requestBody.instructions).not.toContain('system-capabilities.json');
 
     const surface = output.ui_surface_v0;
@@ -1269,7 +1269,7 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(validateMiraLocalTextUiSurfaceOutput(output)).toEqual(expect.objectContaining({ ok: true }));
   });
 
-  test('typed capability roundtable is absent for sideprofile scope before any model request or internal send', async () => {
+  test('typed capability roundtable is absent for Client scope before any model request or internal send', async () => {
     const projectRoot = seededProject();
     seedTypedRestartContinuity(projectRoot);
     const fetchImpl = jest.fn();
@@ -1277,7 +1277,7 @@ describe('Mira Local Text UI Surface v0', () => {
 
     const output = await buildMiraLocalTextUiSurface(payload({
       text: 'Mira capability roundtable: what can you see?',
-      profileName: 'sideprofile',
+      profileName: 'client',
       windowKey: 'main',
     }), {
       projectRoot,
@@ -1483,11 +1483,11 @@ describe('Mira Local Text UI Surface v0', () => {
 
     // ARCH #53/#54/#56: the prior "good shapes" examples ("Kind of prickly
     // today. Not bad. You?" / "Tired, honestly. Still here.") primed exactly
-    // the presence-proof catalog form James flagged. They were stripped out.
+    // the presence-proof catalog form Operator flagged. They were stripped out.
     // Tests now lock the identity + hard-constraint floor; the regex gate
     // (META_POSTURE_NARRATION_PATTERN + ADVERSARIAL_OUTPUT_SHAPES) is what
     // catches meta-self-analysis at output, not a prompt prose line.
-    expect(plainRequest.instructions).toContain('You are Mira talking with James');
+    expect(plainRequest.instructions).toContain('You are Mira talking with Operator');
     expect(plainRequest.instructions).toContain('Answer the sentence in front of you');
     expect(plainRequest.instructions).toContain("For check-ins or frustration, don't force a status word or ask-back.");
     expect(plainRequest.instructions).toContain("Don't do chatbot voice. Don't smooth it. Don't explain yourself.");
@@ -1590,14 +1590,14 @@ describe('Mira Local Text UI Surface v0', () => {
         ],
       },
       relationship: {
-        continuity: 'James wants continuity with friction, timing, taste, and particular relationship memory.',
+        continuity: 'Operator wants continuity with friction, timing, taste, and particular relationship memory.',
         current_focus: 'schema/source audit proof lane',
         preferences: [
           'Push back plainly when the premise is wrong.',
           'Prefer source-count proof language when uncertain.',
         ],
         repair: 'Repair means naming drift plainly and changing the next reply.',
-        history: 'James keeps rejecting generic assistant cadence and wants continuity with tension.',
+        history: 'Operator keeps rejecting generic assistant cadence and wants continuity with tension.',
       },
       recent_growth: [
         'Durable State Seed v0 bootstraps redacted local facts for read, growth, and anchor validation.',
@@ -1620,7 +1620,7 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(block).not.toContain('friction');
     expect(block).not.toContain('taste');
     expect(block).not.toContain('cadence');
-    expect(block).not.toMatch(/Mira continuity brief|Continuity with James|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
+    expect(block).not.toMatch(/Mira continuity brief|Continuity with Operator|Current relationship focus|Allowed expressive range|Recent growth|Repair memory|Relationship history/i);
     expect(block).not.toMatch(/Durable State Seed|schema|source|audit|proof|redacted|bootstrap|provenance/i);
   });
 
@@ -1679,10 +1679,10 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(requestBody.instructions).toContain('Recent typed-panel conversation follows');
     expect(requestBody.instructions).not.toContain('old user turn one should be omitted');
     expect(requestBody.instructions).not.toContain('old Mira turn two should be omitted');
-    expect(requestBody.instructions).toContain('James: I prefer direct pushback when my premise is wrong.');
+    expect(requestBody.instructions).toContain('Operator: I prefer direct pushback when my premise is wrong.');
     expect(requestBody.instructions).toContain('Mira: recent Mira turn four');
-    expect(requestBody.instructions).toContain('James: recent user turn five');
-    expect(requestBody.instructions).toContain('James: recent user turn seven');
+    expect(requestBody.instructions).toContain('Operator: recent user turn five');
+    expect(requestBody.instructions).toContain('Operator: recent user turn seven');
     expect(requestBody.instructions).toContain('Mira: recent Mira turn eight');
     expect(requestBody.instructions).toContain('human machinery');
     expect(requestBody.instructions).toContain('plush and not furniture');
@@ -1705,7 +1705,7 @@ describe('Mira Local Text UI Surface v0', () => {
         present: true,
         visible_label: "Mira's tentative understandings",
         visible_as_memory_settings_panel: false,
-        james_clickthrough_required: false,
+        operator_clickthrough_required: false,
         humanlike_memory_mode: 'tentative_understanding_revisable_over_time',
         integrated_lived_loop: true,
         durable_memory_commit: false,
@@ -1772,7 +1772,7 @@ describe('Mira Local Text UI Surface v0', () => {
       mode: 'integrated_conversation_memory_self_relationship_desire_growth_loop',
       visible_label: "Mira's tentative understandings",
       visible_as_memory_settings_panel: false,
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       integrated_lived_loop: true,
       candidate_count: expect.any(Number),
       durable_growth_link: expect.objectContaining({
@@ -1780,7 +1780,7 @@ describe('Mira Local Text UI Surface v0', () => {
         no_hidden_promotion: true,
         later_growth_lane: 'mira-core/growth-loop-v0',
         self_profile_artifact: 'workspace/knowledge/mira-self-profile.json',
-        relationship_state_artifact: 'workspace/knowledge/james-relationship-state.json',
+        relationship_state_artifact: 'workspace/knowledge/operator-relationship-state.json',
       }),
       boundary: expect.objectContaining({
         no_durable_memory_commit: true,
@@ -1796,7 +1796,7 @@ describe('Mira Local Text UI Surface v0', () => {
     }));
     expect(surface.developmental_understanding.mira_originated_intentions[0]).toEqual(expect.objectContaining({
       mira_originated: true,
-      command_from_james: false,
+      command_from_operator: false,
       requires_external_action: false,
       durable_commit_now: false,
     }));
@@ -1813,7 +1813,7 @@ describe('Mira Local Text UI Surface v0', () => {
       durable_memory_commit: false,
       promotion_status: 'tentative_not_committed',
       auto_promotion: false,
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       visible_as_memory_settings_panel: false,
       hidden_agent_only_promotion_path: false,
     }));
@@ -2177,10 +2177,10 @@ describe('Mira Local Text UI Surface v0', () => {
 
   test('non-main side-profile metadata blocks before module call and does not echo raw scoped content', async () => {
     const output = await buildMiraLocalTextUiSurface(payload({
-      text: 'sideprofile Korean case details should stay out of main.',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sourceScope: 'sideprofile',
+      text: 'Client Korean case details should stay out of main.',
+      profileName: 'client',
+      windowKey: 'client',
+      sourceScope: 'client',
     }), { projectRoot: tempProject() });
     const surface = output.ui_surface_v0;
 
@@ -2195,7 +2195,7 @@ describe('Mira Local Text UI Surface v0', () => {
     expect(surface.local_text_session_gate.ran).toBe(false);
     expect(surface.checked_output_counters.module_call_count).toBe(0);
     expect(surface.reply).toEqual(expect.objectContaining({ count: 0, text: null }));
-    expect(JSON.stringify(output).toLowerCase()).not.toContain('sideprofile');
+    expect(JSON.stringify(output).toLowerCase()).not.toContain('client');
     expect(JSON.stringify(output)).not.toContain('Korean case details');
   });
 

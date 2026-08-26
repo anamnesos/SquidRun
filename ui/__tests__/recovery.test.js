@@ -424,8 +424,8 @@ describe('Terminal Recovery Controller', () => {
 
     test('preserves runtime override working directory when restarting app arms', async () => {
       mockOptions.getPaneRuntimeOverride = jest.fn().mockReturnValue({
-        roleId: 'trustquote-app',
-        workingDir: 'D:\\projects\\TrustQuote',
+        roleId: 'exampleapp-app',
+        workingDir: 'D:\\projects\\ExampleApp',
         command: 'codex --yolo',
         spawnCommandOnCreate: true,
       });
@@ -434,28 +434,28 @@ describe('Terminal Recovery Controller', () => {
         spawnCommandOnCreate: true,
         preferWorkingDir: true,
         env: {
-          SQUIDRUN_ROLE: 'trustquote-app',
-          SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+          SQUIDRUN_ROLE: 'exampleapp-app',
+          SQUIDRUN_WORKING_DIR: 'D:\\projects\\ExampleApp',
         },
       });
       controller = createRecoveryController(mockOptions);
 
-      const promise = controller.restartPane('trustquote-app');
+      const promise = controller.restartPane('exampleapp-app');
       await jest.advanceTimersByTimeAsync(300);
       const result = await promise;
 
       expect(result).toBe(true);
       expect(mockOptions.buildPtyCreateOptionsForRuntimeOverride).toHaveBeenCalledWith(
-        'trustquote-app',
+        'exampleapp-app',
         expect.objectContaining({
           command: 'codex --yolo',
-          workingDir: 'D:\\projects\\TrustQuote',
+          workingDir: 'D:\\projects\\ExampleApp',
         }),
-        'D:\\projects\\TrustQuote'
+        'D:\\projects\\ExampleApp'
       );
       expect(mockPty.create).toHaveBeenCalledWith(
-        'trustquote-app',
-        'D:\\projects\\TrustQuote',
+        'exampleapp-app',
+        'D:\\projects\\ExampleApp',
         expect.objectContaining({
           paneCommand: 'codex --yolo',
           spawnCommandOnCreate: true,
@@ -463,8 +463,8 @@ describe('Terminal Recovery Controller', () => {
           restartClaimId: 'restart-claim-1',
           requireRestartClaim: true,
           env: expect.objectContaining({
-            SQUIDRUN_ROLE: 'trustquote-app',
-            SQUIDRUN_WORKING_DIR: 'D:\\projects\\TrustQuote',
+            SQUIDRUN_ROLE: 'exampleapp-app',
+            SQUIDRUN_WORKING_DIR: 'D:\\projects\\ExampleApp',
           }),
         })
       );
@@ -472,8 +472,8 @@ describe('Terminal Recovery Controller', () => {
 
     test('fresh session remint is forwarded to spawn-on-create app arms', async () => {
       mockOptions.getPaneRuntimeOverride = jest.fn().mockReturnValue({
-        roleId: 'trustquote-app',
-        workingDir: 'D:\\projects\\TrustQuote',
+        roleId: 'exampleapp-app',
+        workingDir: 'D:\\projects\\ExampleApp',
         command: 'claude',
         spawnCommandOnCreate: true,
       });
@@ -484,14 +484,14 @@ describe('Terminal Recovery Controller', () => {
       });
       controller = createRecoveryController(mockOptions);
 
-      const promise = controller.restartPane('trustquote-app', null, { freshSession: true });
+      const promise = controller.restartPane('exampleapp-app', null, { freshSession: true });
       await jest.advanceTimersByTimeAsync(300);
       const result = await promise;
 
       expect(result).toBe(true);
       expect(mockPty.create).toHaveBeenCalledWith(
-        'trustquote-app',
-        'D:\\projects\\TrustQuote',
+        'exampleapp-app',
+        'D:\\projects\\ExampleApp',
         expect.objectContaining({
           paneCommand: 'claude',
           spawnCommandOnCreate: true,

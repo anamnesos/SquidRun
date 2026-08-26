@@ -10,20 +10,20 @@ function toNonEmptyString(value) {
   return trimmed ? trimmed : null;
 }
 
-function extractJamesActionLines(text = '') {
+function extractOperatorActionLines(text = '') {
   return String(text || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => /^JAMES ACTION:/i.test(line));
+    .filter((line) => /^OPERATOR ACTION:/i.test(line));
 }
 
-function classifyJamesActionLine(line = '') {
-  const match = String(line || '').trim().match(/^JAMES ACTION:\s*(.+)$/i);
+function classifyOperatorActionLine(line = '') {
+  const match = String(line || '').trim().match(/^OPERATOR ACTION:\s*(.+)$/i);
   if (!match) {
     return {
       ok: false,
       kind: 'invalid',
-      reason: 'missing_james_action_line',
+      reason: 'missing_operator_action_line',
     };
   }
 
@@ -32,7 +32,7 @@ function classifyJamesActionLine(line = '') {
     return {
       ok: true,
       kind: 'none',
-      line: 'JAMES ACTION: NONE',
+      line: 'OPERATOR ACTION: NONE',
       requiredAction: null,
     };
   }
@@ -43,7 +43,7 @@ function classifyJamesActionLine(line = '') {
     return {
       ok: true,
       kind: 'do_this',
-      line: `JAMES ACTION: DO THIS: ${requiredAction}`,
+      line: `OPERATOR ACTION: DO THIS: ${requiredAction}`,
       requiredAction,
     };
   }
@@ -51,7 +51,7 @@ function classifyJamesActionLine(line = '') {
   return {
     ok: false,
     kind: 'invalid',
-    reason: 'unknown_james_action',
+    reason: 'unknown_operator_action',
     line: String(line || '').trim(),
   };
 }
@@ -163,7 +163,7 @@ function buildMapBackedNextAction(nextStep, trigger) {
 
 function buildWorkflowContinuationDecision(options = {}) {
   const reportText = toNonEmptyString(options.reportText || options.message || options.text) || '';
-  const actionLines = extractJamesActionLines(reportText);
+  const actionLines = extractOperatorActionLines(reportText);
   const trigger = toNonEmptyString(options.trigger) || 'post-commit';
   const generatedAtMs = options.generatedAtMs || Date.now();
 
@@ -172,21 +172,21 @@ function buildWorkflowContinuationDecision(options = {}) {
       ok: false,
       decision: 'internal_report_needs_action_line_fix',
       autoContinue: false,
-      jamesActionRequired: false,
-      reason: actionLines.length === 0 ? 'missing_james_action_line' : 'multiple_james_action_lines',
+      operatorActionRequired: false,
+      reason: actionLines.length === 0 ? 'missing_operator_action_line' : 'multiple_operator_action_lines',
       generatedAtMs,
     };
   }
 
-  const action = classifyJamesActionLine(actionLines[0]);
+  const action = classifyOperatorActionLine(actionLines[0]);
   if (!action.ok) {
     return {
       ok: false,
       decision: 'internal_report_needs_action_line_fix',
       autoContinue: false,
-      jamesActionRequired: false,
+      operatorActionRequired: false,
       reason: action.reason,
-      jamesActionLine: action.line || actionLines[0],
+      operatorActionLine: action.line || actionLines[0],
       generatedAtMs,
     };
   }
@@ -194,10 +194,10 @@ function buildWorkflowContinuationDecision(options = {}) {
   if (action.kind === 'do_this') {
     return {
       ok: true,
-      decision: 'james_action_required',
+      decision: 'operator_action_required',
       autoContinue: false,
-      jamesActionRequired: true,
-      jamesActionLine: action.line,
+      operatorActionRequired: true,
+      operatorActionLine: action.line,
       requiredAction: action.requiredAction,
       generatedAtMs,
     };
@@ -214,10 +214,10 @@ function buildWorkflowContinuationDecision(options = {}) {
     ok: true,
     decision: 'auto_continue_after_internal_gate',
     autoContinue: true,
-    jamesActionRequired: false,
-    jamesActionLine: action.line,
-    internalReviewGateStopsJames: false,
-    internalCommitGateStopsJames: false,
+    operatorActionRequired: false,
+    operatorActionLine: action.line,
+    internalReviewGateStopsOperator: false,
+    internalCommitGateStopsOperator: false,
     nextAction,
     counts: continueCard?.counts || null,
     generatedAtMs,
@@ -229,7 +229,7 @@ module.exports = {
   buildNextActionCard,
   buildOwnedWorkContinueCard,
   buildResumeCommand,
-  classifyJamesActionLine,
-  extractJamesActionLines,
+  classifyOperatorActionLine,
+  extractOperatorActionLines,
   selectNextCandidate,
 };

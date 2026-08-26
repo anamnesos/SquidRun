@@ -210,7 +210,7 @@ const DEFAULT_SPARK_MONITOR_STATE_PATH = resolveRuntimePath('spark-monitor-super
 const DEFAULT_MARKET_SCANNER_STATE_PATH = resolveRuntimePath('market-scanner-state.json');
 const DEFAULT_ORACLE_WATCH_RULES_PATH = resolveRuntimePath('oracle-watch-rules.json');
 const DEFAULT_ORACLE_WATCH_STATE_PATH = resolveRuntimePath('oracle-watch-state.json');
-const DEFAULT_TELEGRAM_CHAT_ID = 'REDACTED';
+const DEFAULT_TELEGRAM_CHAT_ID = '7000000001';
 const DEFAULT_SAYLOR_WATCHER_INTERVAL_MS = Math.max(
   60_000,
   Number.parseInt(process.env.SQUIDRUN_SAYLOR_WATCHER_INTERVAL_MS || '300000', 10) || 300_000
@@ -477,7 +477,7 @@ function isScopedProfileEnv(env = process.env) {
 
 function isScopedRuntimePath(targetPath = '') {
   const normalized = String(targetPath || '').replace(/\\/g, '/').toLowerCase();
-  return normalized.includes('/runtime-sideprofile/')
+  return normalized.includes('/runtime-client/')
     || normalized.includes('/runtime-scoped/')
     || normalized.includes('/triggers-scoped/')
     || normalized.includes('/window-teams/scoped/');

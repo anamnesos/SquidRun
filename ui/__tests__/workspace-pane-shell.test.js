@@ -181,8 +181,8 @@ function makeDocument() {
     new FakeElement('div', { className: 'side-panes-container' }, [makePane('2', 'Builder'), makePane('3', 'Oracle')]),
     new FakeElement('form', { className: 'command-bar' }),
     new FakeElement('section', { className: 'squid-room-surface', id: 'squidRoomSurface' }, [
-      new FakeElement('div', { className: 'squid-room-app', dataset: { appRoomId: 'trustquote' } }, [
-        new FakeElement('div', { className: 'squid-room-live-panes', id: 'squidRoomTrustQuoteLivePanes' }),
+      new FakeElement('div', { className: 'squid-room-app', dataset: { appRoomId: 'exampleapp' } }, [
+        new FakeElement('div', { className: 'squid-room-live-panes', id: 'squidRoomExampleAppLivePanes' }),
       ]),
     ]),
   ]));
@@ -200,7 +200,7 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.abyss-motes')).toBeFalsy();
     expect(doc.getElementById('terminal-2')).toBeTruthy();
     expect(doc.getElementById('terminal-3')).toBeTruthy();
-    expect(doc.getElementById(`terminal-trustquote-${'builder'}`)).toBeFalsy();
+    expect(doc.getElementById(`terminal-exampleapp-${'builder'}`)).toBeFalsy();
   });
 
   test('Squid Room hides Architect, frees Builder/Oracle creatures, and keeps real terminals in a drawer', () => {
@@ -212,7 +212,7 @@ describe('workspace pane shell', () => {
 
     expect(result).toEqual(expect.objectContaining({
       workspaceKey: 'squid-room',
-      paneIds: ['2', '3', 'trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice'],
+      paneIds: ['2', '3', 'exampleapp-lead', 'exampleapp-schedule-dispatch', 'exampleapp-app', 'exampleapp-invoice'],
       teamPaneIds: ['2', '3'],
     }));
     // Link swap (mount step 3): sr2-room is THE body gate; legacy gates dead.
@@ -222,32 +222,32 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.abyss-motes')).toBeTruthy();
     expect(doc.querySelector('.abyss-motes').childNodes).toHaveLength(12);
     expect(doc.querySelector('.squid-room-pet-filters')).toBeTruthy();
-    expect(doc.body.classList.contains(`trustquote-${'workspace'}`)).toBe(false);
+    expect(doc.body.classList.contains(`exampleapp-${'workspace'}`)).toBe(false);
     expect(terminal.setActivePaneIds).toHaveBeenCalledWith([
       '2',
       '3',
-      'trustquote-lead',
-      'trustquote-schedule-dispatch',
-      'trustquote-app',
-      'trustquote-invoice',
+      'exampleapp-lead',
+      'exampleapp-schedule-dispatch',
+      'exampleapp-app',
+      'exampleapp-invoice',
     ]);
     expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledTimes(4);
     expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledWith(
-      'trustquote-lead',
+      'exampleapp-lead',
       expect.objectContaining({
-        workingDir: 'D:\\projects\\TrustQuote',
+        workingDir: 'D:\\projects\\ExampleApp',
         spawnCommandOnCreate: true,
         recreateOnWorkingDirMismatch: true,
       })
     );
     expect(terminal.setPaneRuntimeOverride).toHaveBeenCalledWith(
-      'trustquote-app',
+      'exampleapp-app',
       expect.objectContaining({
-        roleId: 'trustquote-app',
-        routeTarget: 'trustquote-app',
+        roleId: 'exampleapp-app',
+        routeTarget: 'exampleapp-app',
         command: 'codex --yolo',
         commandSourcePaneId: '2',
-        workingDir: 'D:\\projects\\TrustQuote',
+        workingDir: 'D:\\projects\\ExampleApp',
         spawnCommandOnCreate: true,
       })
     );
@@ -292,7 +292,7 @@ describe('workspace pane shell', () => {
     expect(builderCreature.querySelector('.verb-chip')).toBeFalsy();
     expect(builderCreature.querySelector('.pet-motion-track')).toBeFalsy();
     // S466: the pedestal-era glow discs are gone too — free-swimming
-    // creatures sit on nothing (James caught the blurred smudges live).
+    // creatures sit on nothing (Operator caught the blurred smudges live).
     expect(builderCreature.querySelector('.pet-glow')).toBeFalsy();
     expect(builderCreature.querySelector('.pet-caustics')).toBeFalsy();
     // P1.7: bubbles, ink bursts, and grounding shadow are ENGINE-drawn on the
@@ -319,12 +319,12 @@ describe('workspace pane shell', () => {
     expect(doc.querySelector('.squid-room-team-expand-btn').querySelector('.squid-room-team-toggle-label').textContent).toBe('Collapse');
     expect(doc.getElementById('terminal-2')).toBeTruthy();
     expect(doc.getElementById('terminal-3')).toBeTruthy();
-    expect(doc.getElementById(`terminal-trustquote-${'builder'}`)).toBeFalsy();
-    expect(doc.getElementById('terminal-trustquote-lead')).toBeTruthy();
-    expect(doc.getElementById('terminal-trustquote-schedule-dispatch')).toBeTruthy();
-    expect(doc.getElementById('terminal-trustquote-app')).toBeTruthy();
-    expect(doc.getElementById('terminal-trustquote-invoice')).toBeTruthy();
-    for (const paneId of ['trustquote-lead', 'trustquote-schedule-dispatch', 'trustquote-app', 'trustquote-invoice']) {
+    expect(doc.getElementById(`terminal-exampleapp-${'builder'}`)).toBeFalsy();
+    expect(doc.getElementById('terminal-exampleapp-lead')).toBeTruthy();
+    expect(doc.getElementById('terminal-exampleapp-schedule-dispatch')).toBeTruthy();
+    expect(doc.getElementById('terminal-exampleapp-app')).toBeTruthy();
+    expect(doc.getElementById('terminal-exampleapp-invoice')).toBeTruthy();
+    for (const paneId of ['exampleapp-lead', 'exampleapp-schedule-dispatch', 'exampleapp-app', 'exampleapp-invoice']) {
       const pane = doc.querySelector(`.pane[data-pane-id="${paneId}"]`);
       expect(pane.querySelector('.agent-avatar').innerHTML).toContain('avatar-icon');
       const armSelector = pane.querySelector(`.model-selector[data-pane-id="${paneId}"]`);

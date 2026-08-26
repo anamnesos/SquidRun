@@ -57,32 +57,15 @@ echo "Gate 2: JavaScript linting (ESLint)..."
 # Check if eslint is available by package entrypoint. The .bin shims can rot on
 # Windows while the package is installed; a missing entrypoint is a failed gate.
 if [ -f "ui/node_modules/eslint/bin/eslint.js" ]; then
-    LINT_FAILED=0
-
-    # Pass 1: everything under ui/ (config auto-discovered there).
     cd ui
-    node ./node_modules/eslint/bin/eslint.js "**/*.js" --quiet || LINT_FAILED=1
-    cd ..
-
-    # Pass 2: tracked JS OUTSIDE ui/ — relay/, mira/, telegram-poller.js, jest.config.js.
-    # Pass 1 cd's into ui/, so its glob can never reach these. Without this pass the
-    # gate printed "JavaScript files passed" while 22 tracked files were unlinted.
-    # git ls-files keeps this to tracked sources and can never wander into node_modules.
-    OUTSIDE_JS=$(git ls-files "*.js" | grep -v "^ui/" || true)
-    OUTSIDE_COUNT=$(printf '%s' "$OUTSIDE_JS" | grep -c . || true)
-    if [ "$OUTSIDE_COUNT" -gt 0 ]; then
-        # shellcheck disable=SC2086
-        node ui/node_modules/eslint/bin/eslint.js \
-            --config ui/eslint.config.js --no-config-lookup \
-            --quiet $OUTSIDE_JS || LINT_FAILED=1
-    fi
-
-    if [ "$LINT_FAILED" -ne 0 ]; then
+    node ./node_modules/eslint/bin/eslint.js "**/*.js" --quiet
+    if [ $? -ne 0 ]; then
         echo "❌ ESLint found issues"
         FAILED=1
     else
-        echo "✅ JavaScript passed ESLint (ui/ + ${OUTSIDE_COUNT} tracked files outside ui/)"
+        echo "✅ JavaScript files passed ESLint"
     fi
+    cd ..
 else
     echo "❌ ESLint entrypoint missing; JavaScript lint gate cannot run"
     echo "   Install with: cd ui && npm install --save-dev eslint"

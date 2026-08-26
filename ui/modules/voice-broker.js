@@ -130,7 +130,7 @@ function buildVoiceContextSnapshot(options = {}) {
   } else {
     lines.push('Recent session message history is unavailable right now.');
   }
-  lines.push('Use this context when James asks what is happening; when exact action status is uncertain, say you are routing/checking through Mira.');
+  lines.push('Use this context when Operator asks what is happening; when exact action status is uncertain, say you are routing/checking through Mira.');
   return lines.join(' ');
 }
 
@@ -519,7 +519,7 @@ function normalizeAudioTranscriptionPayload(payload = {}) {
     return { ok: false, reason: 'audio_base64_required' };
   }
   const mimeType = trimText(payload.mimeType || payload.mime_type) || 'audio/webm';
-  const speaker = trimText(payload.speaker) || 'James';
+  const speaker = trimText(payload.speaker) || 'Operator';
   return {
     ok: true,
     audioBase64,
@@ -772,7 +772,7 @@ function routeVoiceTranscriptToArchitect(event, options = {}) {
       SQUIDRUN_PROJECT_ROOT: path.resolve(__dirname, '..', '..'),
     },
   });
-  child.stdin.end(`[Voice from James]: ${event.text}`);
+  child.stdin.end(`[Voice from Operator]: ${event.text}`);
   child.unref?.();
   return {
     ok: true,

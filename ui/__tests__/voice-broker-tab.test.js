@@ -955,12 +955,12 @@ describe('voice-broker tab', () => {
 
     expect(tab.speakMiraReply(
       { dataChannel },
-      '[Voice from James] (MIRA): Mira: Please keep Mira in the actual sentence.'
+      '[Voice from Operator] (MIRA): Mira: Please keep Mira in the actual sentence.'
     )).toBe(true);
 
     const spoken = dataChannel.sent[0].response.instructions;
     expect(spoken).toContain('Please keep Mira in the actual sentence.');
-    expect(spoken).not.toContain('[Voice from James]');
+    expect(spoken).not.toContain('[Voice from Operator]');
     expect(spoken).not.toContain('(MIRA):');
     expect(spoken).not.toContain('Mira: Please');
   });

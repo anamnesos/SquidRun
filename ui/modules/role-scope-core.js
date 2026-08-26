@@ -14,7 +14,7 @@
  *  - normalizeRole: trim+lowercase; '1'|'main'->architect, '2'->builder,
  *    '3'->oracle; unknown/empty -> null ALWAYS. Callers decide null policy
  *    explicitly.
- *  - normalizeRoleParty: KnownRole plus user|james|mira|system, validated,
+ *  - normalizeRoleParty: KnownRole plus user|operator|mira|system, validated,
  *    never coerced to a pane role.
  *  - normalizeScopeEnvelope: ingress defaults ONLY (profileName 'main',
  *    windowKey := profileName); unknown ids are null — never '' and never
@@ -30,7 +30,7 @@ const ROLE_ALIASES = Object.freeze({
   3: 'oracle',
 });
 
-const BROADER_PARTIES = Object.freeze(['user', 'james', 'mira', 'system']);
+const BROADER_PARTIES = Object.freeze(['user', 'operator', 'mira', 'system']);
 
 /** @type {import('../types/contracts').NormalizeRole} */
 function normalizeRole(value) {

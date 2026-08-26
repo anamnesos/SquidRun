@@ -67,7 +67,7 @@ describe('Team Room streamed upload publication', () => {
     const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot });
     const result = await manager.ingestMultipartRequest(requestFromMultipart(multipartBody(bytes, {
       filename: '../iphone:photo?.jpg', mimeType: 'image/jpeg',
-    })), { roomId: 'main', profileName: 'main', memberId: 'james' });
+    })), { roomId: 'main', profileName: 'main', memberId: 'operator' });
 
     expect(result).toEqual(expect.objectContaining({ ok: true, status: 'inserted' }));
     expect(result.attachment).toEqual(expect.objectContaining({
@@ -170,11 +170,11 @@ describe('Team Room streamed upload publication', () => {
     });
     loserRequest = requestFromMultipart(multipartBody(bytes));
     const loserPromise = manager.ingestMultipartRequest(loserRequest, {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
     await loserVerified;
     const winner = await manager.ingestMultipartRequest(requestFromMultipart(multipartBody(bytes)), {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
     loserRequest.aborted = true;
     loserRequest.emit('aborted');
@@ -206,7 +206,7 @@ describe('Team Room streamed upload publication', () => {
       sharpFactory: () => ({ metadata: async () => ({ width: 50_000, height: 50_000, pages: 1 }) }),
     });
     const result = await manager.ingestMultipartRequest(requestFromMultipart(multipartBody(bytes)), {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
     const digest = crypto.createHash('sha256').update(bytes).digest('hex');
 
@@ -228,7 +228,7 @@ describe('Team Room streamed upload publication', () => {
     const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot });
     const result = await manager.ingestMultipartRequest(requestFromMultipart(multipartBody(bytes, {
       filename: 'iphone.heic', mimeType: 'image/heic',
-    })), { roomId: 'main', profileName: 'main', memberId: 'james' });
+    })), { roomId: 'main', profileName: 'main', memberId: 'operator' });
 
     expect(result.ok).toBe(true);
     expect(result.attachment.mimeType).toBe('image/heic');
@@ -247,7 +247,7 @@ describe('Team Room streamed upload publication', () => {
     const digest = crypto.createHash('sha256').update(bytes).digest('hex');
     const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot });
     const result = await manager.ingestMultipartRequest(requestFromMultipart(multipartBody(bytes)), {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
 
     expect(result.ok).toBe(true);
@@ -271,7 +271,7 @@ describe('Team Room streamed upload publication', () => {
     request.aborted = false;
     const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot });
     const pending = manager.ingestMultipartRequest(request, {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
     request.write(payload.body.subarray(0, Math.floor(payload.body.length / 2)));
     request.emit('close');
@@ -296,7 +296,7 @@ describe('Team Room streamed upload publication', () => {
     request.aborted = false;
     const manager = new TeamRoomUploadManager({ store, attachmentRoot, trustedRoot: tempRoot });
     const pending = manager.ingestMultipartRequest(request, {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
     request.write(payload.body.subarray(0, Math.floor(payload.body.length / 2)));
     request.emit('error', new Error('injected_socket_failure'));
@@ -444,7 +444,7 @@ describe('Team Room streamed upload publication', () => {
       return realUnlink(filePath);
     });
     const pending = manager.ingestMultipartRequest(request, {
-      roomId: 'main', profileName: 'main', memberId: 'james',
+      roomId: 'main', profileName: 'main', memberId: 'operator',
     });
     request.write(payload.body.subarray(0, Math.floor(payload.body.length / 2)));
     for (let attempt = 0; attempt < 20 && manager.ownedTemporaryPaths.size === 0; attempt += 1) {

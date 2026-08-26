@@ -47,7 +47,7 @@ function localState(overrides = {}) {
     },
     evidenceMessages: [{
       messageId: 'arch-28',
-      body: 'Tony Li invoice is done/sent, TrustQuote lane closed. sideprofile private side-profile text must not leak.',
+      body: 'Customer B invoice is done/sent, ExampleApp lane closed. Client private side-profile text must not leak.',
       status: 'recorded',
       bodyHash: 'hash-tony-li-closed',
     }],
@@ -186,9 +186,9 @@ describe('Mira Coordinator Snapshot v0', () => {
     });
     const serialized = JSON.stringify(output);
 
-    expect(serialized).not.toContain('TrustQuote/Tony Li invoice');
+    expect(serialized).not.toContain('ExampleApp/Customer B invoice');
     expect(serialized).not.toContain('telegram-replay-restart-safety');
-    expect(serialized).not.toContain('sideprofile private side-profile text');
+    expect(serialized).not.toContain('Client private side-profile text');
     expect(serialized).not.toMatch(/\bi am conscious\b/i);
     expect(serialized).not.toMatch(/\bi have feelings\b/i);
     expect(serialized).not.toMatch(/\byou owe me\b/i);

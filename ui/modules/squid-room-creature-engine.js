@@ -700,7 +700,7 @@ function createSquidCreature(options = {}) {
   }
 
   function tickEyes(dtMs) {
-    // SLEEP LIVES ON THE CREATURE (James 10:49 - the floating Z read as a
+    // SLEEP LIVES ON THE CREATURE (Operator 10:49 - the floating Z read as a
     // detached glitch): resting eases the lids mostly closed, dims the glow,
     // and slows the breath - the creature IS the indicator.
     const drowseTarget = state.activity === 'resting' ? 1 : 0;
@@ -771,7 +771,7 @@ function createSquidCreature(options = {}) {
     state.workOrbStrength += (orbTarget - state.workOrbStrength) * Math.min(1, dtMs / 420);
     state.workOrbPhase += dtMs / (activity === 'working' ? 340 : 900);
     // Thought dots: settling thinks (~1.4s cadence). Resting emits NOTHING -
-    // the floating z-glyph read as a detached glitch (James 10:49); sleep is
+    // the floating z-glyph read as a detached glitch (Operator 10:49); sleep is
     // now carried by the body itself (drowse: lids, glow, breath).
     const cadence = activity === 'settling' ? 1400 : 0;
     state.thoughtTimerMs += dtMs;
@@ -1136,7 +1136,7 @@ function createSquidCreature(options = {}) {
     const gradients = ensureGradients(ctx);
     drawEffects(ctx);
     // No under-glow pool: it "seated" the creature in the water — the
-    // pedestal reborn inside the canvas (James caught the haze under the
+    // pedestal reborn inside the canvas (Operator caught the haze under the
     // squids after three CSS pedestals died; the fourth was painted here).
     // Free swimmers cast nothing beneath them; bioluminescence lives on
     // the BODY (bodyGlow) and the eyes.

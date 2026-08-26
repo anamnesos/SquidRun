@@ -1,8 +1,8 @@
 'use strict';
 
 describe('tell-sensors-v2 — historical margin index (the stub that starved the sensor)', () => {
-  const { buildTrustQuoteFactSignalsFromDocs } = require('../modules/main/trustquote-tell-feed');
-  // jest cannot load TrustQuote's tsx pricing hooks — inject the seam param
+  const { buildExampleAppFactSignalsFromDocs } = require('../modules/main/exampleapp-tell-feed');
+  // jest cannot load ExampleApp's tsx pricing hooks — inject the seam param
   const pricingModule = {
     calculateBaseTotal: (j) => Number(j.price) * Number(j.quantity || 1),
     calculateServiceTotal: (j) => Number(j.price) * Number(j.quantity || 1),
@@ -29,7 +29,7 @@ describe('tell-sensors-v2 — historical margin index (the stub that starved the
       paidJob('s2', 'sewer', 13000, 0.48),
       { id: 'live2', collection: 'jobs', data: { status: 'draft', total: 9000, jobTypes: [{ type: 'sewer', price: '9000', quantity: 1 }], bidMarginPct: 0.1, lastViewedAt: Date.now(), updatedAt: Date.now() } },
     ];
-    const signals = buildTrustQuoteFactSignalsFromDocs({ jobs: docs, nowMs: Date.now(), source: 'live', pricingModule });
+    const signals = buildExampleAppFactSignalsFromDocs({ jobs: docs, nowMs: Date.now(), source: 'live', pricingModule });
     const toilet = signals.find((s) => s.rawRefs?.docId === 'live1');
     expect(toilet.facts.historicalMargin.sampleCount).toBe(3); // h1,h2,h4 — WEDGE parity: 'Toilets' (h3) is its own key (no plural folding in the source of truth; gap filed upstream)
     expect(toilet.facts.historicalMargin.floorPct).toBeCloseTo(0.38, 2); // p25 of [.38,.40,.42]
@@ -44,7 +44,7 @@ describe('tell-sensors-v2 — historical margin index (the stub that starved the
       paidJob('b', 'faucet', 460, 0.5),
       paidJob('c', 'faucet', 440, 0.5),
     ];
-    const signals = buildTrustQuoteFactSignalsFromDocs({ jobs: docs, nowMs: Date.now(), source: 'live', pricingModule });
+    const signals = buildExampleAppFactSignalsFromDocs({ jobs: docs, nowMs: Date.now(), source: 'live', pricingModule });
     for (const s of signals.filter((x) => x.facts && x.facts.historicalMargin)) {
       expect(s.facts.historicalMargin.sampleCount).toBeLessThanOrEqual(2); // self excluded -> 2 < 3 -> silent
       expect(s.facts.historicalMargin.floorPct).toBeNull();
@@ -67,8 +67,8 @@ test('price floor computes from prices alone — no cost data needed (his corpus
     paidNoCost('t3', 'toilet', 600), paidNoCost('t4', 'toilet', 700),
     { id: 'liveP', collection: 'jobs', data: { status: 'draft', total: 400, jobTypes: [{ type: 'toilet', price: '400', quantity: 1 }], lastViewedAt: Date.now(), updatedAt: Date.now() } },
   ];
-  const { buildTrustQuoteFactSignalsFromDocs } = require('../modules/main/trustquote-tell-feed');
-  const signals = buildTrustQuoteFactSignalsFromDocs({ jobs: docs, nowMs: Date.now(), source: 'live', pricingModule });
+  const { buildExampleAppFactSignalsFromDocs } = require('../modules/main/exampleapp-tell-feed');
+  const signals = buildExampleAppFactSignalsFromDocs({ jobs: docs, nowMs: Date.now(), source: 'live', pricingModule });
   const live = signals.find((s) => s.rawRefs?.docId === 'liveP');
   const hm = live.facts.historicalMargin;
   expect(hm.priceFloorUsd).toBe(550); // p25 of [500,550,600,700]
@@ -79,14 +79,14 @@ test('price floor computes from prices alone — no cost data needed (his corpus
 
 test('scorer price-mode: floors on price when cost data absent, speaks his numbers, honest mode marker', () => {
   const { scoreSignal } = require('../modules/the-tell/scorer');
-  const sig = { id: 'sPM', signalClass: 'trustquote:job-margin', rawRefs: { collection: 'jobs', docId: 'sPM' } };
+  const sig = { id: 'sPM', signalClass: 'exampleapp:job-margin', rawRefs: { collection: 'jobs', docId: 'sPM' } };
   const facts = {
     bidAmount: 400, bidPrice: 400, bidCost: null, bidMarginPct: null,
     jobType: 'toilet', bidStatus: 'draft',
     historicalMargin: { floorPct: null, sampleCount: 0, jobIds: ['t1', 't2', 't3', 't4'], priceFloorUsd: 550, priceSampleCount: 4 },
   };
   const scored = scoreSignal ? scoreSignal(sig, facts, Date.now())
-    : require('../modules/the-tell/scorer').scoreTrustQuoteJobMargin(sig, facts, Date.now());
+    : require('../modules/the-tell/scorer').scoreExampleAppJobMargin(sig, facts, Date.now());
   expect(scored.reason === 'insufficient_history_for_floor').toBe(false); // the starvation reason is GONE
   expect(scored.speech.verify.floorMode).toBe('price');
   expect(scored.speech.verify.priceFloorUsd).toBe(550);

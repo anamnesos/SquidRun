@@ -37,12 +37,12 @@ const { acceptInbound } = require('../modules/main/telegram-ingress-spool');
 
 /** A record shaped like the ones sitting in the live queue right now. */
 const LEGACY_RECORD = Object.freeze({
-  updateId: 808499316,
+  updateId: 700100102,
   updateKind: 'message',
   text: 'Hello? are you there',
-  chatId: REDACTED,
-  from: 'James',
-  messageId: 'telegram-in-808499316',
+  chatId: 7000000001,
+  from: 'Operator',
+  messageId: 'telegram-in-700100102',
   routeKey: 'main',
   targetProfile: 'main',
   targetWindow: 'main',
@@ -54,7 +54,7 @@ const LEGACY_RECORD = Object.freeze({
 
 const PHOTO_RECORD = Object.freeze({
   ...LEGACY_RECORD,
-  updateId: 808499320,
+  updateId: 700100105,
   text: '[Photo received]',
   photo: { kind: 'photo', fileId: 'AgAC', fileUniqueId: 'AQAD', fileSize: 1234 },
 });
@@ -75,8 +75,10 @@ const STAMP = Object.freeze({
 // future edit changes the legacy shape by so much as a key order, these fail,
 // and the live queue's twelve digests are exactly what would have moved.
 // ===================================================================
-const LEGACY_DIGEST_BEFORE_V7 = 'e1bb0688a3e81a5e92e4f2390715c448b854fb287b62c973d74e3bcaadd8fe56';
-const PHOTO_DIGEST_BEFORE_V7 = 'bd3e26362003f90f859cc36585937561b9d2b4792edbcf0cb89f69c9dc6f4035';
+// Public-source fixtures use neutral chat/update identifiers; this literal is
+// the same pre-v7 algorithm applied to that sanitized fixture byte shape.
+const LEGACY_DIGEST_BEFORE_V7 = '209ed6a98429e40c94162cf85d12585145717012defc99ee3418aff3ceaa4eee';
+const PHOTO_DIGEST_BEFORE_V7 = 'e7310923333ee330b57615dfe003b4f52139431bc72d40ded77205bf45d1aabc';
 
 describe('v7 section 1 - the legacy queue does not move', () => {
   test('a live-shaped legacy record hashes to its exact pre-change digest', () => {
@@ -195,8 +197,8 @@ describe('v7 section 1 - the spool is the only place a record is stamped', () =>
     dataRoot: process.platform === 'win32' ? 'D:\\tmp\\ingress' : '/tmp/ingress',
     routeKey: 'main',
     text: 'hello',
-    from: 'James',
-    metadata: { updateId: 999000002, chatId: REDACTED, messageId: 'm1' },
+    from: 'Operator',
+    metadata: { updateId: 999000002, chatId: 7000000001, messageId: 'm1' },
   };
 
   test('a producer that names itself writes a post-cutover record', () => {
@@ -215,7 +217,7 @@ describe('v7 section 1 - the spool is the only place a record is stamped', () =>
   test('a producer that cannot name itself APPENDS NOTHING', () => {
     // I had this backwards, and Architect #105 proved it from the call graph:
     // squidrun-app.js returns {ok:false} on spool refusal and logs "holding
-    // cursor", so refusing does NOT lose James's message - the Telegram cursor
+    // cursor", so refusing does NOT lose Operator's message - the Telegram cursor
     // stays held and the update is retried. Writing it unstamped is the actual
     // damage: it creates a NEW legacy obligation after settlement, changing the
     // journal fingerprints that v7 §4's stable fence is derived from.
@@ -257,13 +259,13 @@ describe('v7 section 1 - the spool is the only place a record is stamped', () =>
     // Real spool, real durable queue, real temp directory - no injected append.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tg-source-protocol-'));
     tempRoots.push(root);
-    const metadata = { updateId: 999000003, chatId: REDACTED, messageId: 'm-replay' };
+    const metadata = { updateId: 999000003, chatId: 7000000001, messageId: 'm-replay' };
 
     const first = acceptInbound({
       dataRoot: root,
       routeKey: 'main',
       text: 'the same message',
-      from: 'James',
+      from: 'Operator',
       metadata,
       targetProfile: 'main',
       targetWindow: 'main',
@@ -281,7 +283,7 @@ describe('v7 section 1 - the spool is the only place a record is stamped', () =>
       dataRoot: root,
       routeKey: 'main',
       text: 'the same message',
-      from: 'James',
+      from: 'Operator',
       metadata,
       targetProfile: 'main',
       targetWindow: 'main',

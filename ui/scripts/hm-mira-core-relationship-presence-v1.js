@@ -43,16 +43,16 @@ function parseArgs(argv = []) {
         ...(parsed.inputSignals.self_profile || {}),
         name: token.slice('--self-name='.length),
       };
-    } else if (token === '--james-state') {
-      parsed.inputSignals.james_relationship_state = {
-        ...(parsed.inputSignals.james_relationship_state || {}),
+    } else if (token === '--operator-state') {
+      parsed.inputSignals.operator_relationship_state = {
+        ...(parsed.inputSignals.operator_relationship_state || {}),
         current_focus: argv[index + 1] || null,
       };
       index += 1;
-    } else if (token.startsWith('--james-state=')) {
-      parsed.inputSignals.james_relationship_state = {
-        ...(parsed.inputSignals.james_relationship_state || {}),
-        current_focus: token.slice('--james-state='.length),
+    } else if (token.startsWith('--operator-state=')) {
+      parsed.inputSignals.operator_relationship_state = {
+        ...(parsed.inputSignals.operator_relationship_state || {}),
+        current_focus: token.slice('--operator-state='.length),
       };
     } else if (token === '--memory-summary') {
       parsed.inputSignals.prior_context_memory = {

@@ -14,7 +14,7 @@ function currentOpsChannel(overrides = {}) {
   return {
     kind: 'telegram',
     role: 'squidrun_team_ops',
-    chatId: 'REDACTED',
+    chatId: '7000000001',
     botRef: 'SQUIDRUN_TELEGRAM_BOT_REF',
     ...overrides,
   };
@@ -74,7 +74,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
     const sameChat = buildMiraDirectChannelReadiness({
       currentChannel: currentOpsChannel(),
       candidateChannel: separateNewMiraChannel({
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       }),
     });
     const sameBot = buildMiraDirectChannelReadiness({
@@ -98,7 +98,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
     const result = buildMiraDirectChannelReadiness({
       currentChannel: currentOpsChannel(),
       candidateChannel: separateNewMiraChannel({
-        botToken: '123456789:abcdefghijklmnopqrstuvwxyzABCDEFG',
+        botToken: '123456789:fake_telegram_bot_token_do_not_use',
       }),
     });
 
@@ -117,7 +117,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
   });
 
   test('rejects raw credential-shaped values in candidate reference fields', () => {
-    const rawToken = '123456789:abcdefghijklmnopqrstuvwxyzABCDEFG';
+    const rawToken = '123456789:fake_telegram_bot_token_do_not_use';
     const rawBotRef = buildMiraDirectChannelReadiness({
       currentChannel: currentOpsChannel(),
       candidateChannel: separateNewMiraChannel({
@@ -151,7 +151,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
   });
 
   test('rejects raw credential-shaped values in current-channel reference fields without echoing them', () => {
-    const rawToken = '123456789:abcdefghijklmnopqrstuvwxyzABCDEFG';
+    const rawToken = '123456789:fake_telegram_bot_token_do_not_use';
     const result = buildMiraDirectChannelReadiness({
       currentChannel: currentOpsChannel({
         botRef: rawToken,
@@ -175,7 +175,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
   });
 
   test('rejects raw credential-shaped candidate chat ids without echoing them', () => {
-    const rawToken = '123456789:abcdefghijklmnopqrstuvwxyzABCDEFG';
+    const rawToken = '123456789:fake_telegram_bot_token_do_not_use';
     const result = buildMiraDirectChannelReadiness({
       currentChannel: currentOpsChannel(),
       candidateChannel: separateNewMiraChannel({
@@ -195,7 +195,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
   });
 
   test('rejects raw credential-shaped current chat ids without echoing them', () => {
-    const rawToken = '123456789:abcdefghijklmnopqrstuvwxyzABCDEFG';
+    const rawToken = '123456789:fake_telegram_bot_token_do_not_use';
     const result = buildMiraDirectChannelReadiness({
       currentChannel: currentOpsChannel({
         chatId: rawToken,
@@ -236,7 +236,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
     expect(result.currentChannel).toEqual({
       kind: 'telegram',
       role: 'squidrun_team_ops',
-      chatId: 'REDACTED',
+      chatId: '7000000001',
       botRef: 'SQUIDRUN_TELEGRAM_BOT_REF',
       isCurrentSquidRunTeamOps: true,
       isFinalNewMiraDirectChannel: false,
@@ -256,7 +256,7 @@ describe('Mira separate direct-channel readiness dry-run', () => {
       liveRouteChanged: false,
       currentSquidRunRouteUntouched: true,
     });
-    expect(result.jamesGate).toEqual({
+    expect(result.operatorGate).toEqual({
       required: true,
       when: 'create_or_provide_and_test_real_separate_new_mira_channel_bot_chat_or_switch_live_route_owner',
     });

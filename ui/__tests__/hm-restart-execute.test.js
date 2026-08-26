@@ -26,7 +26,7 @@ function readJsonLines(filePath) {
 
 function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
   const baseInstance = {
-    id: 'james-main',
+    id: 'operator-main',
     coordPath: '.squidrun/coord',
     architectInbox: '.squidrun/coord/architect-inbox.jsonl',
     appStatusPath: '.squidrun/app-status.json',
@@ -63,21 +63,21 @@ function writeRegistry(projectRoot, liveInstance = {}, templateInstance = {}) {
 
 function writeMultiInstanceRegistry(projectRoot, profileWorkspaceRoot) {
   const mainInstance = {
-    id: 'james-main',
+    id: 'operator-main',
     profile: 'main',
     coordPath: '.squidrun/coord',
     architectInbox: '.squidrun/coord/architect-inbox.jsonl',
     appStatusPath: '.squidrun/app-status.json',
   };
   const clientInstance = {
-    id: 'client-sideprofile',
-    profile: 'sideprofile',
-    coordPath: '.squidrun/coord-sideprofile',
-    architectInbox: '.squidrun/coord-sideprofile/architect-inbox.jsonl',
-    appStatusPath: '.squidrun/app-status-sideprofile.json',
+    id: 'client-client',
+    profile: 'client',
+    coordPath: '.squidrun/coord-client',
+    architectInbox: '.squidrun/coord-client/architect-inbox.jsonl',
+    appStatusPath: '.squidrun/app-status-client.json',
     allowedRuntimePaths: [
-      '.squidrun/runtime-sideprofile',
-      '.squidrun/settings-sideprofile',
+      '.squidrun/runtime-client',
+      '.squidrun/settings-client',
     ],
   };
   writeJson(path.join(projectRoot, '.squidrun', 'operator-registry.template.json'), {
@@ -95,29 +95,29 @@ function writeMultiInstanceRegistry(projectRoot, profileWorkspaceRoot) {
       userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui',
     },
   });
-  writeJson(path.join(projectRoot, '.squidrun', 'app-status-sideprofile.json'), {
+  writeJson(path.join(projectRoot, '.squidrun', 'app-status-client.json'), {
     lastUpdated: '2026-05-04T00:04:54.639Z',
     session: 186,
     settingsPersistence: {
       cwd: path.join(projectRoot, 'ui'),
-      userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+      userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client',
     },
   });
-  fs.mkdirSync(path.join(projectRoot, '.squidrun', 'coord-sideprofile'), { recursive: true });
+  fs.mkdirSync(path.join(projectRoot, '.squidrun', 'coord-client'), { recursive: true });
   if (profileWorkspaceRoot) {
     writeJson(path.join(profileWorkspaceRoot, '.squidrun', 'link.json'), {
       squidrun_root: projectRoot,
       workspace: profileWorkspaceRoot,
-      profile: 'sideprofile',
+      profile: 'client',
     });
-    writeJson(path.join(profileWorkspaceRoot, '.squidrun', 'app-status-sideprofile.json'), {
+    writeJson(path.join(profileWorkspaceRoot, '.squidrun', 'app-status-client.json'), {
       lastUpdated: '2026-06-11T06:16:51.396Z',
       session: 212,
       settingsPersistence: {
         cwd: path.join(projectRoot, 'ui'),
-        settingsPath: path.join(profileWorkspaceRoot, '.squidrun', 'settings-sideprofile', 'settings.json'),
-        appStatusPath: path.join(profileWorkspaceRoot, '.squidrun', 'app-status-sideprofile.json'),
-        userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+        settingsPath: path.join(profileWorkspaceRoot, '.squidrun', 'settings-client', 'settings.json'),
+        appStatusPath: path.join(profileWorkspaceRoot, '.squidrun', 'app-status-client.json'),
+        userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client',
       },
     });
   }
@@ -224,14 +224,14 @@ function duplexProcessRows(projectRoot = 'D:\\projects\\squidrun') {
       ParentProcessId: 20,
       Name: 'electron.exe',
       ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
-      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" . --profile=sideprofile --window=sideprofile --standalone-window`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" . --profile=client --window=client --standalone-window`,
     },
     {
       ProcessId: 201,
       ParentProcessId: 200,
       Name: 'electron.exe',
       ExecutablePath: `${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe`,
-      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile" --app-path="${projectRoot}\\ui"`,
+      CommandLine: `"${projectRoot}\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client" --app-path="${projectRoot}\\ui"`,
     },
   ];
 }
@@ -256,22 +256,22 @@ function mainAndStandaloneInstallRows() {
       ProcessId: 800,
       ParentProcessId: 20,
       Name: 'sr-electron.exe',
-      ExecutablePath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\sr-electron.exe',
-      CommandLine: '"D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\sr-electron.exe"',
+      ExecutablePath: 'D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\sr-electron.exe',
+      CommandLine: '"D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\sr-electron.exe"',
     },
     {
       ProcessId: 801,
       ParentProcessId: 800,
       Name: 'sr-electron.exe',
-      ExecutablePath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\sr-electron.exe',
-      CommandLine: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\sr-electron.exe D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\resources\\app.asar\\supervisor-daemon.js',
+      ExecutablePath: 'D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\sr-electron.exe',
+      CommandLine: 'D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\sr-electron.exe D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\resources\\app.asar\\supervisor-daemon.js',
     },
     {
       ProcessId: 802,
       ParentProcessId: 800,
       Name: 'sr-electron.exe',
-      ExecutablePath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\sr-electron.exe',
-      CommandLine: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\sr-electron.exe D:\\SquidRun\\sideprofile\\versions\\0.1.34-171113b6\\resources\\app.asar.unpacked\\terminal-daemon.js',
+      ExecutablePath: 'D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\sr-electron.exe',
+      CommandLine: 'D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\sr-electron.exe D:\\SquidRun\\Client\\versions\\0.1.34-171113b6\\resources\\app.asar.unpacked\\terminal-daemon.js',
     },
   ];
 }
@@ -283,14 +283,14 @@ function processRowsWithExecutorAncestry() {
       ParentProcessId: 99,
       Name: 'electron.exe',
       ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" . --profile=sideprofile --window=sideprofile --standalone-window',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" . --profile=client --window=client --standalone-window',
     },
     {
       ProcessId: 120,
       ParentProcessId: 111,
       Name: 'electron.exe',
       ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile"',
+      CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" --type=renderer --user-data-dir="C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client"',
     },
     {
       ProcessId: 130,
@@ -318,7 +318,7 @@ function processRowsWithExecutorAncestry() {
       ParentProcessId: 202,
       Name: 'node.exe',
       ExecutablePath: 'C:\\Program Files\\nodejs\\node.exe',
-      CommandLine: 'node D:\\projects\\squidrun\\ui\\scripts\\hm-restart-execute.js --instance client-sideprofile',
+      CommandLine: 'node D:\\projects\\squidrun\\ui\\scripts\\hm-restart-execute.js --instance client-client',
     },
     {
       ProcessId: 204,
@@ -356,7 +356,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'manual test restart',
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       listElectronProcesses,
@@ -397,7 +397,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'restart_preflight',
-      instance: 'james-main',
+      instance: 'operator-main',
       status: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -406,7 +406,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'dependency red test',
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       checkDependencyIntegrity: jest.fn(() => ({ ok: false, reason: 'npm_tree_invalid' })),
@@ -433,7 +433,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'restart_preflight',
-      instance: 'james-main',
+      instance: 'operator-main',
       status: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -442,7 +442,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'launch probe red test',
       nowMs: Date.parse('2026-04-27T00:05:00.000Z'),
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
@@ -519,7 +519,7 @@ describe('hm-restart-execute', () => {
       mainAndStandaloneInstallRows(),
       {
         instanceConfig: {
-          id: 'james-main',
+          id: 'operator-main',
           profile: 'main',
           appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
           appStatus: {
@@ -556,19 +556,19 @@ describe('hm-restart-execute', () => {
           ParentProcessId: 20,
           Name: 'electron.exe',
           ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" D:\\SquidRun\\sideprofile\\versions\\0.1.34-4c186a10\\resources\\app.asar',
+          CommandLine: '"D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe" D:\\SquidRun\\Client\\versions\\0.1.34-4c186a10\\resources\\app.asar',
         },
         {
           ProcessId: 37240,
           ParentProcessId: 28480,
           Name: 'electron.exe',
           ExecutablePath: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe',
-          CommandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\SquidRun\\sideprofile\\versions\\0.1.34-4c186a10\\resources\\app.asar\\scripts\\hm-bidirectional-wake-watchdog.js run --state D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\bidirectional-wake-state.json --interval-ms 60000',
+          CommandLine: 'D:\\projects\\squidrun\\ui\\node_modules\\electron\\dist\\electron.exe D:\\SquidRun\\Client\\versions\\0.1.34-4c186a10\\resources\\app.asar\\scripts\\hm-bidirectional-wake-watchdog.js run --state D:\\SquidRun\\Client\\.squidrun\\runtime\\bidirectional-wake-state.json --interval-ms 60000',
         },
       ],
       {
         instanceConfig: {
-          id: 'james-main',
+          id: 'operator-main',
           profile: 'main',
           appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
           appStatus: {
@@ -627,7 +627,7 @@ describe('hm-restart-execute', () => {
       },
     ];
     const instanceConfig = {
-      id: 'james-main',
+      id: 'operator-main',
       profile: 'main',
       appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
       appStatus: {
@@ -650,12 +650,12 @@ describe('hm-restart-execute', () => {
 
   test('selects only the requested client instance in a live-duplex process set', () => {
     const instanceConfig = {
-      id: 'client-sideprofile',
-      profile: 'sideprofile',
-      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-sideprofile.json'),
+      id: 'client-client',
+      profile: 'client',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-client.json'),
       appStatus: {
         settingsPersistence: {
-          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client',
         },
       },
     };
@@ -677,9 +677,9 @@ describe('hm-restart-execute', () => {
   test('shutdown refuses ambiguous project-root Electron when no instance attribution exists', async () => {
     const killed = [];
     const instanceConfig = {
-      id: 'client-sideprofile',
-      profile: 'sideprofile',
-      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-sideprofile.json'),
+      id: 'client-client',
+      profile: 'client',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-client.json'),
     };
 
     const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
@@ -704,60 +704,60 @@ describe('hm-restart-execute', () => {
   });
 
   test('loads client registry from shared root and prefers the fresh profile app-status path', () => {
-    const profileWorkspaceRoot = path.join(tempRoot, '.squidrun', 'profiles', 'sideprofile', 'workspace');
+    const profileWorkspaceRoot = path.join(tempRoot, '.squidrun', 'profiles', 'client', 'workspace');
     writeMultiInstanceRegistry(tempRoot, profileWorkspaceRoot);
 
-    const instanceConfig = restartExecute.loadInstanceConfig(profileWorkspaceRoot, 'client-sideprofile');
+    const instanceConfig = restartExecute.loadInstanceConfig(profileWorkspaceRoot, 'client-client');
 
     expect(instanceConfig.registryRoot).toBe(tempRoot);
     expect(instanceConfig.profileWorkspaceRoot).toBe(profileWorkspaceRoot);
     expect(instanceConfig.appStatusPath).toBe(path.join(
       profileWorkspaceRoot,
       '.squidrun',
-      'app-status-sideprofile.json'
+      'app-status-client.json'
     ));
   });
 
   test('default relaunch replays captured instance commandLine and env when registry launchCommand is absent', () => {
     const instanceConfig = {
-      id: 'client-sideprofile',
-      profile: 'sideprofile',
+      id: 'client-client',
+      profile: 'client',
       registryRoot: tempRoot,
-      profileWorkspaceRoot: path.join(tempRoot, '.squidrun', 'profiles', 'sideprofile', 'workspace'),
-      appStatusPath: path.join(tempRoot, '.squidrun', 'profiles', 'sideprofile', 'workspace', '.squidrun', 'app-status-sideprofile.json'),
+      profileWorkspaceRoot: path.join(tempRoot, '.squidrun', 'profiles', 'client', 'workspace'),
+      appStatusPath: path.join(tempRoot, '.squidrun', 'profiles', 'client', 'workspace', '.squidrun', 'app-status-client.json'),
       launchCommand: {},
     };
     writeJson(instanceConfig.appStatusPath, {
       settingsPersistence: {
         cwd: path.join(tempRoot, 'ui'),
-        userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+        userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client',
       },
     });
 
     const launch = restartExecute.defaultLaunchCommand(tempRoot, instanceConfig, {
-      commandLine: '"C:\\Program Files\\Electron\\electron.exe" . --profile=sideprofile --window=sideprofile --standalone-window',
+      commandLine: '"C:\\Program Files\\Electron\\electron.exe" . --profile=client --window=client --standalone-window',
       cwd: path.join(tempRoot, 'ui'),
       env: {
-        SQUIDRUN_PROFILE: 'sideprofile',
-        SQUIDRUN_WINDOW_KEY: 'sideprofile',
+        SQUIDRUN_PROFILE: 'client',
+        SQUIDRUN_WINDOW_KEY: 'client',
         KEEP_FOR_RELAUNCH: '1',
       },
     });
 
     expect(launch.command).toBe('C:\\Program Files\\Electron\\electron.exe');
-    expect(launch.args).toEqual(['.', '--profile=sideprofile', '--window=sideprofile', '--standalone-window']);
+    expect(launch.args).toEqual(['.', '--profile=client', '--window=client', '--standalone-window']);
     expect(launch.cwd).toBe(path.join(tempRoot, 'ui'));
     expect(launch.env).toEqual(expect.objectContaining({
-      SQUIDRUN_PROFILE: 'sideprofile',
-      SQUIDRUN_WINDOW_KEY: 'sideprofile',
-      SQUIDRUN_INSTANCE_ID: 'client-sideprofile',
+      SQUIDRUN_PROFILE: 'client',
+      SQUIDRUN_WINDOW_KEY: 'client',
+      SQUIDRUN_INSTANCE_ID: 'client-client',
       KEEP_FOR_RELAUNCH: '1',
     }));
   });
 
   test('default main relaunch ignores captured helper commandLine and uses npm start', () => {
     const instanceConfig = {
-      id: 'james-main',
+      id: 'operator-main',
       profile: 'main',
       registryRoot: tempRoot,
       appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
@@ -781,7 +781,7 @@ describe('hm-restart-execute', () => {
     expect(launch.env).toEqual(expect.objectContaining({
       SQUIDRUN_PROFILE: 'main',
       SQUIDRUN_WINDOW_KEY: 'main',
-      SQUIDRUN_INSTANCE_ID: 'james-main',
+      SQUIDRUN_INSTANCE_ID: 'operator-main',
     }));
   });
 
@@ -803,12 +803,12 @@ describe('hm-restart-execute', () => {
     const killed = [];
     const killAttempts = [];
     const instanceConfig = {
-      id: 'client-sideprofile',
-      profile: 'sideprofile',
-      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-sideprofile.json'),
+      id: 'client-client',
+      profile: 'client',
+      appStatusPath: path.join(tempRoot, '.squidrun', 'app-status-client.json'),
       appStatus: {
         settingsPersistence: {
-          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\sideprofile',
+          userDataPath: 'C:\\Users\\ExampleUser\\AppData\\Roaming\\squidrun-ui\\client',
         },
       },
     };
@@ -859,12 +859,12 @@ describe('hm-restart-execute', () => {
     expect(killed).toEqual([{ pid: 111, role: 'target' }]);
   });
 
-  test('shutdown for main install does not kill standalone sideprofile processes', async () => {
+  test('shutdown for main install does not kill standalone Client processes', async () => {
     const killed = [];
 
     const result = await restartExecute.shutdownElectronProcesses('D:\\projects\\squidrun', {
       instanceConfig: {
-        id: 'james-main',
+        id: 'operator-main',
         profile: 'main',
         appStatusPath: path.join(tempRoot, '.squidrun', 'app-status.json'),
         appStatus: {
@@ -880,7 +880,7 @@ describe('hm-restart-execute', () => {
 
     expect(result.ok).toBe(true);
     expect(killed.map((proc) => proc.pid)).toEqual([701, 700]);
-    expect(killed.map((proc) => proc.executablePath).join('\n')).not.toContain('D:\\SquidRun\\sideprofile');
+    expect(killed.map((proc) => proc.executablePath).join('\n')).not.toContain('D:\\SquidRun\\Client');
   });
 
   test('orphan sweep excludes fresh Electron descendants and kills stale terminal tree', async () => {
@@ -904,7 +904,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'audit_grade',
-      instance: 'james-main',
+      instance: 'operator-main',
       grade: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -930,7 +930,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'green preflight test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
@@ -976,7 +976,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'restart_preflight',
-      instance: 'james-main',
+      instance: 'operator-main',
       status: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -984,7 +984,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'shutdown failure test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
@@ -1016,7 +1016,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'restart_preflight',
-      instance: 'james-main',
+      instance: 'operator-main',
       status: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -1026,7 +1026,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'spawn failure test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
@@ -1067,7 +1067,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'restart_preflight',
-      instance: 'james-main',
+      instance: 'operator-main',
       status: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -1076,7 +1076,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'no target test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
@@ -1112,7 +1112,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'restart_preflight',
-      instance: 'james-main',
+      instance: 'operator-main',
       status: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -1121,7 +1121,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'orphan descendant test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
@@ -1184,7 +1184,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'audit_grade',
-      instance: 'james-main',
+      instance: 'operator-main',
       grade: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -1208,7 +1208,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'sweep test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),
@@ -1241,7 +1241,7 @@ describe('hm-restart-execute', () => {
     writeRegistry(tempRoot);
     appendJsonLine(path.join(tempRoot, '.squidrun', 'coord', 'architect-inbox.jsonl'), {
       type: 'audit_grade',
-      instance: 'james-main',
+      instance: 'operator-main',
       grade: 'green',
       timestampUtc: '2026-04-27T00:04:30.000Z',
     });
@@ -1257,7 +1257,7 @@ describe('hm-restart-execute', () => {
 
     const result = await restartExecute.executeRestart({
       projectRoot: tempRoot,
-      instance: 'james-main',
+      instance: 'operator-main',
       reason: 'unverified relaunch test',
       checkDependencyIntegrity: jest.fn(() => ({ ok: true, reason: null })),
       runRestartLaunchProbe: jest.fn(greenRestartLaunchProbe),

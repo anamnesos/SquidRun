@@ -404,7 +404,7 @@ test('shell-escape artifacts become plain apostrophes on the face', () => {
   expect(sanitizeSpeechText(escaped)).toBe("the label's offsets were stale");
 });
 
-describe('polish lane — hysteresis, asymmetric yield, flowing tails (James 10:49)', () => {
+describe('polish lane — hysteresis, asymmetric yield, flowing tails (Operator 10:49)', () => {
   function build2() {
     const doc = makeFakeDocument();
     const layerEl = makeFakeElement('div');

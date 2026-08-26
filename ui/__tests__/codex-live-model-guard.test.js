@@ -378,7 +378,7 @@ describe('Codex live Oracle model guard', () => {
   });
 
   test('exact SIDE Oracle/3/main is a no-op while an unbound MAIN Oracle fails closed', () => {
-    const sideRoot = path.join(root, 'sideprofile');
+    const sideRoot = path.join(root, 'Client');
     const side = evaluateOracleModelGuard(payload('UserPromptSubmit', {
       cwd: sideRoot,
       transcript_path: path.join(sideRoot, `rollout-${SESSION_ID}.jsonl`),

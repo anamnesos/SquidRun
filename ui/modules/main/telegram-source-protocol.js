@@ -6,7 +6,7 @@
  * twelve records already sitting in the live queue. Those were written by a
  * build that knew nothing about decisions; they carry a legacy attempt latch
  * whose semantics the new protocol does not share, and one of them
- * (`808499316`) has already been answered. Sweeping them into the new path is
+ * (`700100102`) has already been answered. Sweeping them into the new path is
  * how an answered message gets answered twice.
  *
  * So membership is DECLARED BY THE PRODUCER, IN THE RECORD, and never inferred:
@@ -120,7 +120,7 @@ function isDecisionProtocolSource(record) {
  * next to a fail-closed gate is worse than no comment: the next reader trusts
  * it and reasons about a door that is shut.
  *
- * The correct reasoning, for the record: refusing does not lose James's message.
+ * The correct reasoning, for the record: refusing does not lose Operator's message.
  * The spool's caller returns ok:false and holds the Telegram cursor, so the
  * update is retried. Appending an unstamped record WOULD be the damage, because
  * v7 §4 derives the stable legacy fence from the final journal fingerprints, and

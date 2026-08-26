@@ -63,12 +63,12 @@ describe('pane runtime naming', () => {
   });
 
   test('CODEX WINS over an incidental claude mention in a path', () => {
-    expect(resolvePaneRuntimeFromCommand('C:/users/claude/bin/codex')).toBe('codex');
+    expect(resolvePaneRuntimeFromCommand('C:/sample/claude/bin/codex')).toBe('codex');
   });
 });
 
 describe('backlog health publication', () => {
-  const backlog = { pendingCount: 3, oldestPendingUpdateId: 808499317 };
+  const backlog = { pendingCount: 3, oldestPendingUpdateId: 700100103 };
 
   test('IT WRITES A READABLE DOCUMENT for another process', () => {
     const statePath = path.join(tempRoot(), 'nested', 'telegram-backlog-health.json');
@@ -83,10 +83,10 @@ describe('backlog health publication', () => {
   test('ROUTES DO NOT CLOBBER EACH OTHER', () => {
     const statePath = path.join(tempRoot(), 'health.json');
     writeBacklogHealth({ statePath, routeKey: 'main', backlog, nowMs: 1 });
-    writeBacklogHealth({ statePath, routeKey: 'sideprofile', backlog: { pendingCount: 0 }, nowMs: 2 });
+    writeBacklogHealth({ statePath, routeKey: 'client', backlog: { pendingCount: 0 }, nowMs: 2 });
 
     const parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    expect(Object.keys(parsed.routes).sort()).toEqual(['sideprofile', 'main']);
+    expect(Object.keys(parsed.routes).sort()).toEqual(['client', 'main']);
     expect(parsed.routes.main.pendingCount).toBe(3);
   });
 

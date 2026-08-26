@@ -21,7 +21,7 @@
  * =====================================================================
  * FAIL OPEN FOR THE PROMPT, FAIL CLOSED FOR THE RECEIPT
  * =====================================================================
- * A hook that can wedge James's pane is a worse bug than a missing receipt, so
+ * A hook that can wedge Operator's pane is a worse bug than a missing receipt, so
  * every path here returns rather than throws and the caller always exits 0. But
  * a receipt is never written on partial information: no launch binding, no
  * session, no typed submission identity means NO RECEIPT, recorded with a

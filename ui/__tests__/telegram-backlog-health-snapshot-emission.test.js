@@ -3,7 +3,7 @@
  *
  * Architect #60 caught the previous wiring degrading only the wrapper — stderr
  * and an exit code — while the structured status the tooling publishes still
- * said OK, score 100, no warning. James does not read stderr or exit codes; he
+ * said OK, score 100, no warning. Operator does not read stderr or exit codes; he
  * reads the score. That is the incident's own failure shape reproduced inside
  * the fix for it: the knowledge existed and never reached the surface.
  *

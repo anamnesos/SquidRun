@@ -78,7 +78,7 @@ describe('pane failure limit detector', () => {
     [CLAUDE_STARTUP_PROMO_FIXTURE, 'claude'],
     ['Your workspace is out of credits. Add credits to continue.', 'claude'],
     [CLAUDE_LIMIT_FIXTURE, 'codex'],
-    ["James, you've hit your Fable 5 limit for the week - want me to switch panes?", 'claude'],
+    ["Operator, you've hit your Fable 5 limit for the week - want me to switch panes?", 'claude'],
     ["you've hit your limit of free retries on that API", 'claude'],
     ["The alert fires when you've hit your usage limit on any pane", 'claude'],
     ["You've hit your usage limit. This sentence is discussing the detector.", 'claude'],
@@ -100,7 +100,7 @@ describe('pane failure limit detector', () => {
 
   test('keeps eligibility discrete and includes current workroom identities', () => {
     expect(isMonitoredPaneId('1')).toBe(true);
-    expect(isMonitoredPaneId('trustquote-app')).toBe(true);
+    expect(isMonitoredPaneId('exampleapp-app')).toBe(true);
     expect(isMonitoredPaneId('future-workroom', { workRoomRouteOwner: true })).toBe(true);
     expect(isMonitoredPaneId('builder-bg-1', { backgroundAgent: true, workRoomRouteOwner: true })).toBe(false);
     expect(isMonitoredPaneId('unowned-pane')).toBe(false);
@@ -119,7 +119,7 @@ describe('pane failure limit detector', () => {
     expect(resolvePaneFailureCliHint('2', {
       currentSettings: { paneCommands: { '2': 'codex --yolo' } },
     }, cliIdentity)).toBe('codex --yolo');
-    expect(resolvePaneFailureCliHint('trustquote-invoice', {}, cliIdentity)).toBe('codex --yolo');
+    expect(resolvePaneFailureCliHint('exampleapp-invoice', {}, cliIdentity)).toBe('codex --yolo');
     expect(resolvePaneFailureCliHint('future-pane', {
       paneCliIdentity: new Map([['future-pane', { label: 'Gemini', provider: 'Google' }]]),
     }, cliIdentity)).toEqual({ label: 'Gemini', provider: 'Google' });
@@ -246,8 +246,8 @@ describe('pane failure notify path', () => {
       sendTelegram: jest.fn(async () => ({ ok: false, error: 'telegram_down' })),
     });
 
-    const first = await monitor.handlePtyExit('trustquote-app', 9, { pid: 31 }, { pid: 31 });
-    const second = await monitor.handlePtyExit('trustquote-app', 9, { pid: 31 }, { pid: 31 });
+    const first = await monitor.handlePtyExit('exampleapp-app', 9, { pid: 31 }, { pid: 31 });
+    const second = await monitor.handlePtyExit('exampleapp-app', 9, { pid: 31 }, { pid: 31 });
 
     expect(first.ok).toBe(false);
     expect(second).toEqual(expect.objectContaining({
@@ -263,7 +263,7 @@ describe('pane failure notify path', () => {
   test('formats workroom notifications with the visible pane label', () => {
     expect(eventMessage({
       eventName: 'usage_limit_refusal',
-      paneId: 'trustquote-schedule-dispatch',
+      paneId: 'exampleapp-schedule-dispatch',
     })).toBe(
       'Schedule Dispatch workroom pane hit its usage limit - replies will silently stop until you switch to an available model/session or the limit resets.'
     );

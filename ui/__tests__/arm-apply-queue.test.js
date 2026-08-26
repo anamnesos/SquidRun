@@ -32,20 +32,20 @@ function hasSqliteDriver() {
   }
 }
 
-function trustquoteManifest() {
+function exampleappManifest() {
   return {
-    appRoomId: 'trustquote',
-    sessionId: 'app-session-406:trustquote',
+    appRoomId: 'exampleapp',
+    sessionId: 'app-session-406:exampleapp',
     mainSessionId: 'app-session-406',
-    leadRole: 'trustquote-lead',
-    leadPaneId: 'trustquote-lead',
-    routeTarget: 'trustquote',
+    leadRole: 'exampleapp-lead',
+    leadPaneId: 'exampleapp-lead',
+    routeTarget: 'exampleapp',
     arms: [
       {
         armKey: 'invoice',
-        role: 'trustquote-invoice',
-        paneId: 'trustquote-invoice',
-        routeTarget: 'trustquote-invoice',
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
+        routeTarget: 'exampleapp-invoice',
         armKind: 'domain',
         displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments', 'pricebook'],
@@ -111,7 +111,7 @@ maybeDescribe('arm apply queue', () => {
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arm-apply-queue-'));
     dbPath = path.join(tempDir, 'evidence-ledger.db');
-    expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    expect(upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
   });
 
   afterEach(() => {
@@ -126,12 +126,12 @@ maybeDescribe('arm apply queue', () => {
   test('forces high-risk categories into durable approval-required rows', () => {
     for (const [index, category] of HIGH_RISK_CATEGORIES.entries()) {
       const queued = enqueueArmApplyRequest({
-        appRoomId: 'trustquote',
-        sessionId: 'app-session-406:trustquote',
+        appRoomId: 'exampleapp',
+        sessionId: 'app-session-406:exampleapp',
         armKey: 'invoice',
         actionCategory: category,
         riskClass: 'safe',
-        evidenceRefs: [`trustquote-proof:${category}`],
+        evidenceRefs: [`exampleapp-proof:${category}`],
         draftPayload: { category, proposedChange: 'draft-only' },
       }, { dbPath, nowMs: 2_000 + index });
 
@@ -142,7 +142,7 @@ maybeDescribe('arm apply queue', () => {
         riskClass: 'approval_required',
         status: 'approval_required',
         approvalRequired: true,
-        evidenceRefs: [`trustquote-proof:${category}`],
+        evidenceRefs: [`exampleapp-proof:${category}`],
       }));
       expect(queued.request.sideEffectResult).toEqual(expect.objectContaining({
         dispatchEnabled: false,
@@ -164,8 +164,8 @@ maybeDescribe('arm apply queue', () => {
 
   test('normalizes high-risk category aliases and rejects unknown categories', () => {
     const alias = enqueueArmApplyRequest({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
       actionCategory: 'customer_send',
       riskClass: 'safe',
@@ -182,8 +182,8 @@ maybeDescribe('arm apply queue', () => {
     }));
 
     const unknown = enqueueArmApplyRequest({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
       actionCategory: 'customerish_safe_send',
       riskClass: 'safe',
@@ -200,8 +200,8 @@ maybeDescribe('arm apply queue', () => {
   test('does not mark a risky request executable without explicit approval', () => {
     const queued = enqueueArmApplyRequest({
       requestId: 'apply-customer-message-1',
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
       actionCategory: 'customer_message',
       riskClass: 'safe',
@@ -275,8 +275,8 @@ maybeDescribe('arm apply queue', () => {
   test('keeps the apply queue as a no-dispatch stub even after approval', () => {
     const queued = enqueueArmApplyRequest({
       requestId: 'apply-schedule-change-1',
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
       actionCategory: 'schedule_mutation',
       riskClass: 'safe',
@@ -332,8 +332,8 @@ maybeDescribe('arm apply queue', () => {
   test('keeps unapproved high-risk dispatch attempts visible in the approval queue', () => {
     const queued = enqueueArmApplyRequest({
       requestId: 'apply-money-write-unapproved-1',
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
       actionCategory: 'money_write',
       riskClass: 'safe',

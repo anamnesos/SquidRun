@@ -2,7 +2,7 @@
 
 /**
  * Window chrome by window class - a DELIBERATE rendered list, not
- * inheritance-minus-exceptions (S426 identity lane, James's product call).
+ * inheritance-minus-exceptions (S426 identity lane, Operator's product call).
  *
  * Every window loads the same index.html; what chrome renders is decided
  * here per window class. Allow-list semantics: a control renders ONLY if its
@@ -49,7 +49,7 @@ const INSTALLED_OPERATOR_CHROME = Object.freeze({
 });
 
 const CHROME_ALLOWLIST = Object.freeze({
-  // James's cockpit: everything renders.
+  // Operator's cockpit: everything renders.
   [WINDOW_CHROME_CLASSES.MAIN]: FULL_CHROME,
   // The S406 room: logo + session badge (not registered controls - always
   // render) and the window-conditional Close button. The room's real chrome
@@ -58,7 +58,7 @@ const CHROME_ALLOWLIST = Object.freeze({
     controls: Object.freeze(['fullRestartBtn']),
     regions: Object.freeze([]),
   }),
-  // Client window (sideprofile is the live instance): mark + badge always
+  // Client window (Client is the live instance): mark + badge always
   // render; Quit (window-conditional behavior lives in renderer.js) and
   // Quit is the only operator control a client sees. Profile data still
   // loads at startup, but the retired profile form is no longer chrome.
@@ -67,7 +67,7 @@ const CHROME_ALLOWLIST = Object.freeze({
     controls: Object.freeze(['fullRestartBtn']),
     regions: Object.freeze([]),
   }),
-  // Installed operator consoles (sideprofile is the live split install): keep
+  // Installed operator consoles (Client is the live split install): keep
   // maintenance chrome, but remove cross-product entry points.
   [WINDOW_CHROME_CLASSES.INSTALLED_OPERATOR]: INSTALLED_OPERATOR_CHROME,
   // Work rooms: mark + badge + Close. The right panel starts absent; if a

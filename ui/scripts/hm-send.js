@@ -54,8 +54,8 @@ const {
   formatAckLine,
 } = require('../modules/comms/ack-outcome');
 const {
-  getTrustQuoteArmPaneIds,
-} = require('../modules/trustquote-arm-specs');
+  getExampleAppArmPaneIds,
+} = require('../modules/exampleapp-arm-specs');
 const {
   parseExpectationFlag,
   normalizeFulfillmentDeclaration,
@@ -129,8 +129,8 @@ const DEFAULT_ACK_TIMEOUT_MS = Math.max(
   (Number.isFinite(DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS) ? DEFAULT_TRIGGER_VERIFY_TIMEOUT_MS : 5000)
     + (Number.isFinite(DEFAULT_ACK_TIMEOUT_BUFFER_MS) ? DEFAULT_ACK_TIMEOUT_BUFFER_MS : 1500)
 );
-const TRUSTQUOTE_ARM_TARGET_IDS = new Set(
-  getTrustQuoteArmPaneIds()
+const EXAMPLEAPP_ARM_TARGET_IDS = new Set(
+  getExampleAppArmPaneIds()
     .map((paneId) => String(paneId || '').trim().toLowerCase())
     .filter(Boolean)
 );
@@ -1568,8 +1568,8 @@ function normalizeRole(targetInput) {
 
 function resolvePaneIdForRole(roleName) {
   const normalized = String(roleName || '').trim().toLowerCase();
-  const trustQuoteArmPaneId = normalizeTrustQuoteArmTarget(normalized);
-  if (trustQuoteArmPaneId) return trustQuoteArmPaneId;
+  const exampleAppArmPaneId = normalizeExampleAppArmTarget(normalized);
+  if (exampleAppArmPaneId) return exampleAppArmPaneId;
   if (normalized === 'architect') return '1';
   if (normalized === 'builder') return '2';
   if (normalized === 'oracle') return '3';
@@ -1625,13 +1625,13 @@ function isExplicitTelegramTarget(targetInput) {
   return String(targetInput || '').trim().toLowerCase() === 'telegram';
 }
 
-function normalizeTrustQuoteArmTarget(targetInput) {
+function normalizeExampleAppArmTarget(targetInput) {
   const normalized = String(targetInput || '').trim().toLowerCase();
-  return TRUSTQUOTE_ARM_TARGET_IDS.has(normalized) ? normalized : null;
+  return EXAMPLEAPP_ARM_TARGET_IDS.has(normalized) ? normalized : null;
 }
 
-function isTrustQuoteArmTarget(targetInput) {
-  return Boolean(normalizeTrustQuoteArmTarget(targetInput));
+function isExampleAppArmTarget(targetInput) {
+  return Boolean(normalizeExampleAppArmTarget(targetInput));
 }
 
 function metadataIndicatesTelegramOrigin(metadata = null) {
@@ -1848,10 +1848,10 @@ function buildTriggerFallbackContent(content, messageId, metadata = null) {
 }
 
 function writeTriggerFallback(targetInput, descriptorOrContent, options = {}) {
-  if (isTrustQuoteArmTarget(targetInput)) {
+  if (isExampleAppArmTarget(targetInput)) {
     return {
       ok: false,
-      error: `TrustQuote arm target '${targetInput}' does not have a trigger-file fallback; use websocket local-handler or daemon PTY delivery`,
+      error: `ExampleApp arm target '${targetInput}' does not have a trigger-file fallback; use websocket local-handler or daemon PTY delivery`,
     };
   }
 
@@ -1950,7 +1950,7 @@ function shouldRetryAck(ack) {
   if (!ack || ack.ok) return false;
   if (ack.accepted === true) return false;
   const status = String(ack.status || '').toLowerCase();
-  if (isTrustQuoteArmTarget(target) && status === 'missing_textarea') return false;
+  if (isExampleAppArmTarget(target) && status === 'missing_textarea') return false;
   if (!status) return true;
   if (
     status === 'invalid_target'
@@ -1970,20 +1970,20 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function getTrustQuoteArmEnterDelayMs() {
-  const parsed = Number.parseInt(String(process.env.HM_SEND_TRUSTQUOTE_ARM_ENTER_DELAY_MS || ''), 10);
+function getExampleAppArmEnterDelayMs() {
+  const parsed = Number.parseInt(String(process.env.HM_SEND_EXAMPLEAPP_ARM_ENTER_DELAY_MS || ''), 10);
   if (Number.isFinite(parsed) && parsed >= 0) return parsed;
   return process.platform === 'win32' ? 500 : 150;
 }
 
-function buildTrustQuoteArmDaemonMeta(envelope = {}, phase = 'payload') {
+function buildExampleAppArmDaemonMeta(envelope = {}, phase = 'payload') {
   const messageId = envelope?.message_id || `hm-send-${Date.now()}`;
   return {
     eventId: `${messageId}-${phase}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     traceId: messageId,
     correlationId: messageId,
     messageId,
-    source: 'hm-send-trustquote-arm-daemon-fallback',
+    source: 'hm-send-exampleapp-arm-daemon-fallback',
     phase,
     senderRole: envelope?.sender?.role || role || 'cli',
     targetRole: envelope?.target?.role || envelope?.target?.raw || target || null,
@@ -2017,10 +2017,10 @@ async function refreshDaemonTerminals(client, timeoutMs = 1500) {
   });
 }
 
-async function sendTrustQuoteArmViaDaemon(envelope = {}) {
-  const paneId = normalizeTrustQuoteArmTarget(envelope?.target?.raw || target);
+async function sendExampleAppArmViaDaemon(envelope = {}) {
+  const paneId = normalizeExampleAppArmTarget(envelope?.target?.raw || target);
   if (!paneId) {
-    return { ok: false, error: `not a TrustQuote arm target: ${target}` };
+    return { ok: false, error: `not a ExampleApp arm target: ${target}` };
   }
 
   const daemonClient = new DaemonClient({ profileName: 'main' });
@@ -2046,7 +2046,7 @@ async function sendTrustQuoteArmViaDaemon(envelope = {}) {
     const writeAck = await daemonClient.writeAndWaitAck(
       paneId,
       String(envelope.content || ''),
-      buildTrustQuoteArmDaemonMeta(envelope, 'payload'),
+      buildExampleAppArmDaemonMeta(envelope, 'payload'),
       { timeoutMs: 2500 }
     );
     if (!daemonWriteAccepted(writeAck)) {
@@ -2058,12 +2058,12 @@ async function sendTrustQuoteArmViaDaemon(envelope = {}) {
       };
     }
 
-    await sleep(getTrustQuoteArmEnterDelayMs());
+    await sleep(getExampleAppArmEnterDelayMs());
 
     const enterAck = await daemonClient.writeAndWaitAck(
       paneId,
       '\r',
-      buildTrustQuoteArmDaemonMeta(envelope, 'submit-enter'),
+      buildExampleAppArmDaemonMeta(envelope, 'submit-enter'),
       { timeoutMs: 2500 }
     );
     if (!daemonWriteAccepted(enterAck)) {
@@ -2100,8 +2100,8 @@ async function sendTrustQuoteArmViaDaemon(envelope = {}) {
   }
 }
 
-function shouldTryTrustQuoteArmDaemonFallback(result = null, targetInput = target) {
-  if (!isTrustQuoteArmTarget(targetInput)) return false;
+function shouldTryExampleAppArmDaemonFallback(result = null, targetInput = target) {
+  if (!isExampleAppArmTarget(targetInput)) return false;
   if (bridgeTarget || targetProfileRouteContext) return false;
   if (result?.ok === true) return false;
   return true;
@@ -2834,7 +2834,7 @@ async function main() {
   const bridgeMode = Boolean(bridgeTarget);
   const messageId = `hm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const targetRole = normalizeRole(target)
-    || normalizeTrustQuoteArmTarget(target)
+    || normalizeExampleAppArmTarget(target)
     || (isSpecialTarget(target) ? String(target).trim().toLowerCase() : null)
     || (bridgeTarget ? bridgeTarget.targetRole : null);
   if (expectsDeclaration) {
@@ -3114,8 +3114,8 @@ async function main() {
       process.exit(1);
     }
 
-    if (shouldTryTrustQuoteArmDaemonFallback(sendResult, target)) {
-      const daemonFallback = await sendTrustQuoteArmViaDaemon(envelope);
+    if (shouldTryExampleAppArmDaemonFallback(sendResult, target)) {
+      const daemonFallback = await sendExampleAppArmViaDaemon(envelope);
       if (daemonFallback.ok) {
         const reason = sendResult?.ack
           ? `ack=${sendResult.ack.status}`
@@ -3155,7 +3155,7 @@ async function main() {
           ackStatus: daemonFallback.status,
           metadata: {
             source: 'hm-send',
-            routeKind: 'trustquote-arm-daemon-fallback',
+            routeKind: 'exampleapp-arm-daemon-fallback',
             fallbackUsed: true,
             fallbackMode: daemonFallback.mode,
             fallbackPaneId: daemonFallback.paneId,
@@ -3165,14 +3165,14 @@ async function main() {
           },
         });
         console.log(
-          `Accepted by ${target} via TrustQuote arm daemon fallback but unverified: ${previewMessage(message)} `
+          `Accepted by ${target} via ExampleApp arm daemon fallback but unverified: ${previewMessage(message)} `
           + `(ack: ${daemonFallback.status}, ws: ${reason}, pane: ${daemonFallback.paneId}). `
           + 'Visible pane confirmation is still required.'
         );
         closeCommsJournalStores();
         process.exit(0);
       }
-      console.error(`WebSocket failed and TrustQuote arm daemon fallback failed: ${daemonFallback.error || 'unknown error'}`);
+      console.error(`WebSocket failed and ExampleApp arm daemon fallback failed: ${daemonFallback.error || 'unknown error'}`);
       closeCommsJournalStores();
       process.exit(1);
     }

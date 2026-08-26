@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * The GUARD is the feature (S483). Auto-repairing James's memory index is only
+ * The GUARD is the feature (S483). Auto-repairing Operator's memory index is only
  * acceptable because the scope is additive by construction - so the code must
  * PROVE that per-run instead of trusting the scope flag it just passed in.
  *

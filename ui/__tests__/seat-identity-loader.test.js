@@ -35,7 +35,7 @@ function makeProfile(definition, overrides = {}) {
     authority_event: {
       surface: 'team_room',
       message_id: 'trm-authority',
-      author: 'james',
+      author: 'operator',
       date: '2026-08-20',
     },
     chosen_job: {

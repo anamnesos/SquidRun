@@ -1415,7 +1415,7 @@ describe('Terminal Injection', () => {
   });
 
   describe('focus-steal guarantee (S463)', () => {
-    // James's report: agent traffic into Claude panes stole his typing.
+    // Operator's report: agent traffic into Claude panes stole his typing.
     // Contract: programmatic injection never MOVES user focus permanently -
     // the fast path never focuses at all, and every completion path of the
     // trusted path restores (or releases) focus.
@@ -1568,24 +1568,24 @@ describe('Terminal Injection', () => {
       });
     });
 
-    test('uses TrustQuote PTY Enter fallback for arm panes without a textarea', async () => {
+    test('uses ExampleApp PTY Enter fallback for arm panes without a textarea', async () => {
       const fallbackController = createInjectionController({
         ...mockOptions,
         getPaneCapabilities: jest.fn().mockReturnValue(null),
       });
       document.querySelector.mockReturnValue(null);
-      terminals.set('trustquote-lead', { buffer: { active: null } });
+      terminals.set('exampleapp-lead', { buffer: { active: null } });
 
       const onComplete = jest.fn();
-      await fallbackController.doSendToPane('trustquote-lead', 'lead route', onComplete);
+      await fallbackController.doSendToPane('exampleapp-lead', 'lead route', onComplete);
       await jest.advanceTimersByTimeAsync(200);
 
       expect(mockPty.write).toHaveBeenCalledWith(
-        'trustquote-lead',
+        'exampleapp-lead',
         expect.stringMatching(timestampedPayloadRegex('lead route')),
         expect.any(Object)
       );
-      expect(mockPty.write).toHaveBeenCalledWith('trustquote-lead', '\r', expect.any(Object));
+      expect(mockPty.write).toHaveBeenCalledWith('exampleapp-lead', '\r', expect.any(Object));
       expect(mockPty.sendTrustedEnter).not.toHaveBeenCalled();
       expect(onComplete).toHaveBeenCalledWith({ success: true });
     });

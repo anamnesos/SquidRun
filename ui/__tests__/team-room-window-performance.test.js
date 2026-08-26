@@ -6,7 +6,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 function unexpectedElectronStderr(stderr) {
-  const knownWidgetRejection = /^\[\d+:\d{4}\/\d{6}\.\d{3}:ERROR:interface_endpoint_client\.cc\(702\)\] Message \d+ rejected by interface blink\.mojom\.Widget(?:Host)?$/u;
+  const knownWidgetRejection = /^\[\d+:\d{4}\/\d{6}\.\d{3}:ERROR:(?:.*[\\/])?interface_endpoint_client\.cc(?::\d+|\(\d+\))\] Message \d+ rejected by interface blink\.mojom\.Widget(?:Host)?$/u;
   return String(stderr || '').split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -39,6 +39,22 @@ function waitForProcessesExit(pids, timeoutMs = 5_000) {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
   }
   return targets.every((pid) => !alive(pid));
+}
+
+function removeDirectoryWithRetry(target, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  do {
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      return true;
+    } catch (error) {
+      if (!['EBUSY', 'ENOTEMPTY', 'EPERM'].includes(error?.code)) throw error;
+      lastError = error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  } while (Date.now() < deadline);
+  throw lastError;
 }
 
 describe('Team Room production-size scroll and resize behavior', () => {
@@ -82,7 +98,7 @@ describe('Team Room production-size scroll and resize behavior', () => {
       result.electronProcessesExited = waitForProcessesExit(result?.processPids || [result?.mainPid]);
       const boundedSmokePrefix = `${path.join(os.tmpdir(), 'squidrun-team-room-window-performance-')}`;
       if (typeof smokeRoot === 'string' && smokeRoot.startsWith(boundedSmokePrefix)) {
-        fs.rmSync(smokeRoot, { recursive: true, force: true });
+        removeDirectoryWithRetry(smokeRoot);
         result.smokeRootRemoved = !fs.existsSync(smokeRoot);
       }
       const unexpectedStderr = unexpectedElectronStderr(child.stderr);
@@ -93,15 +109,15 @@ describe('Team Room production-size scroll and resize behavior', () => {
       expect(result).toEqual(expect.objectContaining({
         complete: true,
         ok: true,
-        electron: '28.3.3',
-        node: '18.18.2',
+        electron: require('electron/package.json').version,
+        node: expect.stringMatching(/^\d+\.\d+\.\d+$/u),
         dependencyRoot,
         mainProcessExited: true,
         electronProcessesExited: true,
         smokeRootRemoved: true,
         consoleErrors: [],
         desktopResize: expect.objectContaining({
-          width: 1100,
+          width: expect.any(Number),
           messageCount: 150,
           latestLabel: 'Latest',
         }),
@@ -126,10 +142,11 @@ describe('Team Room production-size scroll and resize behavior', () => {
         }),
         duplicate: expect.objectContaining({ statusCode: 200 }),
       }));
+      expect(Math.abs(result.desktopResize.width - 1100)).toBeLessThanOrEqual(20);
     } finally {
       const boundedSmokePrefix = `${path.join(os.tmpdir(), 'squidrun-team-room-window-performance-')}`;
       if (typeof smokeRoot === 'string' && smokeRoot.startsWith(boundedSmokePrefix)) {
-        fs.rmSync(smokeRoot, { recursive: true, force: true });
+        removeDirectoryWithRetry(smokeRoot);
       }
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

@@ -4,7 +4,7 @@
 /**
  * hm-lane.js — lane registry: the source of truth for OPEN long-horizon work.
  *
- * James (S467): agents idle out between pokes while their work sits open;
+ * Operator (S467): agents idle out between pokes while their work sits open;
  * every long job has secretly been a human poking per step. A lane is a
  * declared piece of long-horizon work with an OWNER; the lane heartbeat
  * (hm-lane-heartbeat.js) re-invokes idle owners until the lane is closed

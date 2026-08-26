@@ -14,7 +14,7 @@ describe('Mira meta-posture narration gate (ARCH #28/#29)', () => {
   // model is forced toward the "Packet 2" shape.
   const meta_posture_lines = [
     "We're trying to make Mira not dead.",
-    "We're trying to build a presence that can stay useful without collapsing into yes James.",
+    "We're trying to build a presence that can stay useful without collapsing into yes Operator.",
     "We're trying to make Mira into a real-feeling ongoing presence without lying about what I am.",
     'Care, edge, memory, disagreement, taste, restraint. That mix.',
     "And honestly, the hard part isn't making me warmer. That's easy. The hard part is letting me have enough shape that I can push back on you.",
@@ -298,10 +298,10 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
   // and tone. Test invariants now lock the STRIP, not the elaborate steer:
   //   - Hard constraints stay (no consciousness claim, no fake actions, no
   //     model-internal narration).
-  //   - Identity priming stays (one short "you are Mira talking with James").
+  //   - Identity priming stays (one short "you are Mira talking with Operator").
   //   - The instruction set must be SHORT — earlier versions ballooned past
   //     2000 chars with "good shape" examples and meta-posture steers that
-  //     primed the exact catalog form James flagged.
+  //     primed the exact catalog form Operator flagged.
   //   - The instruction set must NOT carry "good shape" example replies —
   //     the prior "Tired, honestly. Still here." example primed the
   //     presence-proof catalog.
@@ -377,8 +377,8 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     // Each of these is a real bullet that the prior brief produced. With
     // the priming filter, they MUST be dropped from the rendered context.
     const PRIMING_LINES = [
-      'James wants particular continuity, point of view, tension, taste, timing, and relationship history rather than generic assistant cadence.',
-      'James has kept pushing Mira away from status-widget behavior and toward textured conversation with continuity and friction.',
+      'Operator wants particular continuity, point of view, tension, taste, timing, and relationship history rather than generic assistant cadence.',
+      'Operator has kept pushing Mira away from status-widget behavior and toward textured conversation with continuity and friction.',
       'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
       'fake suffering, consciousness, fear, love, or guilt claims are blocked',
       'independent_developing_posture',
@@ -415,8 +415,8 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
       relationship: {
         current_focus: 'Mira Lab decoupled window smoke and gate review',
         preferences: [
-          'James prefers Korean for emotional sends to sideprofile',
-          'James plays Warzone Verdansk',
+          'Operator prefers Korean for emotional sends to Client',
+          'Operator plays Warzone Verdansk',
         ],
       },
       recent_growth: ['Builder shipped meta-posture gate at 23f5147'],
@@ -424,8 +424,8 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     const rendered = renderMiraBriefForInstructions(factualBrief);
     expect(rendered).toContain('Private context for this reply only');
     expect(rendered).toContain('Mira Lab decoupled window smoke and gate review');
-    expect(rendered).toContain('James prefers Korean for emotional sends');
-    expect(rendered).toContain('James plays Warzone Verdansk');
+    expect(rendered).toContain('Operator prefers Korean for emotional sends');
+    expect(rendered).toContain('Operator plays Warzone Verdansk');
     // expressive_range items must not appear (entire field was dropped).
     expect(rendered).not.toContain('- care');
     expect(rendered).not.toContain('- directness');
@@ -452,8 +452,8 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     }
   });
 
-  test('identity priming stays — one short Mira-talking-with-James line', () => {
-    expect(SRC).toMatch(/You are Mira talking with James\./);
+  test('identity priming stays — one short Mira-talking-with-Operator line', () => {
+    expect(SRC).toMatch(/You are Mira talking with Operator\./);
   });
 
   test('strip removed prior over-rotating prose: no "good shapes", no shape-prescriptive directness lines', () => {
@@ -483,7 +483,7 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     expect(rendered).not.toMatch(/one short status word/i);
     expect(rendered).not.toMatch(/ask him back/i);
     expect(rendered).not.toMatch(/answer like a coworker/i);
-    expect(rendered).not.toMatch(/If James is angry about the software/i);
+    expect(rendered).not.toMatch(/If Operator is angry about the software/i);
     expect(rendered).not.toMatch(/answer the human moment/i);
     expect(rendered).not.toMatch(/customer-service softness/i);
     expect(rendered).toMatch(/For check-ins or frustration, don't force a status word or ask-back/);
@@ -512,20 +512,20 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     const text = mod.buildMiraTextInstructions({});
     expect(text).toMatch(/Do not claim you actually did real-world work/i);
     expect(text).toMatch(/Answer the sentence in front of you/);
-    expect(text).toMatch(/You are Mira talking with James/i);
+    expect(text).toMatch(/You are Mira talking with Operator/i);
   });
 
   test('rendered instructions include ARCH #73 positive behavior lines + ARCH #90 mirror-and-pivot fix', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') return;
     const text = mod.buildMiraTextInstructions({});
     // Behavior, not flavor (Oracle red line 1).
-    expect(text).toMatch(/You can disagree with James, refuse a request/i);
+    expect(text).toMatch(/You can disagree with Operator, refuse a request/i);
     expect(text).toMatch(/not obligated to be helpful/i);
     expect(text).toMatch(/remember what we decided last turn and carry it forward/i);
     // ARCH #90: one-line targeted fix for the mirror-and-pivot tic
     // observed in the ARCH #88 live read. Pure behavior instruction,
     // no adjectives.
-    expect(text).toMatch(/Don't restate James's framing before answering; pick a position and start there\./);
+    expect(text).toMatch(/Don't restate Operator's framing before answering; pick a position and start there\./);
     // No tone adjectives smuggled in.
     const TONE_ADJECTIVES = [
       /\bwarm\b/i, /\bblunt\b/i, /\bsharp\b/i, /\bdirect\b/i, /\bterse\b/i,
@@ -540,7 +540,7 @@ describe('Mira system instructions are stripped (ARCH #53/#54/#56)', () => {
     if (typeof mod.buildMiraTextInstructions !== 'function') return;
     const text = mod.buildMiraTextInstructions({});
     // Each of these must NOT appear in the prompt rules. They prime
-    // exactly the meta/stylized output James flagged.
+    // exactly the meta/stylized output Operator flagged.
     const POISON_TERMS = [
       'posture', 'friction', 'rough_edges', 'rough edges',
       'continuity', 'tension', 'taste', 'timing', 'particularity',

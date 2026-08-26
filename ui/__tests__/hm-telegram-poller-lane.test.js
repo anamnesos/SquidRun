@@ -95,22 +95,22 @@ describe('hm-telegram-poller-lane', () => {
   }
 
   test('formats inbound videos with saved media path for Architect', () => {
-    expect(formatInbound('', '@james', {
+    expect(formatInbound('', '@operator', {
       updateId: 10,
       media: {
         kind: 'video',
         localPath: 'D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-10.mp4',
       },
-    })).toBe('[Telegram from @james]: [Video received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-10.mp4');
+    })).toBe('[Telegram from @operator]: [Video received] | saved: D:\\projects\\squidrun\\.squidrun\\runtime\\telegram-inbound-media\\video-10.mp4');
   });
 
   test('formats document fallback without losing filename', () => {
-    expect(formatInbound('', '@james', {
+    expect(formatInbound('', '@operator', {
       media: {
         kind: 'document',
         fileName: 'report.pdf',
       },
-    })).toBe('[Telegram from @james]: [File: report.pdf]');
+    })).toBe('[Telegram from @operator]: [File: report.pdf]');
   });
 
   test('dispatches routed non-main inbound messages to profile trigger only', () => {
@@ -222,7 +222,7 @@ describe('hm-telegram-poller-lane', () => {
         mainWorkerScriptPath,
         statePath,
         processListText: [
-          '1234 node.exe D:\\SquidRun\\sideprofile\\ui\\modules\\main\\telegram-poller-worker.js',
+          '1234 node.exe D:\\SquidRun\\Client\\ui\\modules\\main\\telegram-poller-worker.js',
         ].join('\n'),
       })).toBe(false);
     } finally {
@@ -300,7 +300,7 @@ describe('hm-telegram-poller-lane', () => {
       `32852 node.exe wrapper.js --probe "${scriptPath}" run --dry-run`,
     ].join('\n');
     const foreignList = [
-      '32852 node.exe D:\\SquidRun\\sideprofile\\workspace\\ui\\scripts\\hm-telegram-poller-lane.js run',
+      '32852 node.exe D:\\SquidRun\\Client\\workspace\\ui\\scripts\\hm-telegram-poller-lane.js run',
     ].join('\n');
 
     expect(isStandaloneLaneProcess(32852, { processListText: wrapperList, scriptPath })).toBe(false);
@@ -677,7 +677,7 @@ describe('hm-telegram-poller-lane', () => {
         env: { SQUIDRUN_DATA_ROOT: tempDir },
         mainWorkerScriptPath,
         statePath,
-        processListText: '333 node.exe D:\\SquidRun\\sideprofile\\ui\\modules\\main\\telegram-poller-worker.js',
+        processListText: '333 node.exe D:\\SquidRun\\Client\\ui\\modules\\main\\telegram-poller-worker.js',
       })).toBe(false);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

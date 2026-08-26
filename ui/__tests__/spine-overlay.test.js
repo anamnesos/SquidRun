@@ -3,10 +3,10 @@ const {
   buildSpineOverlaySnapshot,
   fetchHyperliquidReadOnlySnapshot,
   extractAttributionPositions,
-  shouldAllowLiveTrustQuoteRead,
+  shouldAllowLiveExampleAppRead,
   supportedScorerSignals,
   TRADING_PARKED_REASON,
-  TRUSTQUOTE_ISOLATION_REASON,
+  EXAMPLEAPP_ISOLATION_REASON,
 } = require('../modules/main/spine-overlay-snapshot');
 const {
   createSpineOverlayWindow,
@@ -26,17 +26,17 @@ describe('spine overlay v0', () => {
     [{ profileName: 'spine-overlay', dryRun: false }, false],
     [{ profileName: 'scoped', dryRun: true }, false],
     [{ dryRun: false }, false],
-  ])('allows the live TrustQuote reader only for an explicit production-main context %#', (context, expected) => {
-    expect(shouldAllowLiveTrustQuoteRead(context)).toBe(expected);
+  ])('allows the live ExampleApp reader only for an explicit production-main context %#', (context, expected) => {
+    expect(shouldAllowLiveExampleAppRead(context)).toBe(expected);
   });
 
-  test('does not invoke the TrustQuote reader from a non-main or dry-run overlay context', async () => {
+  test('does not invoke the ExampleApp reader from a non-main or dry-run overlay context', async () => {
     const nowMs = Date.parse('2026-07-18T18:45:00.000Z');
     const fetchSignals = jest.fn(async () => ({
       ok: true,
       source: 'live',
       checkedAt: new Date(nowMs).toISOString(),
-      root: 'D:\\projects\\TrustQuote',
+      root: 'D:\\projects\\ExampleApp',
       data: { parkedCount: 0, signals: [] },
     }));
     const baseOptions = {
@@ -44,7 +44,7 @@ describe('spine overlay v0', () => {
       supervisorRead: { ok: true, filePath: 'runtime/supervisor.json', data: {} },
       attributionRead: { ok: true, filePath: 'runtime/attribution.json', data: { positions: {} } },
       nativeRead: { ok: true, filePath: 'runtime/native.json', data: {} },
-      fetchTrustQuoteReadOnlySignals: fetchSignals,
+      fetchExampleAppReadOnlySignals: fetchSignals,
     };
 
     const [nonMain, dryRunMain] = await Promise.all([
@@ -54,24 +54,24 @@ describe('spine overlay v0', () => {
 
     expect(fetchSignals).not.toHaveBeenCalled();
     for (const snapshot of [nonMain, dryRunMain]) {
-      expect(snapshot.live.trustQuoteOk).toBe(false);
+      expect(snapshot.live.exampleAppOk).toBe(false);
       expect(snapshot.sources).toEqual(expect.arrayContaining([
         expect.objectContaining({
-          label: 'trustquote_live_read',
+          label: 'exampleapp_live_read',
           ok: false,
-          reason: TRUSTQUOTE_ISOLATION_REASON,
+          reason: EXAMPLEAPP_ISOLATION_REASON,
         }),
       ]));
     }
   });
 
-  test('retains the TrustQuote reader for an explicit non-dry-run main context', async () => {
+  test('retains the ExampleApp reader for an explicit non-dry-run main context', async () => {
     const nowMs = Date.parse('2026-07-18T18:45:00.000Z');
     const fetchSignals = jest.fn(async () => ({
       ok: true,
       source: 'live',
       checkedAt: new Date(nowMs).toISOString(),
-      root: 'D:\\projects\\TrustQuote',
+      root: 'D:\\projects\\ExampleApp',
       data: { parkedCount: 0, signals: [] },
     }));
 
@@ -82,7 +82,7 @@ describe('spine overlay v0', () => {
       supervisorRead: { ok: true, filePath: 'runtime/supervisor.json', data: {} },
       attributionRead: { ok: true, filePath: 'runtime/attribution.json', data: { positions: {} } },
       nativeRead: { ok: true, filePath: 'runtime/native.json', data: {} },
-      fetchTrustQuoteReadOnlySignals: fetchSignals,
+      fetchExampleAppReadOnlySignals: fetchSignals,
     });
 
     expect(fetchSignals).toHaveBeenCalledTimes(1);
@@ -91,7 +91,7 @@ describe('spine overlay v0', () => {
       dryRun: false,
       nowMs,
     }));
-    expect(snapshot.live.trustQuoteOk).toBe(true);
+    expect(snapshot.live.exampleAppOk).toBe(true);
   });
 
   test('parks trading even when a live Hyperliquid position is supplied', () => {
@@ -131,11 +131,11 @@ describe('spine overlay v0', () => {
           openOrders: [],
         },
       },
-      trustQuoteRead: {
+      exampleAppRead: {
         ok: true,
         source: 'live',
         checkedAt: new Date(nowMs).toISOString(),
-        root: 'D:\\projects\\TrustQuote',
+        root: 'D:\\projects\\ExampleApp',
         data: { parkedCount: 0, signals: [] },
       },
     });
@@ -233,19 +233,19 @@ describe('spine overlay v0', () => {
       supervisorRead: { ok: true, filePath: 'runtime/crypto-trading-supervisor-state.json', data: {} },
       attributionRead: { ok: true, filePath: 'runtime/agent-position-attribution.json', data: { positions: {} } },
       nativeRead: { ok: true, filePath: 'runtime/hyperliquid-native-state.json', data: {} },
-      trustQuoteRead: {
+      exampleAppRead: {
         ok: true,
         source: 'live',
         checkedAt: new Date(nowMs).toISOString(),
-        root: 'D:\\projects\\TrustQuote',
+        root: 'D:\\projects\\ExampleApp',
         data: {
           parkedCount: 0,
           signals: [{
-            type: 'trustquote:invoice-aging',
+            type: 'exampleapp:invoice-aging',
             id: 'quotes:aging-quote:invoice-aging',
             source: '',
             observedAtMs: nowMs,
-            rawRefs: { system: 'trustquote', collection: 'quotes', docId: 'aging-quote' },
+            rawRefs: { system: 'exampleapp', collection: 'quotes', docId: 'aging-quote' },
             facts: {
               invoiceAmount: 36500,
               balanceDue: 36500,
@@ -263,25 +263,25 @@ describe('spine overlay v0', () => {
       },
     });
 
-    expect(snapshot.context).toBe('trustquote:invoice-aging');
+    expect(snapshot.context).toBe('exampleapp:invoice-aging');
     expect(snapshot.source).toBe('unverified');
   });
 
-  test('renders widened MIND output from live TrustQuote facts without BODY judgment', () => {
+  test('renders widened MIND output from live ExampleApp facts without BODY judgment', () => {
     const nowMs = Date.parse('2026-06-22T16:55:00.000Z');
     const signals = [
       {
-        type: 'trustquote:invoice-aging',
+        type: 'exampleapp:invoice-aging',
         id: 'quotes:aging-quote:invoice-aging',
         source: 'live',
         observedAtMs: nowMs,
         rawRefs: {
-          system: 'trustquote',
+          system: 'exampleapp',
           collection: 'quotes',
           docId: 'aging-quote',
           businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
           customerId: 'non-parked-customer',
-          customerIdentityKey: 'trustquote:customer:non-parked-customer',
+          customerIdentityKey: 'exampleapp:customer:non-parked-customer',
         },
             facts: {
               invoiceAmount: 36500,
@@ -297,7 +297,7 @@ describe('spine overlay v0', () => {
         },
       },
       {
-        type: 'trustquote:unknown-signal',
+        type: 'exampleapp:unknown-signal',
         id: 'quotes:aging-quote:unknown-signal',
         source: 'live',
         observedAtMs: nowMs,
@@ -320,19 +320,19 @@ describe('spine overlay v0', () => {
           openOrders: [],
         },
       },
-      trustQuoteRead: {
+      exampleAppRead: {
         ok: true,
         source: 'live',
         checkedAt: new Date(nowMs).toISOString(),
-        root: 'D:\\projects\\TrustQuote',
+        root: 'D:\\projects\\ExampleApp',
         data: { parkedCount: 0, signals },
       },
     });
 
-    expect(supportedScorerSignals(signals).map((signal) => signal.type)).toEqual(['trustquote:invoice-aging']);
+    expect(supportedScorerSignals(signals).map((signal) => signal.type)).toEqual(['exampleapp:invoice-aging']);
     expect(snapshot).toEqual(expect.objectContaining({
       source: 'live',
-      context: 'trustquote:invoice-aging',
+      context: 'exampleapp:invoice-aging',
       speak: true,
       claim: expect.stringContaining('Invoice for $36500'),
       proposedAction: expect.objectContaining({
@@ -341,12 +341,12 @@ describe('spine overlay v0', () => {
       }),
     }));
     expect(snapshot.live).toEqual(expect.objectContaining({
-      trustQuoteOk: true,
-      trustQuoteSignalCount: 1,
+      exampleAppOk: true,
+      exampleAppSignalCount: 1,
     }));
     expect(snapshot.swallowed).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        signal: 'trustquote:unknown-signal',
+        signal: 'exampleapp:unknown-signal',
         reason: expect.stringContaining('does not support'),
       }),
     ]));
@@ -355,12 +355,12 @@ describe('spine overlay v0', () => {
   test('passes job task completion signals through to the widened MIND', () => {
     const nowMs = Date.parse('2026-06-22T16:55:00.000Z');
     const signals = [{
-      type: 'trustquote:job-tasks-incomplete',
+      type: 'exampleapp:job-tasks-incomplete',
       id: 'jobs:tasks-open:job-tasks-incomplete',
       source: 'live',
       observedAtMs: nowMs,
       rawRefs: {
-        system: 'trustquote',
+        system: 'exampleapp',
         collection: 'jobs',
         docId: 'tasks-open',
         businessId: 'zDPMRRIlMiVJBOMhBbqrMk2iMI72',
@@ -375,29 +375,29 @@ describe('spine overlay v0', () => {
       },
     }];
 
-    expect(supportedScorerSignals(signals).map((signal) => signal.type)).toEqual(['trustquote:job-tasks-incomplete']);
+    expect(supportedScorerSignals(signals).map((signal) => signal.type)).toEqual(['exampleapp:job-tasks-incomplete']);
 
     const snapshot = buildSpineOverlaySnapshot({
       nowMs,
       supervisorRead: { ok: true, filePath: 'runtime/crypto-trading-supervisor-state.json', data: {} },
       attributionRead: { ok: true, filePath: 'runtime/agent-position-attribution.json', data: { positions: {} } },
       nativeRead: { ok: true, filePath: 'runtime/hyperliquid-native-state.json', data: {} },
-      trustQuoteRead: {
+      exampleAppRead: {
         ok: true,
         source: 'live',
         checkedAt: new Date(nowMs).toISOString(),
-        root: 'D:\\projects\\TrustQuote',
+        root: 'D:\\projects\\ExampleApp',
         data: { parkedCount: 0, signals },
       },
     });
 
     expect(snapshot).toEqual(expect.objectContaining({
       source: 'live',
-      context: 'trustquote:job-tasks-incomplete',
+      context: 'exampleapp:job-tasks-incomplete',
       speak: true,
       claim: expect.stringContaining("isn't finished"),
     }));
-    expect(snapshot.live.trustQuoteSignalCount).toBe(1);
+    expect(snapshot.live.exampleAppSignalCount).toBe(1);
   });
 
   test('does not treat closed or zero-size attribution positions as open', () => {

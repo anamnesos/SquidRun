@@ -5,9 +5,9 @@ const path = require('path');
 const { evaluate, normalizeSource, THRESHOLDS } = require('../the-tell/scorer');
 const { isMainProfile } = require('../../profile');
 const {
-  DEFAULT_TRUSTQUOTE_ROOT,
-  fetchTrustQuoteReadOnlySignals,
-} = require('./trustquote-tell-feed');
+  DEFAULT_EXAMPLEAPP_ROOT,
+  fetchExampleAppReadOnlySignals,
+} = require('./exampleapp-tell-feed');
 
 const DEFAULT_THRESHOLD = THRESHOLDS.SPEAK;
 const LIVE_MAX_AGE_MS = 5 * 60 * 1000;
@@ -15,11 +15,11 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
 const RUNTIME_ROOT = path.join(PROJECT_ROOT, '.squidrun', 'runtime');
 const HYPERLIQUID_INFO_URL = 'https://api.hyperliquid.xyz/info';
 const TRADING_PARKED_REASON = 'parked_by_user';
-const TRUSTQUOTE_ISOLATION_REASON = 'live_trustquote_read_blocked_for_isolated_context';
+const EXAMPLEAPP_ISOLATION_REASON = 'live_exampleapp_read_blocked_for_isolated_context';
 const SUPPORTED_SIGNAL_TYPES = new Set([
-  'trustquote:job-margin',
-  'trustquote:invoice-aging',
-  'trustquote:job-tasks-incomplete',
+  'exampleapp:job-margin',
+  'exampleapp:invoice-aging',
+  'exampleapp:job-tasks-incomplete',
   'promise:collision',
 ]);
 
@@ -40,19 +40,19 @@ function safeReadJson(filePath) {
   }
 }
 
-function shouldAllowLiveTrustQuoteRead(options = {}) {
+function shouldAllowLiveExampleAppRead(options = {}) {
   const profileName = typeof options.profileName === 'string' ? options.profileName.trim() : '';
   return profileName !== '' && isMainProfile(profileName) && options.dryRun !== true;
 }
 
-function buildBlockedTrustQuoteRead(options = {}) {
+function buildBlockedExampleAppRead(options = {}) {
   const nowMs = Number.isFinite(Number(options.nowMs)) ? Number(options.nowMs) : Date.now();
   return {
     ok: false,
     source: 'blocked',
     checkedAt: new Date(nowMs).toISOString(),
-    root: options.root || DEFAULT_TRUSTQUOTE_ROOT,
-    reason: TRUSTQUOTE_ISOLATION_REASON,
+    root: options.root || DEFAULT_EXAMPLEAPP_ROOT,
+    reason: EXAMPLEAPP_ISOLATION_REASON,
     data: {
       counts: { jobs: 0, quotes: 0 },
       eventCount: 0,
@@ -205,15 +205,15 @@ function extractStopByCoin(openOrders = [], manualStopData = {}) {
   return stopByCoin;
 }
 
-function buildQuietArtifact({ trustQuoteRead, activeSignalCount, sourceKind }) {
-  const checkedAt = trustQuoteRead?.checkedAt || null;
-  const source = trustQuoteRead?.root || 'configured work/life feeds';
+function buildQuietArtifact({ exampleAppRead, activeSignalCount, sourceKind }) {
+  const checkedAt = exampleAppRead?.checkedAt || null;
+  const source = exampleAppRead?.root || 'configured work/life feeds';
   return {
     regretScore: 0,
     context: 'work-life:none',
     threshold: DEFAULT_THRESHOLD,
     speak: false,
-    source: sourceKind || (trustQuoteRead?.ok === true ? 'live' : 'unverified'),
+    source: sourceKind || (exampleAppRead?.ok === true ? 'live' : 'unverified'),
     mode: 'read_only_overlay',
     claim: 'No interrupt earned.',
     whyNow: activeSignalCount > 0
@@ -221,7 +221,7 @@ function buildQuietArtifact({ trustQuoteRead, activeSignalCount, sourceKind }) {
       : 'No verified work/life signal crossed threshold. Trading is parked; The Tell is watching jobs, invoices, and promises only.',
     receipts: [
       { label: 'active work/life signals', value: String(activeSignalCount || 0), source },
-      { label: 'trading feed', value: 'PARKED', source: 'James directive' },
+      { label: 'trading feed', value: 'PARKED', source: 'Operator directive' },
       { label: 'checked', value: checkedAt || 'unknown', source },
     ],
     proposedAction: {
@@ -302,16 +302,16 @@ function supportedScorerSignals(signals = []) {
   return Array.isArray(signals) ? signals.filter((signal) => SUPPORTED_SIGNAL_TYPES.has(signal?.type)) : [];
 }
 
-function deriveFeedSource({ explicitSource, liveRead, trustQuoteRead, trustQuoteSignals, tradingEnabled }) {
+function deriveFeedSource({ explicitSource, liveRead, exampleAppRead, exampleAppSignals, tradingEnabled }) {
   const explicit = toText(explicitSource, '');
   if (explicit) return normalizeSource(explicit);
-  if (trustQuoteSignals.length > 0) {
-    const allVerifiedLive = trustQuoteRead?.ok === true
-      && trustQuoteSignals.every((signal) => normalizeSource(signal?.source) === 'live');
+  if (exampleAppSignals.length > 0) {
+    const allVerifiedLive = exampleAppRead?.ok === true
+      && exampleAppSignals.every((signal) => normalizeSource(signal?.source) === 'live');
     return allVerifiedLive ? 'live' : 'unverified';
   }
   if (tradingEnabled && liveRead?.ok === true) return 'live';
-  return trustQuoteRead?.ok === true ? 'live' : 'unverified';
+  return exampleAppRead?.ok === true ? 'live' : 'unverified';
 }
 
 function buildUnsupportedSignalSwallowed(signals = []) {
@@ -336,14 +336,14 @@ function buildSpineOverlaySnapshot(options = {}) {
   const manualStopsRead = options.manualStopsRead || safeReadJson(RUNTIME_PATHS.manualStops);
   const tradingEnabled = options.enableTradingFeed === true;
   const liveRead = tradingEnabled ? (options.liveRead || null) : null;
-  const trustQuoteRead = options.trustQuoteRead || null;
-  const trustQuoteSignals = supportedScorerSignals(options.signals || trustQuoteRead?.data?.signals || []);
-  const unsupportedSignals = buildUnsupportedSignalSwallowed(options.signals || trustQuoteRead?.data?.signals || []);
+  const exampleAppRead = options.exampleAppRead || null;
+  const exampleAppSignals = supportedScorerSignals(options.signals || exampleAppRead?.data?.signals || []);
+  const unsupportedSignals = buildUnsupportedSignalSwallowed(options.signals || exampleAppRead?.data?.signals || []);
   const feedSource = deriveFeedSource({
     explicitSource: options.source,
     liveRead,
-    trustQuoteRead,
-    trustQuoteSignals,
+    exampleAppRead,
+    exampleAppSignals,
     tradingEnabled,
   });
 
@@ -364,16 +364,16 @@ function buildSpineOverlaySnapshot(options = {}) {
     ...(options.stopByCoin || {}),
   };
   const fallbackArtifact = buildQuietArtifact({
-    trustQuoteRead,
-    activeSignalCount: trustQuoteSignals.length,
+    exampleAppRead,
+    activeSignalCount: exampleAppSignals.length,
     sourceKind: feedSource,
   });
 
   let emission = {};
-  if (positions.length > 0 || trustQuoteSignals.length > 0) {
+  if (positions.length > 0 || exampleAppSignals.length > 0) {
     emission = evaluate({
       positions,
-      signals: trustQuoteSignals,
+      signals: exampleAppSignals,
       accountValue,
       nowMs,
       glanceAtMs: Number.isFinite(Number(options.glanceAtMs)) ? Number(options.glanceAtMs) : nowMs - 30 * 60 * 1000,
@@ -404,14 +404,14 @@ function buildSpineOverlaySnapshot(options = {}) {
       note: 'This surface reads configured work/life sources only. Trading is parked. It cannot send messages, charge invoices, modify jobs, or place orders.',
     },
     live: {
-      ok: trustQuoteRead?.ok === true || (tradingEnabled && liveRead?.ok === true),
+      ok: exampleAppRead?.ok === true || (tradingEnabled && liveRead?.ok === true),
       checkedAt: liveRead?.checkedAt || null,
       positionCount: positions.length,
       tradingParked: !tradingEnabled,
-      trustQuoteOk: trustQuoteRead?.ok === true,
-      trustQuoteCheckedAt: trustQuoteRead?.checkedAt || null,
-      trustQuoteSignalCount: trustQuoteSignals.length,
-      parkedTrustQuoteCount: trustQuoteRead?.data?.parkedCount || 0,
+      exampleAppOk: exampleAppRead?.ok === true,
+      exampleAppCheckedAt: exampleAppRead?.checkedAt || null,
+      exampleAppSignalCount: exampleAppSignals.length,
+      parkedExampleAppCount: exampleAppRead?.data?.parkedCount || 0,
       staleLocalCacheRejected: !liveAccountState && !supervisorFresh,
     },
     regretScore: artifact.regretScore,
@@ -433,7 +433,7 @@ function buildSpineOverlaySnapshot(options = {}) {
         { label: 'position_attribution', ok: attributionRead.ok, path: attributionRead.filePath || RUNTIME_PATHS.attribution, reason: attributionRead.reason || null, speakEligible: false },
         { label: 'hl_native_market_state', ok: nativeRead.ok, path: nativeRead.filePath || RUNTIME_PATHS.native, reason: nativeRead.reason || null },
       ] : []),
-      { label: 'trustquote_live_read', ok: trustQuoteRead?.ok === true, path: trustQuoteRead?.root || 'D:\\projects\\TrustQuote', reason: trustQuoteRead?.reason || null, parkedCount: trustQuoteRead?.data?.parkedCount || 0 },
+      { label: 'exampleapp_live_read', ok: exampleAppRead?.ok === true, path: exampleAppRead?.root || 'D:\\projects\\ExampleApp', reason: exampleAppRead?.reason || null, parkedCount: exampleAppRead?.data?.parkedCount || 0 },
     ],
   };
 }
@@ -490,17 +490,17 @@ async function buildSpineOverlaySnapshotAsync(options = {}) {
   const supervisorRead = options.supervisorRead || safeReadJson(RUNTIME_PATHS.supervisor);
   const attributionRead = options.attributionRead || safeReadJson(RUNTIME_PATHS.attribution);
   const tradingEnabled = options.enableTradingFeed === true;
-  const trustQuoteReader = options.fetchTrustQuoteReadOnlySignals || fetchTrustQuoteReadOnlySignals;
-  const trustQuoteReadPromise = options.trustQuoteRead || (
-    shouldAllowLiveTrustQuoteRead(options)
-      ? trustQuoteReader({ ...options })
-      : Promise.resolve(buildBlockedTrustQuoteRead(options))
+  const exampleAppReader = options.fetchExampleAppReadOnlySignals || fetchExampleAppReadOnlySignals;
+  const exampleAppReadPromise = options.exampleAppRead || (
+    shouldAllowLiveExampleAppRead(options)
+      ? exampleAppReader({ ...options })
+      : Promise.resolve(buildBlockedExampleAppRead(options))
   );
-  const [liveRead, trustQuoteRead] = await Promise.all([
+  const [liveRead, exampleAppRead] = await Promise.all([
     tradingEnabled ? (options.liveRead || fetchHyperliquidReadOnlySnapshot({ ...options, supervisorRead, attributionRead })) : Promise.resolve(null),
-    trustQuoteReadPromise,
+    exampleAppReadPromise,
   ]);
-  return buildSpineOverlaySnapshot({ ...options, supervisorRead, attributionRead, liveRead, trustQuoteRead });
+  return buildSpineOverlaySnapshot({ ...options, supervisorRead, attributionRead, liveRead, exampleAppRead });
 }
 
 module.exports = {
@@ -509,14 +509,14 @@ module.exports = {
   LIVE_MAX_AGE_MS,
   RUNTIME_PATHS,
   TRADING_PARKED_REASON,
-  TRUSTQUOTE_ISOLATION_REASON,
-  buildBlockedTrustQuoteRead,
+  EXAMPLEAPP_ISOLATION_REASON,
+  buildBlockedExampleAppRead,
   buildSpineOverlaySnapshot,
   buildSpineOverlaySnapshotAsync,
   extractAttributionPositions,
   extractSupervisorPositions,
   extractWalletAddress,
   fetchHyperliquidReadOnlySnapshot,
-  shouldAllowLiveTrustQuoteRead,
+  shouldAllowLiveExampleAppRead,
   supportedScorerSignals,
 };

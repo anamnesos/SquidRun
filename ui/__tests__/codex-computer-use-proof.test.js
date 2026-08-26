@@ -7,7 +7,7 @@ const { spawnSync } = require('child_process');
 
 const proof = require('../modules/main/codex-computer-use-proof');
 
-const PROJECT_ROOT = 'D:\\projects\\squidrun';
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const HOOK_SCRIPT = path.join(
   PROJECT_ROOT,
   'ui',
@@ -28,7 +28,7 @@ function readyGeneration() {
   return {
     schema: 'squidrun.codex_computer_use_pipe_generation.v1',
     pipePath: '\\\\.\\pipe\\codex-computer-use-f214874c-b61b-4d31-ba3a-e2618aa80e34',
-    configPath: 'C:\\Users\\James\\.codex\\config.toml',
+    configPath: 'C:\\Users\\Example User\\.codex\\config.toml',
     projectRoot: PROJECT_ROOT,
     paneId: '3',
     profile: 'main',
@@ -43,9 +43,10 @@ async function armedClaim(options = {}) {
   fs.mkdirSync(path.dirname(codexExecutablePath), { recursive: true });
   fs.writeFileSync(codexExecutablePath, 'approved Codex executable fixture\n');
   const codexExecutableSha256 = proof.sha256File(codexExecutablePath);
+  const hookScriptPath = options.hookScriptPath || HOOK_SCRIPT;
   const integrity = [
     { name: 'verifier', path: path.join(root, 'verifier.js'), sha256: 'a'.repeat(64) },
-    { name: 'hookScript', path: HOOK_SCRIPT, sha256: proof.sha256File(HOOK_SCRIPT) },
+    { name: 'hookScript', path: hookScriptPath, sha256: proof.sha256File(hookScriptPath) },
     { name: 'trustManifest', path: path.join(root, 'manifest.json'), sha256: 'b'.repeat(64) },
   ];
   const claim = {
@@ -728,6 +729,74 @@ describe('fresh target-only Codex invocation', () => {
       `& '${state.codexExecutablePath.replace(/'/gu, "''")}'`
     );
   });
+
+  const windowsPathWithSpacesTest = process.platform === 'win32' ? test : test.skip;
+  windowsPathWithSpacesTest(
+    'preserves an integrity-pinned hook path containing spaces through native argv',
+    async () => {
+      const hookRoot = makeTempDir('squidrun cua hook path ');
+      const hookScriptPath = path.join(hookRoot, 'proof hook.js');
+      fs.copyFileSync(HOOK_SCRIPT, hookScriptPath);
+      const state = await armedClaim({ hookScriptPath });
+      state.claim.proof.state = 'armed';
+      const invocation = proof.buildCodexComputerUseProofInvocation(
+        'codex --yolo',
+        state.claim,
+        { platform: 'win32' }
+      );
+
+      expect(invocation).toEqual(expect.objectContaining({ ok: true }));
+      expect(invocation.hookOverride).toContain(`command='node "${hookScriptPath}"'`);
+
+      const capturePath = path.join(hookRoot, 'capture-native-argv.js');
+      fs.writeFileSync(
+        capturePath,
+        "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n"
+      );
+      const quotePowerShellLiteral = (value) =>
+        `'${String(value).replace(/'/gu, "''")}'`;
+      const nativeProbeCommand = [
+        `& ${quotePowerShellLiteral(process.execPath)}`,
+        quotePowerShellLiteral(capturePath),
+        invocation.addedArguments,
+      ].join(' ');
+      const captured = spawnSync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', nativeProbeCommand],
+        { encoding: 'utf8', timeout: 10000, windowsHide: true }
+      );
+
+      expect(captured.status).toBe(0);
+      expect(captured.stderr).toBe('');
+      expect(JSON.parse(captured.stdout)).toEqual([
+        '--dangerously-bypass-hook-trust',
+        '-c',
+        invocation.hookOverride,
+        '-c',
+        "shell_environment_policy.exclude=['SQUIDRUN_CUA_*']",
+      ]);
+    }
+  );
+
+  test.each(['$', '%', "'", '`'])(
+    'refuses an integrity-pinned hook path containing shell-active %s',
+    async (character) => {
+      const hookRoot = makeTempDir('squidrun-cua-hook-unsafe-');
+      const hookScriptPath = path.join(hookRoot, `proof${character}hook.js`);
+      fs.copyFileSync(HOOK_SCRIPT, hookScriptPath);
+      const state = await armedClaim({ hookScriptPath });
+      state.claim.proof.state = 'armed';
+
+      expect(proof.buildCodexComputerUseProofInvocation(
+        'codex --yolo',
+        state.claim,
+        { platform: 'win32' }
+      )).toEqual({
+        ok: false,
+        reason: 'codex_computer_use_hook_script_native_argv_unsafe',
+      });
+    }
+  );
 
   const windowsNativeArgvTest = process.platform === 'win32' ? test : test.skip;
   windowsNativeArgvTest(

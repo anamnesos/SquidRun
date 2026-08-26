@@ -77,7 +77,7 @@ function mockUpdates(updates) {
 function msg(updateId, text) {
   return {
     update_id: updateId,
-    message: { chat: { id: 123456 }, from: { username: 'james' }, text },
+    message: { chat: { id: 123456 }, from: { username: 'operator' }, text },
   };
 }
 

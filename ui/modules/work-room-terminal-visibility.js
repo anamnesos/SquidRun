@@ -1,11 +1,11 @@
 'use strict';
 
 const {
-  getTrustQuoteArmPaneIds,
-} = require('./trustquote-arm-specs');
+  getExampleAppArmPaneIds,
+} = require('./exampleapp-arm-specs');
 
-const TRUSTQUOTE_ARM_PANE_IDS = Object.freeze(Array.from(new Set(
-  getTrustQuoteArmPaneIds()
+const EXAMPLEAPP_ARM_PANE_IDS = Object.freeze(Array.from(new Set(
+  getExampleAppArmPaneIds()
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean)
 )));
@@ -15,19 +15,19 @@ function toText(value, fallback = '') {
   return text || fallback;
 }
 
-function isTrustQuotePaneId(value) {
-  return TRUSTQUOTE_ARM_PANE_IDS.includes(toText(value, '').toLowerCase());
+function isExampleAppPaneId(value) {
+  return EXAMPLEAPP_ARM_PANE_IDS.includes(toText(value, '').toLowerCase());
 }
 
 function filterTerminalsForWorkspace(terminals = [], workspaceKey = 'main') {
   const list = Array.isArray(terminals) ? terminals : [];
   const key = toText(workspaceKey, 'main').toLowerCase();
   if (key === 'squid-room') return list;
-  return list.filter((term) => !isTrustQuotePaneId(term?.paneId || term?.terminalPaneId || term?.id));
+  return list.filter((term) => !isExampleAppPaneId(term?.paneId || term?.terminalPaneId || term?.id));
 }
 
 module.exports = {
-  TRUSTQUOTE_ARM_PANE_IDS,
+  EXAMPLEAPP_ARM_PANE_IDS,
   filterTerminalsForWorkspace,
-  isTrustQuotePaneId,
+  isExampleAppPaneId,
 };

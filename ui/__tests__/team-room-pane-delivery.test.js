@@ -47,11 +47,11 @@ describe('Team Room pane delivery', () => {
   test('binds main and second-profile routing to exact live window scopes', () => {
     const windows = new Map([
       ['main', { isDestroyed: () => false }],
-      ['sideprofile', { isDestroyed: () => false }],
+      ['client', { isDestroyed: () => false }],
     ]);
     const scopes = new Map([
       ['main', { windowKey: 'main', profileName: 'main', sessionScopeId: 'app-session-512:main' }],
-      ['sideprofile', { windowKey: 'sideprofile', profileName: 'sideprofile', sessionScopeId: 'app-session-512:sideprofile' }],
+      ['client', { windowKey: 'client', profileName: 'client', sessionScopeId: 'app-session-512:client' }],
     ]);
     const resolve = createTeamRoomRouteScopeResolver({
       getAppWindow: (key) => windows.get(key),
@@ -60,11 +60,11 @@ describe('Team Room pane delivery', () => {
     expect(resolve(delivery('main'))).toEqual(expect.objectContaining({
       ok: true, windowKey: 'main', profileName: 'main', sessionScopeId: 'app-session-512:main', paneId: '2',
     }));
-    expect(resolve(delivery('sideprofile'))).toEqual(expect.objectContaining({
-      ok: true, windowKey: 'sideprofile', profileName: 'sideprofile', sessionScopeId: 'app-session-512:sideprofile', paneId: '2',
+    expect(resolve(delivery('client'))).toEqual(expect.objectContaining({
+      ok: true, windowKey: 'client', profileName: 'client', sessionScopeId: 'app-session-512:client', paneId: '2',
     }));
-    windows.delete('sideprofile');
-    expect(resolve(delivery('sideprofile'))).toEqual(expect.objectContaining({
+    windows.delete('client');
+    expect(resolve(delivery('client'))).toEqual(expect.objectContaining({
       ok: false, reason: 'team_room_route_window_unavailable',
     }));
   });

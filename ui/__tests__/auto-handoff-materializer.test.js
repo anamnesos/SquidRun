@@ -414,7 +414,7 @@ describe('auto-handoff-materializer', () => {
       channel: 'ws',
       direction: 'outbound',
       status: 'routed',
-      rawBody: '(ARCHITECT #11): TASK Current-session Mira lane.\n\nObjective: finish the existing 3-file review/no-send gate dirty slice without broadening it:\n- `docs/mira-system-map.md`\n- `mira/ui/app.js`\n- `ui/__tests__/mira-runtime-ui-read-only-boot.test.js`\n\nJAMES ACTION: NONE',
+      rawBody: '(ARCHITECT #11): TASK Current-session Mira lane.\n\nObjective: finish the existing 3-file review/no-send gate dirty slice without broadening it:\n- `docs/mira-system-map.md`\n- `mira/ui/app.js`\n- `ui/__tests__/mira-runtime-ui-read-only-boot.test.js`\n\nOPERATOR ACTION: NONE',
       brokeredAtMs: 1000,
     };
     const sourceSpecificBuilderPass = {
@@ -447,7 +447,7 @@ describe('auto-handoff-materializer', () => {
       channel: 'ws',
       direction: 'outbound',
       status: 'routed',
-      rawBody: '(ARCHITECT #2): Checkpoint `b1f68770 Advance Mission Control route audit follow through` is clean-head closed for Builder #116 / #409. Oracle #27 PASS accepted. Fresh verification: worktree clean. This closes the stale three-file review/no-send gate slice; no Builder action remains on that lane. JAMES ACTION: NONE.',
+      rawBody: '(ARCHITECT #2): Checkpoint `b1f68770 Advance Mission Control route audit follow through` is clean-head closed for Builder #116 / #409. Oracle #27 PASS accepted. Fresh verification: worktree clean. This closes the stale three-file review/no-send gate slice; no Builder action remains on that lane. OPERATOR ACTION: NONE.',
       brokeredAtMs: 4000,
     };
 
@@ -499,7 +499,7 @@ describe('auto-handoff-materializer', () => {
       channel: 'ws',
       direction: 'outbound',
       status: 'routed',
-      rawBody: '(ARCHITECT #21): Checkpoint `b1f68770` is clean-head closed for Builder #116 / #409. This closes the stale three-file review/no-send gate slice and mentions package/source audit only as a side note. JAMES ACTION: NONE.',
+      rawBody: '(ARCHITECT #21): Checkpoint `b1f68770` is clean-head closed for Builder #116 / #409. This closes the stale three-file review/no-send gate slice and mentions package/source audit only as a side note. OPERATOR ACTION: NONE.',
       brokeredAtMs: 2000,
     };
 
@@ -837,7 +837,7 @@ describe('auto-handoff-materializer', () => {
   test('tasking current lane preserves short backticked code refs in materialized objective', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session-commit-refs.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane-commit-refs.json');
-    const taskingCurrentLaneBody = '(ARCHITECT #27): Tasking current lane. Scope: Mira/restart experience still sucks from James perspective even after `cb9eec11` + `49564470`: he should not have to re-explain Mira, the accepted critique, or the active lane after restarts. No restart.';
+    const taskingCurrentLaneBody = '(ARCHITECT #27): Tasking current lane. Scope: Mira/restart experience still sucks from Operator perspective even after `cb9eec11` + `49564470`: he should not have to re-explain Mira, the accepted critique, or the active lane after restarts. No restart.';
 
     const directive = extractCurrentLaneDirective(taskingCurrentLaneBody);
     expect(directive).toEqual(expect.objectContaining({
@@ -1156,7 +1156,7 @@ describe('auto-handoff-materializer', () => {
       channel: 'ws',
       direction: 'outbound',
       status: 'recorded',
-      rawBody: '(ARCHITECT #12): CLEAN-HEAD CLOSEOUT for restart-continuity blocker. Commit `cb9eec11 Fix restart current-lane carry-forward` is landed, worktree is clean, and no restart executed. This closes Architect #1 / Builder restart-continuity blocker: post-relaunch sourceRef proof now carries session-379 `architect#2` as `carried_restart_proof`, full session-380 prefers fresh `architect#1`, hyphen-scoped `app-session-254-sideprofile` stays out of main, materializer tests passed 29/29, restart verifier passed. No Builder action remains on this lane. Runtime reload to pick up cb9eec11 is a separate restart-gate decision, not active implementation work.',
+      rawBody: '(ARCHITECT #12): CLEAN-HEAD CLOSEOUT for restart-continuity blocker. Commit `cb9eec11 Fix restart current-lane carry-forward` is landed, worktree is clean, and no restart executed. This closes Architect #1 / Builder restart-continuity blocker: post-relaunch sourceRef proof now carries session-379 `architect#2` as `carried_restart_proof`, full session-380 prefers fresh `architect#1`, hyphen-scoped `app-session-254-client` stays out of main, materializer tests passed 29/29, restart verifier passed. No Builder action remains on this lane. Runtime reload to pick up cb9eec11 is a separate restart-gate decision, not active implementation work.',
       brokeredAtMs: null,
       sentAtMs: 2000,
       updatedAtMs: 2001,
@@ -1322,11 +1322,11 @@ describe('auto-handoff-materializer', () => {
   test('restart-continuity objective materializes current lane with completed-fix and stale-backlog context', async () => {
     const outputPath = path.join(tempDir, 'handoffs', 'session.md');
     const currentLanePath = path.join(tempDir, 'handoffs', 'current-lane.json');
-    const restartLaneBody = '(ARCH #84): New lane from James: go ahead on restart continuity, think it through while doing it. Builder-owned implementation after orientation. Plain-language objective: after restart, James should not have to re-explain what we were doing; startup/session handoff should surface recent completed fixes, active lane, next action, and stale/backlog markers without treating old prose as live blockers. Hold edits until Oracle gives read-only seam orientation.';
+    const restartLaneBody = '(ARCH #84): New lane from Operator: go ahead on restart continuity, think it through while doing it. Builder-owned implementation after orientation. Plain-language objective: after restart, Operator should not have to re-explain what we were doing; startup/session handoff should surface recent completed fixes, active lane, next action, and stale/backlog markers without treating old prose as live blockers. Hold edits until Oracle gives read-only seam orientation.';
 
     expect(extractCurrentLaneDirective(restartLaneBody)).toEqual(expect.objectContaining({
-      kind: 'james_plain_language_objective',
-      objective: 'after restart, James should not have to re-explain what we were doing; startup/session handoff should surface recent completed fixes, active lane, next action, and stale/backlog markers without treating old prose as live blockers.',
+      kind: 'operator_plain_language_objective',
+      objective: 'after restart, Operator should not have to re-explain what we were doing; startup/session handoff should surface recent completed fixes, active lane, next action, and stale/backlog markers without treating old prose as live blockers.',
     }));
 
     const rows = [
@@ -1424,8 +1424,8 @@ describe('auto-handoff-materializer', () => {
     expect(result.currentLane).toEqual(expect.objectContaining({
       status: 'active',
       activeLane: expect.objectContaining({
-        kind: 'james_plain_language_objective',
-        objective: expect.stringContaining('James should not have to re-explain'),
+        kind: 'operator_plain_language_objective',
+        objective: expect.stringContaining('Operator should not have to re-explain'),
         sourceMessageId: 'm-restart-lane',
         sourceRef: 'architect#84',
       }),
@@ -1731,7 +1731,7 @@ describe('auto-handoff-materializer', () => {
         status: 'routed',
         ackStatus: 'routed_unverified_timeout',
         brokeredAtMs: Date.parse('2026-05-26T08:52:32.711Z'),
-        rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
+        rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `OPERATOR ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
       },
       {
         messageId: 'm-builder-22-proof',
@@ -1749,7 +1749,7 @@ describe('auto-handoff-materializer', () => {
           'Visible reply from live probe:',
           'Current lane: A1/A2 visible Mira movement lane (active architect#63; source=live_comms_journal).',
           'Recent changes: Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. (architect#63).',
-          'JAMES ACTION: NONE',
+          'OPERATOR ACTION: NONE',
         ].join('\n'),
       },
       {
@@ -1760,7 +1760,7 @@ describe('auto-handoff-materializer', () => {
         direction: 'outbound',
         status: 'recorded',
         sentAtMs: Date.parse('2026-05-26T09:17:04.140Z'),
-        rawBody: 'Status: actual checkpoint reached. Cleanup is committed, the stale Mira local-text shell is gone, codebase index no longer self-fails, and the A1/A2 Mira `what now?` movement is committed. Live probe works: it answers from architect#63 with one JAMES ACTION line and zero model/network/send/write counters.',
+        rawBody: 'Status: actual checkpoint reached. Cleanup is committed, the stale Mira local-text shell is gone, codebase index no longer self-fails, and the A1/A2 Mira `what now?` movement is committed. Live probe works: it answers from architect#63 with one OPERATOR ACTION line and zero model/network/send/write counters.',
       },
     ];
 
@@ -1808,7 +1808,7 @@ describe('auto-handoff-materializer', () => {
         status: 'routed',
         ackStatus: 'routed_unverified_timeout',
         brokeredAtMs: Date.parse('2026-05-26T08:52:32.711Z'),
-        rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `JAMES ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
+        rawBody: '(ARCHITECT #63): Generator fix commit proof accepted. Cleanup checkpoint closed: `1f75cc5f Remove stale Mira local text tab shell` and `2a549a26 Stabilize codebase index freshness check`, clean tree, codebase:index:check PASS. New current-session task: A1/A2 visible Mira movement lane. Objective: implement/propose the smallest user-visible `what now?` answer from live local evidence. Requirements: answer current lane/status, recent concrete changes, stale/parked evidence excluded from authority, next Builder/Oracle/internal move, exactly one `OPERATOR ACTION:` line; no sends, no runtime POST, no external action. Use live SquidRun evidence/current lane, not parked prototype/phase scaffold. Return implementation/proof packet or blocker.',
       },
       {
         messageId: 'm-builder-22-proof',
@@ -1825,7 +1825,7 @@ describe('auto-handoff-materializer', () => {
           '',
           'Visible reply from live probe:',
           'Current lane: A1/A2 visible Mira movement lane (active architect#63; source=live_comms_journal).',
-          'JAMES ACTION: NONE',
+          'OPERATOR ACTION: NONE',
         ].join('\n'),
       },
       {
@@ -2484,10 +2484,10 @@ describe('auto-handoff-materializer', () => {
     expect(digestSection).not.toContain('TASK: Should not appear in digest highlights');
   });
 
-  test('materializeSessionHandoff excludes sideprofile side-profile rows from main and keeps them available to that window', async () => {
+  test('materializeSessionHandoff excludes Client side-profile rows from main and keeps them available to that window', async () => {
     const mainOutputPath = path.join(tempDir, 'handoffs', 'main-session.md');
     const emptyMainOutputPath = path.join(tempDir, 'handoffs', 'empty-main-session.md');
-    const sideprofileOutputPath = path.join(tempDir, 'handoffs-sideprofile', 'session.md');
+    const clientOutputPath = path.join(tempDir, 'handoffs-client', 'session.md');
     const mainRow = {
       messageId: 'm-main-task',
       sessionId: 'app-session-329',
@@ -2500,41 +2500,41 @@ describe('auto-handoff-materializer', () => {
       brokeredAtMs: 2000,
       metadata: { windowKey: 'main', profile: 'main' },
     };
-    const sideprofileRow = {
-      messageId: 'm-sideprofile-task',
-      sessionId: 'app-session-329:sideprofile',
+    const clientRow = {
+      messageId: 'm-client-task',
+      sessionId: 'app-session-329:client',
       senderRole: 'user',
       targetRole: 'architect',
       channel: 'telegram',
       direction: 'inbound',
       status: 'brokered',
-      rawBody: '(USER #1): TASK: 한국어 sideprofile case message',
+      rawBody: '(USER #1): TASK: 한국어 Client case message',
       brokeredAtMs: 1000,
       metadata: {
-        chatId: 'REDACTED-CHAT-ID',
-        windowKey: 'sideprofile',
-        profile: 'sideprofile',
-        sessionScopeId: 'app-session-329:sideprofile',
+        chatId: '7000000002',
+        windowKey: 'client',
+        profile: 'client',
+        sessionScopeId: 'app-session-329:client',
       },
     };
-    const hyphenScopedsideprofileRow = {
-      messageId: 'm-sideprofile-hyphen-task',
-      sessionId: 'app-session-254-sideprofile',
+    const hyphenScopedClientRow = {
+      messageId: 'm-client-hyphen-task',
+      sessionId: 'app-session-254-client',
       senderRole: 'user',
       targetRole: 'architect',
       channel: 'telegram',
       direction: 'inbound',
       status: 'brokered',
-      rawBody: '(USER #2): TASK: Hyphen-scoped sideprofile restart message',
+      rawBody: '(USER #2): TASK: Hyphen-scoped Client restart message',
       brokeredAtMs: 1500,
       metadata: {
-        sessionScopeId: 'app-session-254-sideprofile',
+        sessionScopeId: 'app-session-254-client',
       },
     };
 
     const main = await materializeSessionHandoff({
-      rows: [mainRow, sideprofileRow, hyphenScopedsideprofileRow],
-      crossSessionRows: [mainRow, sideprofileRow, hyphenScopedsideprofileRow],
+      rows: [mainRow, clientRow, hyphenScopedClientRow],
+      crossSessionRows: [mainRow, clientRow, hyphenScopedClientRow],
       outputPath: mainOutputPath,
       legacyMirrorPath: false,
       sessionId: 'app-session-329',
@@ -2543,20 +2543,20 @@ describe('auto-handoff-materializer', () => {
     });
     const emptyMain = await materializeSessionHandoff({
       rows: [],
-      crossSessionRows: [sideprofileRow, hyphenScopedsideprofileRow],
+      crossSessionRows: [clientRow, hyphenScopedClientRow],
       outputPath: emptyMainOutputPath,
       legacyMirrorPath: false,
       sessionId: 'app-session-329',
       queryClaims: () => ({ ok: true, claims: [] }),
       nowMs: 3000,
     });
-    const sideprofile = await materializeSessionHandoff({
-      rows: [mainRow, sideprofileRow, hyphenScopedsideprofileRow],
-      crossSessionRows: [mainRow, sideprofileRow, hyphenScopedsideprofileRow],
-      outputPath: sideprofileOutputPath,
+    const client = await materializeSessionHandoff({
+      rows: [mainRow, clientRow, hyphenScopedClientRow],
+      crossSessionRows: [mainRow, clientRow, hyphenScopedClientRow],
+      outputPath: clientOutputPath,
       legacyMirrorPath: false,
       sessionId: 'app-session-329',
-      windowKey: 'sideprofile',
+      windowKey: 'client',
       queryClaims: () => ({ ok: true, claims: [] }),
       nowMs: 3000,
     });
@@ -2564,21 +2564,21 @@ describe('auto-handoff-materializer', () => {
     expect(main.ok).toBe(true);
     const mainContent = fs.readFileSync(mainOutputPath, 'utf8');
     expect(mainContent).toContain('Main runtime guard');
-    expect(mainContent).not.toContain('sideprofile case message');
-    expect(mainContent).not.toContain('Hyphen-scoped sideprofile restart message');
-    expect(mainContent).not.toContain('m-sideprofile-task');
-    expect(mainContent).not.toContain('m-sideprofile-hyphen-task');
+    expect(mainContent).not.toContain('Client case message');
+    expect(mainContent).not.toContain('Hyphen-scoped Client restart message');
+    expect(mainContent).not.toContain('m-client-task');
+    expect(mainContent).not.toContain('m-client-hyphen-task');
 
     expect(emptyMain.ok).toBe(true);
     expect(emptyMain.skipped).toBe(true);
     expect(emptyMain.reason).toBe('no_meaningful_content');
     expect(fs.existsSync(emptyMainOutputPath)).toBe(false);
 
-    expect(sideprofile.ok).toBe(true);
-    const sideprofileContent = fs.readFileSync(sideprofileOutputPath, 'utf8');
-    expect(sideprofileContent).toContain('sideprofile case message');
-    expect(sideprofileContent).toContain('Hyphen-scoped sideprofile restart message');
-    expect(sideprofileContent).not.toContain('Main runtime guard');
+    expect(client.ok).toBe(true);
+    const clientContent = fs.readFileSync(clientOutputPath, 'utf8');
+    expect(clientContent).toContain('Client case message');
+    expect(clientContent).toContain('Hyphen-scoped Client restart message');
+    expect(clientContent).not.toContain('Main runtime guard');
   });
 
   test('removeLegacyPaneHandoffFiles deletes legacy files', () => {

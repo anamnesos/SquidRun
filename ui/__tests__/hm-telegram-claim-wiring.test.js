@@ -9,7 +9,7 @@
  *
  * Counting requests is deliberate. A test that only inspects the returned
  * object cannot tell "we refused to send" from "we sent and then described it
- * badly", and those differ by one duplicate message in James's chat.
+ * badly", and those differ by one duplicate message in Operator's chat.
  */
 const https = require('https');
 

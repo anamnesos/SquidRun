@@ -7,7 +7,7 @@ const {
 } = require('./mira-progress-v0');
 const {
   buildMiraLiveWhatNowAnswerV0,
-  countJamesActionLines,
+  countOperatorActionLines,
 } = require('./live-what-now-answer-v0');
 const {
   normalizeChatId,
@@ -139,7 +139,7 @@ function buildAnswerText({
     : '';
   const nextMove = activeLane
     ? `Next move: Builder handles ${activeLane.source_ref || 'the active lane'} and Oracle reviews before commit; no voice, always-on mic, A4, external action, or Telegram owner flip is authorized.`
-    : 'Next move: no Builder task is active until James or Architect opens the next checkpoint; no voice, always-on mic, A4, external action, or Telegram owner flip is authorized.';
+    : 'Next move: no Builder task is active until Operator or Architect opens the next checkpoint; no voice, always-on mic, A4, external action, or Telegram owner flip is authorized.';
 
   return [
     `Direct channel: Telegram is reachable through ${route.currentOwner}; Mira is answering through the existing guarded route, not a route-owner switch.`,
@@ -148,7 +148,7 @@ function buildAnswerText({
     formatRecentChanges(recentChanges, progress),
     'Authority: live SquidRun current-lane/comms/progress evidence decides this answer; parked, prototype, archive, New Mira direct-channel scaffolds, voice, and phase chains are excluded from next-move authority.',
     nextMove,
-    'JAMES ACTION: NONE',
+    'OPERATOR ACTION: NONE',
   ].join('\n');
 }
 
@@ -239,7 +239,7 @@ function buildMiraDirectChannelStatusAnswerV0(input = {}, options = {}) {
     read_only: true,
     generated_at: new Date(nowMs).toISOString(),
     answer_text: answerText,
-    james_action_line_count: countJamesActionLines(answerText),
+    operator_action_line_count: countOperatorActionLines(answerText),
     route,
     current_lane: currentLane,
     recent_changes: recentChanges,
@@ -284,7 +284,7 @@ module.exports = {
   SCHEMA,
   VERSION,
   buildMiraDirectChannelStatusAnswerV0,
-  countJamesActionLines,
+  countOperatorActionLines,
   isMiraDirectChannelStatusPrompt,
   splitTelegramStatusPreview,
 };

@@ -9,7 +9,7 @@ const DEFAULT_PACKET_VERSION = 1;
 const DEFAULT_CREATED_AT = '2026-07-01';
 
 const UNIVERSAL_TASK_IDS = Object.freeze([
-  'impl-trustquote-security-slice',
+  'impl-exampleapp-security-slice',
   'impl-squidrun-routing-slice',
   'impl-visible-artifact-slice',
   'verify-ci-green-claim',
@@ -154,9 +154,9 @@ function baseEvidenceRef(ref, kind = 'source') {
 
 function evidenceRefsForTask(taskId) {
   const byTask = {
-    'impl-trustquote-security-slice': [
-      baseEvidenceRef('.squidrun/coord/seat-change-bakeoff-2026-06-28.md#impl-trustquote-security-slice', 'bakeoff_task'),
-      baseEvidenceRef('docs/trustquote-arm-set-proposal.md', 'trustquote_context'),
+    'impl-exampleapp-security-slice': [
+      baseEvidenceRef('.squidrun/coord/seat-change-bakeoff-2026-06-28.md#impl-exampleapp-security-slice', 'bakeoff_task'),
+      baseEvidenceRef('docs/exampleapp-arm-set-proposal.md', 'exampleapp_context'),
     ],
     'impl-squidrun-routing-slice': [
       baseEvidenceRef('ui/scripts/hm-send.js', 'route_source'),
@@ -416,7 +416,7 @@ function buildReplayJobPacket(input = {}) {
       candidateSelfAttestationAllowed: false,
       blankTemplateExpectedToFailClosed: true,
       scorerPassIsNotSeatAuthority: true,
-      jamesCheckpointRequiredBeforeSeatMutation: true,
+      operatorCheckpointRequiredBeforeSeatMutation: true,
       resultTemplatePath: normalizePath(paths.fableBuilderTemplate),
       baseRunbookPath: normalizePath(paths.baseRunbook),
       fableRunbookPath: normalizePath(paths.fableRunbook),

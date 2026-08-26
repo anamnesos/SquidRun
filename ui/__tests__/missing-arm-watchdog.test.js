@@ -32,18 +32,18 @@ function hasSqliteDriver() {
 
 function oneArmManifest(overrides = {}) {
   return {
-    appRoomId: 'trustquote',
-    sessionId: 'app-session-406:trustquote',
+    appRoomId: 'exampleapp',
+    sessionId: 'app-session-406:exampleapp',
     mainSessionId: 'app-session-406',
-    leadRole: 'trustquote-lead',
-    leadPaneId: 'trustquote-lead',
-    routeTarget: 'trustquote',
+    leadRole: 'exampleapp-lead',
+    leadPaneId: 'exampleapp-lead',
+    routeTarget: 'exampleapp',
     arms: [
       {
         armKey: 'invoice',
-        role: 'trustquote-invoice',
-        paneId: 'trustquote-invoice',
-        routeTarget: 'trustquote-invoice',
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
+        routeTarget: 'exampleapp-invoice',
         armKind: 'domain',
         displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments'],
@@ -56,9 +56,9 @@ function oneArmManifest(overrides = {}) {
 }
 
 function seedCommsCheckin(dbPath, input = {}, nowMs = 1_000) {
-  const sessionId = input.sessionId || 'app-session-406:trustquote';
-  const role = input.role || 'trustquote-invoice';
-  const paneId = input.paneId || 'trustquote-invoice';
+  const sessionId = input.sessionId || 'app-session-406:exampleapp';
+  const role = input.role || 'exampleapp-invoice';
+  const paneId = input.paneId || 'exampleapp-invoice';
   const messageId = input.messageId || `hm-${role}-${nowMs}`;
   const store = new EvidenceLedgerStore({ dbPath });
   expect(store.init().ok).toBe(true);
@@ -117,8 +117,8 @@ maybeDescribe('missing arm watchdog', () => {
     expect(upsertArmRegistryManifest(oneArmManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
 
     const expected = tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 1_000 });
     expect(expected.ok).toBe(true);
     expect(expected.actions).toEqual([]);
@@ -130,8 +130,8 @@ maybeDescribe('missing arm watchdog', () => {
 
     closeArmRegistryStores();
     const nudged = tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 121_000 });
     expect(nudged.actions).toEqual([
       expect.objectContaining({
@@ -148,8 +148,8 @@ maybeDescribe('missing arm watchdog', () => {
 
     closeArmRegistryStores();
     const duplicate = tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 121_000 });
     expect(duplicate.actions).toEqual([]);
     expect(duplicate.watchdogs[0].status).toBe('nudged');
@@ -157,19 +157,19 @@ maybeDescribe('missing arm watchdog', () => {
 
   test('escalates once through injected architect sender after the wait window', () => {
     expect(upsertArmRegistryManifest(oneArmManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
-    expect(tickMissingArmWatchdog({ appRoomId: 'trustquote', sessionId: 'app-session-406:trustquote' }, {
+    expect(tickMissingArmWatchdog({ appRoomId: 'exampleapp', sessionId: 'app-session-406:exampleapp' }, {
       dbPath,
       nowMs: 1_000,
     }).ok).toBe(true);
-    expect(tickMissingArmWatchdog({ appRoomId: 'trustquote', sessionId: 'app-session-406:trustquote' }, {
+    expect(tickMissingArmWatchdog({ appRoomId: 'exampleapp', sessionId: 'app-session-406:exampleapp' }, {
       dbPath,
       nowMs: 121_000,
     }).actions).toHaveLength(1);
 
     const sends = [];
     const escalated = tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, {
       dbPath,
       nowMs: 361_000,
@@ -197,8 +197,8 @@ maybeDescribe('missing arm watchdog', () => {
     expect(queryArmMissingWatchdogs({ status: 'escalated' }, { dbPath })).toHaveLength(1);
 
     const duplicate = tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, {
       dbPath,
       nowMs: 500_000,
@@ -212,39 +212,39 @@ maybeDescribe('missing arm watchdog', () => {
 
   test('satisfies a nudged watchdog when a valid check-in arrives before escalation', () => {
     expect(upsertArmRegistryManifest(oneArmManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
-    tickMissingArmWatchdog({ appRoomId: 'trustquote', sessionId: 'app-session-406:trustquote' }, {
+    tickMissingArmWatchdog({ appRoomId: 'exampleapp', sessionId: 'app-session-406:exampleapp' }, {
       dbPath,
       nowMs: 1_000,
     });
-    tickMissingArmWatchdog({ appRoomId: 'trustquote', sessionId: 'app-session-406:trustquote' }, {
+    tickMissingArmWatchdog({ appRoomId: 'exampleapp', sessionId: 'app-session-406:exampleapp' }, {
       dbPath,
       nowMs: 121_000,
     });
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-billing-1',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
     }, 200_000);
     const checkin = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-billing-1',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-invoice',
-        SQUIDRUN_PANE_ID: 'trustquote-invoice',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-invoice',
+        SQUIDRUN_PANE_ID: 'exampleapp-invoice',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 200_000 });
     expect(checkin.ok).toBe(true);
 
     const afterCheckin = tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, {
       dbPath,
       nowMs: 361_000,

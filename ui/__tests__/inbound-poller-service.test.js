@@ -67,9 +67,9 @@ describe('InboundPollerService', () => {
       env: {
         TELEGRAM_BOT_TOKEN: 'token',
         TELEGRAM_CHAT_ID: '123',
-        SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
-        TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\telegram-poller-state.json',
+        SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+        SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
+        TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\Client\\.squidrun\\runtime\\telegram-poller-state.json',
       },
       onMessage,
       pollIntervalMs: 5000,
@@ -84,9 +84,9 @@ describe('InboundPollerService', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
-          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
-          TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\telegram-poller-state.json',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
+          TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\Client\\.squidrun\\runtime\\telegram-poller-state.json',
         }),
       })
     );
@@ -96,9 +96,9 @@ describe('InboundPollerService', () => {
       type: 'start',
       options: expect.objectContaining({
         env: expect.objectContaining({
-          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
-          TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\sideprofile\\.squidrun\\runtime\\telegram-poller-state.json',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
+          TELEGRAM_POLLER_STATE_PATH: 'D:\\SquidRun\\Client\\.squidrun\\runtime\\telegram-poller-state.json',
         }),
         pollIntervalMs: 5000,
         requestTimeoutMs: 25000,
@@ -147,12 +147,12 @@ describe('InboundPollerService', () => {
       type: 'message',
       payload: {
         text: 'hello',
-        from: '@james',
+        from: '@operator',
         metadata: { updateId: 7 },
       },
     });
 
-    expect(onMessage).toHaveBeenCalledWith('hello', '@james', { updateId: 7 });
+    expect(onMessage).toHaveBeenCalledWith('hello', '@operator', { updateId: 7 });
 
     service.stopTelegram();
     expect(worker.send).toHaveBeenCalledWith({ type: 'shutdown' });
@@ -295,7 +295,7 @@ describe('InboundPollerService', () => {
     Object.defineProperty(process, 'execPath', {
       configurable: true,
       writable: true,
-      value: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+      value: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
     });
     Object.defineProperty(process, 'versions', {
       configurable: true,
@@ -311,7 +311,7 @@ describe('InboundPollerService', () => {
         telegramPoller: {
           stop: jest.fn(),
           _internals: {
-            getTelegramConfig: jest.fn(() => ({ botToken: 'token', chatId: REDACTED-CHAT-ID })),
+            getTelegramConfig: jest.fn(() => ({ botToken: 'token', chatId: 7000000002 })),
           },
         },
         forkProcess,
@@ -322,9 +322,9 @@ describe('InboundPollerService', () => {
       expect(service.startTelegram({
         env: {
           TELEGRAM_BOT_TOKEN: 'token',
-          TELEGRAM_CHAT_ID: 'REDACTED-CHAT-ID',
-          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+          TELEGRAM_CHAT_ID: '7000000002',
+          SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+          SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
         },
       })).toBe(true);
 
@@ -332,11 +332,11 @@ describe('InboundPollerService', () => {
         'telegram-worker.js',
         [],
         expect.objectContaining({
-          execPath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+          execPath: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
           env: expect.objectContaining({
             SQUIDRUN_TELEGRAM_POLLER_WORKER: '1',
-            SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\sideprofile',
-            SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\sideprofile',
+            SQUIDRUN_DATA_ROOT: 'D:\\SquidRun\\Client',
+            SQUIDRUN_PROJECT_ROOT: 'D:\\SquidRun\\Client',
             ELECTRON_RUN_AS_NODE: '1',
           }),
         })

@@ -300,7 +300,7 @@ function policyEvidenceRefs(evidenceRefs = []) {
   ];
 }
 
-function jamesCheckpointFor(reason, capability = null) {
+function operatorCheckpointFor(reason, capability = null) {
   return {
     required: true,
     policy: BUCKETS.approvalRequired,
@@ -347,7 +347,7 @@ function buildDecision({
   reason,
   requiredProofs = [],
   deniedCapabilities = DENIED_CAPABILITIES,
-  jamesCheckpoint = null,
+  operatorCheckpoint = null,
   constraints = [],
   matchedRules = [],
   bodyGuardrailsEvaluated = true,
@@ -368,7 +368,7 @@ function buildDecision({
     requiredProofs: uniqueStrings(requiredProofs),
     evidenceRefs: base.evidenceRefs,
     metadataScope: base.metadataScope,
-    jamesCheckpoint,
+    operatorCheckpoint,
     audit: {
       matchedRules,
       ruleOrder: ['metadata_scope', 'approval_required_capabilities', 'safe_auto_rules', 'caution_gated_rules', 'rank_only_default'],
@@ -404,10 +404,10 @@ function approvalDecision(input, options, reason, capability, details = {}) {
     bucket: BUCKETS.approvalRequired,
     riskClass: 'approval_required',
     reason,
-    requiredProofs: ['james_checkpoint', 'oracle_verify'],
+    requiredProofs: ['operator_checkpoint', 'oracle_verify'],
     deniedCapabilities: DENIED_CAPABILITIES,
-    jamesCheckpoint: jamesCheckpointFor(reason, capability),
-    constraints: ['hold for James checkpoint'],
+    operatorCheckpoint: operatorCheckpointFor(reason, capability),
+    constraints: ['hold for Operator checkpoint'],
     matchedRules: details.matchedRules || ['approval_required_capability'],
     bodyGuardrailsEvaluated: details.bodyGuardrailsEvaluated !== false,
   });

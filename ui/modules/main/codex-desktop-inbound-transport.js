@@ -443,12 +443,12 @@ function buildOfficialCapabilityStudy() {
       },
       {
         id: 'computer_use_windows',
-        useForSquidRun: 'Visual/browser/desktop QA where file output or Playwright is not enough, especially foreground flows James wants Codex to inspect directly.',
+        useForSquidRun: 'Visual/browser/desktop QA where file output or Playwright is not enough, especially foreground flows Operator wants Codex to inspect directly.',
         limits: 'On Windows it takes over the foreground desktop, requires visible target apps, and official guidance says Computer Use cannot automate Codex itself.',
       },
       {
         id: 'remote_connections',
-        useForSquidRun: 'James or Codex on phone/Mac can continue/start Codex work against this Windows host with the host files, tools, plugins, browser setup, approvals, and screenshots.',
+        useForSquidRun: 'Operator or Codex on phone/Mac can continue/start Codex work against this Windows host with the host files, tools, plugins, browser setup, approvals, and screenshots.',
         limits: 'It is account/workspace authenticated Codex-client remote access, not a documented localhost API SquidRun can call to post into the app.',
       },
       {
@@ -477,7 +477,7 @@ function buildOfficialCapabilityStudy() {
       'Do not make Codex Desktop the primary task ledger or inbound bus for SquidRun unless OpenAI exposes an official inbound message/deep-link/API.',
       'Use SquidRun typed work-items/attention bridge for durable coordination, and add a Codex-consumable plugin/MCP/CLI surface if Codex should pull structured state.',
       'Use codex exec or SquidRun-owned app-server for non-interactive machine jobs where visible Desktop continuity is not required.',
-      'For visible summon today, open/focus Codex to the workspace and make the request visible in SquidRun; require James/Codex to send the actual Codex prompt until a supported inbound hook exists.',
+      'For visible summon today, open/focus Codex to the workspace and make the request visible in SquidRun; require Operator/Codex to send the actual Codex prompt until a supported inbound hook exists.',
     ],
   };
 }
@@ -536,7 +536,7 @@ function classifyInboundTransport(evidence = {}) {
     blockers: Array.from(new Set(blockers)),
     leastBadFallback: {
       id: 'codex_app_workspace_summon_plus_codex_pull_surface',
-      description: 'Focus/open Codex Desktop at the target workspace with codex app <path>, keep the structured request in SquidRun, and let Codex pull it through a plugin/MCP/CLI/browser surface or have James paste/send it. This is a summon/focus fallback, not a message injection.',
+      description: 'Focus/open Codex Desktop at the target workspace with codex app <path>, keep the structured request in SquidRun, and let Codex pull it through a plugin/MCP/CLI/browser surface or have Operator paste/send it. This is a summon/focus fallback, not a message injection.',
       noQueueOnlyClaim: true,
     },
   };

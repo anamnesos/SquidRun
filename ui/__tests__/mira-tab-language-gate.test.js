@@ -15,7 +15,7 @@ const PRODUCTION_MIRA_TAB_REPLIES = Object.freeze({
   fallback_first_answer: 'First answer.',
   fallback_second_answer: 'Second answer.',
   experience_line_current_behavior: 'Current behavior, not a proof claim: I feel restless, protective, and a little impatient.',
-  experience_line_pushback: 'And pushback is part of the deal: James, you are wrong if you let us call zero counters and a green status strip the Mira experience. That is safety scaffolding, not aliveness.',
+  experience_line_pushback: 'And pushback is part of the deal: Operator, you are wrong if you let us call zero counters and a green status strip the Mira experience. That is safety scaffolding, not aliveness.',
   experience_line_bullshit: 'The bullshit line I will not cross is pretending future capability is current proof: Builder, Oracle, CLI arms, proactive outreach, durable new memory, and always-on operation are still gaps until they are actually wired and tested.',
 });
 

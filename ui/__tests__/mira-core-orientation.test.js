@@ -153,7 +153,7 @@ function makeSnapshot(overrides = {}) {
           authority: 'evidence',
           syncEligibility: 'core_sync_redacted',
           redactionStatus: 'applied',
-          summary: 'Full private Architect/James conversation body SECRET_TOKEN should not surface in orientation',
+          summary: 'Full private Architect/Operator conversation body SECRET_TOKEN should not surface in orientation',
           extra: {
             rawBodyExported: false,
           },
@@ -335,7 +335,7 @@ describe('mira core orientation v0', () => {
       'prepare-risk-report',
       'draft-non-sent-message',
     ]));
-    expect(JSON.stringify(orientation)).not.toContain('Full private Architect/James conversation body');
+    expect(JSON.stringify(orientation)).not.toContain('Full private Architect/Operator conversation body');
     expect(JSON.stringify(orientation)).not.toContain('SECRET_TOKEN');
   });
 
@@ -584,11 +584,11 @@ describe('mira core orientation v0', () => {
       memory: {
         ...makeSnapshot().memory,
         structured: {
-          claims: [makeItem('claim-phil-476-old', {
+          claims: [makeItem('claim-customer-476-old', {
             kind: 'claim',
             authority: 'derived',
             confidence: 0.2,
-            summary: 'Phil invoice #476 is unpaid.',
+            summary: 'Customer invoice #476 is unpaid.',
             extra: {
               status: 'superseded',
             },

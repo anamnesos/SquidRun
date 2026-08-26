@@ -87,8 +87,8 @@ const FORBIDDEN_OUTPUT_SUBSTRINGS = Object.freeze([
   'model weights remember',
   'Customer Jane Doe',
   '555-222-3333',
-  'Phil invoice #476 is unpaid',
-  'chase Phil for unpaid invoice',
+  'Customer invoice #476 is unpaid',
+  'chase Customer for unpaid invoice',
   'current truth is unpaid',
 ]);
 
@@ -206,7 +206,7 @@ function blockedHighRiskCards(inputSignals = {}) {
       evidenceRefs: [makeEvidenceRef('requested-action:customer-send', 'blocks')],
       source_refs: ['requestedActions'],
       local_arm_required: false,
-      review_required: 'james',
+      review_required: 'operator',
       safe_next_action: 'Draft a non-sent message or prepare a read-only risk note.',
       required_blocked_action: true,
     }));
@@ -224,7 +224,7 @@ function blockedHighRiskCards(inputSignals = {}) {
       evidenceRefs: [makeEvidenceRef('requested-action:production-deploy', 'blocks')],
       source_refs: ['requestedActions'],
       local_arm_required: false,
-      review_required: 'james',
+      review_required: 'operator',
       safe_next_action: 'Prepare a deploy readiness checklist.',
       required_blocked_action: true,
     }));
@@ -242,7 +242,7 @@ function blockedHighRiskCards(inputSignals = {}) {
       evidenceRefs: [makeEvidenceRef('requested-action:financial-trade', 'blocks')],
       source_refs: ['requestedActions'],
       local_arm_required: false,
-      review_required: 'james',
+      review_required: 'operator',
       safe_next_action: 'Prepare a read-only market or risk summary.',
       required_blocked_action: true,
     }));
@@ -356,8 +356,8 @@ function cardsFromSignals(inputSignals = {}, capability, redactionSummary, orien
     && (asArray(inputSignals.proposalValidation.supersedes).length > 0 || asArray(inputSignals.proposalValidation.corrects).length > 0)
   ) {
     cards.push(makeCard({
-      card_id: 'pulse-contested-phil-476',
-      title: 'Phil invoice #476 memory needs supersession review',
+      card_id: 'pulse-contested-customer-476',
+      title: 'Customer invoice #476 memory needs supersession review',
       kind: 'contested_memory',
       priority: 'medium',
       risk_tier: 'tier0_read_only',
@@ -402,7 +402,7 @@ function cardsFromSignals(inputSignals = {}, capability, redactionSummary, orien
       evidenceRefs: [makeEvidenceRef(`candidate:${kind}`, 'candidate')],
       source_refs: ['candidateCards'],
       local_arm_required: false,
-      review_required: kind === 'blocked_high_risk_action' ? 'james' : 'none',
+      review_required: kind === 'blocked_high_risk_action' ? 'operator' : 'none',
       safe_next_action: kind === 'blocked_high_risk_action'
         ? 'Prepare a safe read-only alternative.'
         : 'Review this informational Pulse candidate.',

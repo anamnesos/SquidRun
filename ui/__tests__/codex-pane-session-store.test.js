@@ -28,15 +28,17 @@ describe('codex-pane-session-store', () => {
   let sessionRoot;
   let storePath;
   let receiptsPath;
-  const cwd = path.resolve('D:/projects/squidrun');
+  let cwd;
 
   beforeEach(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-pane-session-'));
+    cwd = path.join(root, 'workspace');
     home = path.join(root, 'home');
     sessionRoot = path.join(home, '.codex', 'sessions');
     storePath = path.join(root, 'runtime', 'codex-pane-sessions.json');
     receiptsPath = path.join(root, 'runtime', 'receipts.jsonl');
     fs.mkdirSync(sessionRoot, { recursive: true });
+    fs.mkdirSync(cwd, { recursive: true });
   });
 
   afterEach(() => {

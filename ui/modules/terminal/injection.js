@@ -1385,7 +1385,7 @@ function createInjectionController(options = {}) {
       return;
     }
 
-    // FOCUS-STEAL GUARANTEE (S463, James's typing): programmatic injection
+    // FOCUS-STEAL GUARANTEE (S463, Operator's typing): programmatic injection
     // must never move USER focus. If injection focuses the pane textarea,
     // every completion path restores the user's prior focus - and when the
     // prior focus is gone (body / detached element), the stolen focus is

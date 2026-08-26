@@ -3,7 +3,7 @@
 /**
  * Squid Room Speech System (wave 4) — Oracle-owned subsystem.
  *
- * ARCHITECTURAL INVERSION (James 00:21 / wave-4 addendum, row 73836):
+ * ARCHITECTURAL INVERSION (Operator 00:21 / wave-4 addendum, row 73836):
  * the box is anchored to the VIEWPORT, the tail is anchored to the CREATURE.
  * The box position is solved as a viewport-constrained problem (flip+shift,
  * >=16px inside every edge — offscreen is mathematically impossible while
@@ -28,7 +28,7 @@ const TYPEWRITER_CHARS_PER_SEC = 35;
 const SWAY_AMPLITUDE_PX = 2.4;
 const SWAY_PERIOD_MS = 4200;
 const GLIDE_EASE_PER_SEC = 6; // exponential approach rate toward solved spot
-// Polish lane (James 10:49): boxes have weight, tails flow.
+// Polish lane (Operator 10:49): boxes have weight, tails flow.
 const SOLVE_DEADBAND_PX = 28; // anchor must move this far to trigger a re-solve
 const MOUTH_SMOOTH_PER_SEC = 14; // chain-base lerp: tracks swimming, absorbs facing flips
 const EXIT_DISSOLVE_MS = 240; // rethink lane: dissolve-toward-creature duration
@@ -54,7 +54,7 @@ function rectIntersectsRect(x, y, w, h, r) {
 
 /**
  * LAST-LINE JARGON GUARD (defense-in-depth, S463: the typewriter spoke a
- * commit hash to James). The face pipeline de-jargonizes upstream; this
+ * commit hash to Operator). The face pipeline de-jargonizes upstream; this
  * guard makes the FACE structurally unable to speak machine identifiers
  * even if that wiring regresses. It strips — it NEVER invents; if stripping
  * empties the line, the bubble simply doesn't show (fail-dark for text).
@@ -389,13 +389,13 @@ function createSquidRoomSpeechSystem(options = {}) {
       hasPosition: false,
       visible: false,
       swayPhase: petId === 'oracle' ? Math.PI : 0,
-      // Hysteresis memory (James: collision flicker): the anchor/dims that
+      // Hysteresis memory (Operator: collision flicker): the anchor/dims that
       // produced the current solve. Re-solve only on real change.
       solveAnchorX: NaN,
       solveAnchorY: NaN,
       lastBoxW: 0,
       lastBoxH: 0,
-      // Smoothed mouth (James: tail jank): absorbs facing-flip teleports.
+      // Smoothed mouth (Operator: tail jank): absorbs facing-flip teleports.
       mouthSX: NaN,
       mouthSY: NaN,
       // Seniority for asymmetric box avoidance: junior boxes yield to
@@ -555,7 +555,7 @@ function createSquidRoomSpeechSystem(options = {}) {
       }
       for (const other of pets.values()) {
         if (other === entry || !other.visible || !other.hasPosition) continue;
-        // ASYMMETRIC YIELD (James: collision flicker): only JUNIOR boxes
+        // ASYMMETRIC YIELD (Operator: collision flicker): only JUNIOR boxes
         // dodge senior boxes. Mutual dodging re-solved both every frame and
         // they thrashed; with seniority exactly one box ever has the duty
         // to move, so a stable arrangement always exists.
@@ -576,7 +576,7 @@ function createSquidRoomSpeechSystem(options = {}) {
         }
       }
 
-      // HYSTERESIS (James: 'flickering shaking like crazy'): the solve has
+      // HYSTERESIS (Operator: 'flickering shaking like crazy'): the solve has
       // MEMORY. Re-solve only when something real changed — anchor moved
       // past the deadband, box resized (expand), or the planted spot is
       // hard-blocked. Otherwise the box keeps its ground: weight, not jitter.
@@ -620,7 +620,7 @@ function createSquidRoomSpeechSystem(options = {}) {
       }
       entry.box.style.transform = `translate3d(${entry.posX}px, ${entry.posY + sway}px, 0)`;
 
-      // SMOOTHED MOUTH (James: tail jank): the raw mouth anchor teleports
+      // SMOOTHED MOUTH (Operator: tail jank): the raw mouth anchor teleports
       // ~12px*scale on a facing flip; the chain base must not. Lerp fast
       // enough to track swimming, slow enough to absorb the flip.
       if (!Number.isFinite(entry.mouthSX) || reducedMotion) {

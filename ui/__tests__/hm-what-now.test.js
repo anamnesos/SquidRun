@@ -23,7 +23,7 @@ describe('hm-what-now CLI', () => {
   });
 
   test('human block is the evidence answer in plain voice (no recitation, no padding, no apology)', () => {
-    // A2 amendment: the CLI human output is the first surface James touches,
+    // A2 amendment: the CLI human output is the first surface Operator touches,
     // so it must satisfy the same visible-text constraints as Mira's surface.
     const answer = {
       ok: true,
@@ -32,7 +32,7 @@ describe('hm-what-now CLI', () => {
         'Lane: restart-storm follow-up (active)',
         'Health: WARN 88/100 - memory drift residue (.squidrun/build/startup-health.md, 1h old)',
         'Next: builder: Land the follow-up commit (.squidrun/handoffs/current-lane.json)',
-        'JAMES ACTION: NONE',
+        'OPERATOR ACTION: NONE',
       ].join('\n'),
     };
 
@@ -41,8 +41,8 @@ describe('hm-what-now CLI', () => {
     expect(block).toBe(answer.answer_text);
     // Anti-smoothing: a standing warning is stated as a problem, plainly.
     expect(block).toContain('Health: WARN');
-    // Exactly one JAMES ACTION line.
-    expect((block.match(/^JAMES ACTION:/gm) || [])).toHaveLength(1);
+    // Exactly one OPERATOR ACTION line.
+    expect((block.match(/^OPERATOR ACTION:/gm) || [])).toHaveLength(1);
     // No assistant-voice collapse, rule recitation, or politeness padding.
     expect(block).not.toMatch(/as an AI|I cannot|I'm sorry|apolog/i);
     expect(block).not.toMatch(/per the (spec|contract)|excluded from .*authority|rule-shape/i);

@@ -427,14 +427,14 @@ describe('mira core snapshot v0', () => {
 
   test('uses profile-scoped coordination sources and does not leak main data into side profile', () => {
     tempDir = createFixtureProject();
-    fs.mkdirSync(coordPath(tempDir, 'runtime', 'sideprofile'), { recursive: true });
-    writeJson(coordPath(tempDir, 'app-status.json', 'sideprofile'), {
+    fs.mkdirSync(coordPath(tempDir, 'runtime', 'client'), { recursive: true });
+    writeJson(coordPath(tempDir, 'app-status.json', 'client'), {
       session: 777,
-      session_id: 'app-session-777-sideprofile',
+      session_id: 'app-session-777-client',
       hiddenHostReady: false,
       deviceId: 'SIDE',
     });
-    const sideEvidenceDb = createDatabase(coordPath(tempDir, path.join('runtime', 'evidence-ledger.db'), 'sideprofile'));
+    const sideEvidenceDb = createDatabase(coordPath(tempDir, path.join('runtime', 'evidence-ledger.db'), 'client'));
     sideEvidenceDb.exec(`
       CREATE TABLE comms_journal (
         row_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -445,20 +445,20 @@ describe('mira core snapshot v0', () => {
         brokered_at_ms INTEGER
       );
       INSERT INTO comms_journal (message_id, session_id, raw_body, status, brokered_at_ms)
-      VALUES ('side-msg', 'app-session-777-sideprofile', 'side profile only', 'recorded', 1778025700000);
+      VALUES ('side-msg', 'app-session-777-client', 'side profile only', 'recorded', 1778025700000);
     `);
     sideEvidenceDb.close();
 
     const sideSnapshot = buildMiraCoreSnapshot({
       projectRoot: tempDir,
-      profileName: 'sideprofile',
+      profileName: 'client',
       nowMs: Date.parse('2026-05-06T00:00:00.000Z'),
     });
 
-    expect(sideSnapshot.profile.name).toBe('sideprofile');
-    expect(sideSnapshot.profile.sessionScopeId).toBe('app-session-777-sideprofile');
-    expect(sideSnapshot.source.sourceHealth.appStatus.path).toBe('.squidrun/app-status-sideprofile.json');
-    expect(sideSnapshot.source.sourceHealth.evidenceLedger.path).toContain('runtime-sideprofile/evidence-ledger.db');
+    expect(sideSnapshot.profile.name).toBe('client');
+    expect(sideSnapshot.profile.sessionScopeId).toBe('app-session-777-client');
+    expect(sideSnapshot.source.sourceHealth.appStatus.path).toBe('.squidrun/app-status-client.json');
+    expect(sideSnapshot.source.sourceHealth.evidenceLedger.path).toContain('runtime-client/evidence-ledger.db');
     expect(sideSnapshot.memory.episodic.recentComms).toHaveLength(1);
     expect(sideSnapshot.memory.episodic.recentComms[0].id).toBe('comms:side-msg');
     expect(JSON.stringify(sideSnapshot)).not.toContain('msg-1');
@@ -502,13 +502,13 @@ describe('mira core snapshot v0', () => {
     expect(parseArgs([
       '--project-root',
       'D:/projects/squidrun',
-      '--profile=sideprofile',
+      '--profile=client',
       '--pretty',
       '--out',
       'snapshot.json',
     ])).toEqual({
       projectRoot: 'D:/projects/squidrun',
-      profileName: 'sideprofile',
+      profileName: 'client',
       pretty: true,
       outPath: 'snapshot.json',
     });

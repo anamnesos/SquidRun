@@ -197,7 +197,11 @@ function resolvePreferredSessionId(explicitSessionId = null, fallbackSessionId =
   return null;
 }
 
-const localProjectContext = applyProjectContext(resolveLocalProjectContext(process.cwd()));
+// Resolve import-time context for session fallback only. Importing this CLI as a
+// library (the desktop app does this for sendTelegram/normalizeChatId) must not
+// mutate the process-wide active project root. The CLI applies its context when
+// main() actually runs; library callers already own their process context.
+const localProjectContext = resolveLocalProjectContext(process.cwd());
 
 function buildJournalMessageId(prefix = 'tg') {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -241,7 +245,7 @@ function upsertTelegramJournal(entry = {}, options = {}) {
  * Warning and proceeding is fine for an ordinary send, but not for the Mira
  * ingress-reply path: if this row is missing and the process dies during the
  * HTTP call, the drain's replay lookup sees no evidence at all, concludes
- * nothing was delivered, and sends James the reply a second time. The row is
+ * nothing was delivered, and sends Operator the reply a second time. The row is
  * what makes that crash window ambiguous-and-therefore-held instead of
  * invisible.
  *
@@ -1192,6 +1196,7 @@ async function sendTelegram(message, env = process.env, options = {}) {
 }
 
 async function main(argv = process.argv.slice(2), env = process.env) {
+  applyProjectContext(localProjectContext);
   if (argv.length < 1 || argv[0] === '--help' || argv[0] === '-h') {
     usage();
     process.exit(argv.length < 1 ? 1 : 0);

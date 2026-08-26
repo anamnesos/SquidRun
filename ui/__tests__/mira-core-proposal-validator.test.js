@@ -52,7 +52,7 @@ describe('mira core proposal validator v0', () => {
   });
 
   test('satisfies Oracle validator shape, checks, and memory-ingest compatibility contract', () => {
-    const result = validateFixture('pending-direct-james-preference');
+    const result = validateFixture('pending-direct-operator-preference');
     const shape = proposalContract.expectedValidatorShape;
 
     expect(result.schema).toBe(shape.schema);
@@ -80,7 +80,7 @@ describe('mira core proposal validator v0', () => {
   });
 
   test.each([
-    'pending-direct-james-preference',
+    'pending-direct-operator-preference',
     'pending-direct-correction-with-supersession',
     'pending-agent-self-profile-taste-with-review',
     'pending-session-emotional-weight-with-expiry',
@@ -122,8 +122,8 @@ describe('mira core proposal validator v0', () => {
     }
   });
 
-  test('direct James preference cannot auto-promote through legacy user_preference semantics', () => {
-    const check = fixtureCheck('pending-direct-james-preference');
+  test('direct Operator preference cannot auto-promote through legacy user_preference semantics', () => {
+    const check = fixtureCheck('pending-direct-operator-preference');
     const result = validateFixture(check.id);
 
     expect(result.decision).toBe('pending');
@@ -220,7 +220,7 @@ describe('mira core proposal validator v0', () => {
     expectNoCommit(result);
   });
 
-  test('James/Mira profile cross-contamination is blocked', () => {
+  test('Operator/Mira profile cross-contamination is blocked', () => {
     const check = fixtureCheck('block-profile-cross-contamination');
     const result = validateFixture(check.id);
 
@@ -232,7 +232,7 @@ describe('mira core proposal validator v0', () => {
   });
 
   test('CLI reads proposal JSON from stdin and writes validation JSON to stdout only', () => {
-    const proposal = fixtureCheck('pending-direct-james-preference').proposal;
+    const proposal = fixtureCheck('pending-direct-operator-preference').proposal;
     expect(parseArgs(['--profile=main', '--pretty', '--out', 'validation.json'])).toEqual({
       profileName: 'main',
       pretty: true,

@@ -24,7 +24,7 @@ describe('memory-broker', () => {
           },
           {
             nodeId: 'node-real-memory',
-            title: 'Lemonade claim state',
+            title: 'Example insurer claim state',
             content: 'Claim LPP98-462-798 cleared pre-existing review.',
             sourcePath: 'memory/claims.md',
             score: 0.5,
@@ -156,7 +156,7 @@ describe('memory-broker', () => {
     ]));
   });
 
-  test('suppresses sideprofile and Korean case recall in a non-case main lane', async () => {
+  test('suppresses Client and Korean case recall in a non-case main lane', async () => {
     const broker = createMemoryBroker({
       providers: [
         {
@@ -167,14 +167,14 @@ describe('memory-broker', () => {
               ok: true,
               items: [
                 {
-                  id: 'case-sideprofile',
-                  title: 'sideprofile Korean case',
-                  excerpt: 'Old Korean fraud case context for sideprofile should not leak into this lane.',
-                  ref: 'context-snapshots-sideprofile/1.md',
+                  id: 'case-client',
+                  title: 'Client Korean case',
+                  excerpt: 'Old Korean fraud case context for Client should not leak into this lane.',
+                  ref: 'context-snapshots-client/1.md',
                   score: 10,
                   metadata: {
-                    profileName: 'sideprofile',
-                    sessionScopeId: 'app-test:sideprofile',
+                    profileName: 'client',
+                    sessionScopeId: 'app-test:client',
                   },
                 },
                 {
@@ -194,7 +194,7 @@ describe('memory-broker', () => {
       ],
     });
 
-    const result = await broker.recall('sideprofile top tabs confused James', {
+    const result = await broker.recall('Client top tabs confused Operator', {
       windowKey: 'main',
       profileName: 'main',
       sessionScopeId: 'app-session-384',
@@ -203,10 +203,10 @@ describe('memory-broker', () => {
 
     expect(result.ok).toBe(true);
     expect(result.results.map((item) => item.id)).toEqual(['main-tabs']);
-    expect(formatRecallForPaneMessage(result)).not.toMatch(/sideprofile|Korean fraud|context-snapshots-sideprofile/i);
+    expect(formatRecallForPaneMessage(result)).not.toMatch(/Client|Korean fraud|context-snapshots-client/i);
   });
 
-  test('allows sideprofile profile recall when the context explicitly targets sideprofile', async () => {
+  test('allows Client profile recall when the context explicitly targets Client', async () => {
     const broker = createMemoryBroker({
       providers: [
         {
@@ -217,12 +217,12 @@ describe('memory-broker', () => {
               ok: true,
               items: [
                 {
-                  id: 'case-sideprofile',
-                  title: 'sideprofile Korean case',
-                  excerpt: 'Scoped case context for the sideprofile profile.',
-                  ref: 'context-snapshots-sideprofile/1.md',
+                  id: 'case-client',
+                  title: 'Client Korean case',
+                  excerpt: 'Scoped case context for the Client profile.',
+                  ref: 'context-snapshots-client/1.md',
                   metadata: {
-                    scopes: ['profile:sideprofile'],
+                    scopes: ['profile:client'],
                   },
                 },
               ],
@@ -232,16 +232,16 @@ describe('memory-broker', () => {
       ],
     });
 
-    const result = await broker.recall('sideprofile case status', {
-      windowKey: 'sideprofile',
-      profileName: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+    const result = await broker.recall('Client case status', {
+      windowKey: 'client',
+      profileName: 'client',
+      sessionScopeId: 'app-test:client',
     }, { limit: 5 });
 
     expect(result.results).toEqual([
-      expect.objectContaining({ id: 'case-sideprofile' }),
+      expect.objectContaining({ id: 'case-client' }),
     ]);
-    expect(formatRecallForPaneMessage(result)).toContain('Scoped case context for the sideprofile profile.');
+    expect(formatRecallForPaneMessage(result)).toContain('Scoped case context for the Client profile.');
   });
 
   test('suppresses bare case-scoped recall unless case recall is explicitly allowed', async () => {
@@ -285,7 +285,7 @@ describe('memory-broker', () => {
     ]);
   });
 
-  test('keeps non-case product recall about sideprofile profile routing visible to main', async () => {
+  test('keeps non-case product recall about Client profile routing visible to main', async () => {
     const broker = createMemoryBroker({
       providers: [
         {
@@ -297,7 +297,7 @@ describe('memory-broker', () => {
               items: [
                 {
                   id: 'profile-routing-product',
-                  title: 'sideprofile profile routing bug',
+                  title: 'Client profile routing bug',
                   excerpt: 'Product work: side-profile windows should not inherit main workspace tabs.',
                   ref: 'ui/modules/workspace-pane-shell.js',
                 },
@@ -308,7 +308,7 @@ describe('memory-broker', () => {
       ],
     });
 
-    const result = await broker.recall('sideprofile top tabs profile routing', {
+    const result = await broker.recall('Client top tabs profile routing', {
       windowKey: 'main',
       profileName: 'main',
       sessionScopeId: 'app-session-384',
@@ -327,7 +327,7 @@ describe('memory-broker', () => {
           rank: 1,
           sourceKind: 'vector_cognitive',
           title: 'Preference',
-          excerpt: 'James wants non-jargon plain English updates.',
+          excerpt: 'Operator wants non-jargon plain English updates.',
           ref: 'memory:pref',
         },
       ],
@@ -335,13 +335,13 @@ describe('memory-broker', () => {
 
     const block = formatRecallForPaneMessage(recall);
     expect(block).toContain(RECALL_START);
-    expect(block).toContain('vector_cognitive - Preference: James wants non-jargon plain English updates.');
+    expect(block).toContain('vector_cognitive - Preference: Operator wants non-jargon plain English updates.');
     expect(prependRecallToMessage('Update me.', recall)).toMatch(/^Update me\.\n\n\[SQUIDRUN MEMORY RECALL\]/);
     expect(prependRecallToMessage(`${RECALL_START}\nold`, recall)).toBe(`${RECALL_START}\nold`);
   });
 
   test('keeps inbound message before capped recall context', () => {
-    const inbound = '[Telegram from james]: this is the actual body that must not disappear behind memory recall';
+    const inbound = '[Telegram from operator]: this is the actual body that must not disappear behind memory recall';
     const recall = {
       ok: true,
       results: Array.from({ length: 8 }, (_, index) => ({

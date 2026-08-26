@@ -73,7 +73,7 @@ describe('Mira work continuation curiosity', () => {
               riskClass: 'approval_required',
               title: 'Send customer mail',
               message: 'Send customer mail.',
-              blockedReason: 'Needs James approval',
+              blockedReason: 'Needs Operator approval',
               wakeTrigger: 'post-wake',
               lastAdvancedAt: nowMs - 1000,
             },

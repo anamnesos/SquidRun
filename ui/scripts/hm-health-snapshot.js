@@ -105,7 +105,7 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
     category: 'transport',
     // Heavier than a wedged poller on purpose. A wedged poller means we may
     // stop RECEIVING; a wedged backlog means messages we already hold are not
-    // being DELIVERED, which from where James sits is indistinguishable from
+    // being DELIVERED, which from where Operator sits is indistinguishable from
     // the app being off. Six of his messages sat 8.6 hours in this state while
     // this score read 100.
     rationale: 'Inbound Telegram messages are held undelivered; a fresh poller does not mean the channel is working.',
@@ -133,7 +133,7 @@ const HEALTH_SCORE_PENALTIES = Object.freeze({
   the_tell_shadow_runner_blind: Object.freeze({
     points: 8,
     category: 'the_tell',
-    rationale: 'The Tell shadow runner is alive but its latest tick failed to observe TrustQuote data.',
+    rationale: 'The Tell shadow runner is alive but its latest tick failed to observe ExampleApp data.',
   }),
   the_tell_shadow_runner_dead: Object.freeze({
     points: 15,
@@ -1198,7 +1198,7 @@ function inspectMemoryConsistency(projectRoot, options = {}) {
  * THE GUARD IS THE FEATURE: we assert the planned delete count is exactly 0
  * and abort otherwise. An auto-repair that trusts its own scope flag is
  * today's bug class waiting to happen - a future scope change could silently
- * turn this into an auto-delete on James's memory. So it verifies the effect
+ * turn this into an auto-delete on Operator's memory. So it verifies the effect
  * it is ABOUT to have, before having it, and the caller re-measures after.
  */
 function maybeAutoRepairMissingOnly(check, checkOptions) {
@@ -1297,7 +1297,7 @@ function inspectTelegramPoller(projectRoot, options = {}) {
  * A first pass at this read the backlog in the startup-health WRAPPER, printed
  * to stderr and moved the exit code. That preserved the exact false green it
  * was written to kill: the emitted and written snapshot still said status OK,
- * score 100, no warning. James does not read stderr or exit codes — he reads
+ * score 100, no warning. Operator does not read stderr or exit codes — he reads
  * the score. An alarm nobody is standing next to is not an alarm.
  *
  * So the verdict lands in `snapshot.telegramIngressBacklog` and is penalised in

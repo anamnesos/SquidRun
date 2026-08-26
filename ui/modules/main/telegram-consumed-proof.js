@@ -9,14 +9,14 @@
  * that mattered had not happened:
  *
  *   - a shadow-runner status file said running:true while the process was dead;
- *   - startup health scored 100/100 while six of James's messages rotted;
+ *   - startup health scored 100/100 while six of Operator's messages rotted;
  *   - the drain treated `accepted.daemon_pty_unverified` as meaningful;
  *   - the delivery bus certified 2283 bytes packetized, reassembled, written
  *     and ACKED — while the pane held 125 characters beginning mid-word.
  *
  * That last one is the reason this file exists in its current shape. A proof
  * keyed to the EXISTENCE of a delivery ack proves nothing: a truncated write
- * satisfies it, the record retires, and James loses the tail of his message
+ * satisfies it, the record retires, and Operator loses the tail of his message
  * with every layer reporting success. So proof here is not "an ack happened".
  * Proof is: THE CONSUMER ECHOED BACK A DIGEST OF THE EXACT BYTES IT RECEIVED,
  * AND THEY MATCH WHAT WE SENT.
@@ -68,7 +68,7 @@ const { readStampedProtocol } = require('./telegram-source-protocol');
  * anything was ever DONE with them.
  *
  * On this queue that distinction is the difference between correct and
- * catastrophic: admission alone could retire "Kristine muller approved job...
+ * catastrophic: admission alone could retire "Example customer approved job...
  * change job to invoice" on the strength of a turn that never ran.
  *
  * So it is called admission. If it were named `prompt_consumed`, somebody
@@ -227,7 +227,7 @@ function canonicalQueuedPayloadDigest(record = {}) {
   // without its digest changing - and that digest is what the decision, plan and
   // proof tables all join on.
   //
-  // But it ALSO requires that "existing records 808499316..808499327 stay legacy
+  // But it ALSO requires that "existing records 700100102..700100106 stay legacy
   // byte-for-byte". Those two together mean the new fields cannot simply be
   // added to the v2 object: doing that would emit four extra nulls for every
   // record in the live queue and change all twelve digests, which is the live
@@ -466,7 +466,7 @@ function validateAdmissionRecord(input = {}) {
  * So admission answers "the exact bytes reached the consumer boundary" and
  * nothing more. Terminal fires when that same bound submission REACHES ITS END:
  * the turn that received those bytes ran and stopped. The two are separated by
- * the case that matters — a turn that admits "Kristine muller approved job,
+ * the case that matters — a turn that admits "Example customer approved job,
  * change job to invoice" and then aborts produces an admission and must produce
  * no terminal record at all.
  *
@@ -617,7 +617,7 @@ function validateConsumedRecordShape(record) {
  *
  * Reuses the admission validator for the whole shared tuple rather than
  * restating it: two copies of an identity comparison drift, and the half that
- * drifts looser is the one that ends up in front of James.
+ * drifts looser is the one that ends up in front of Operator.
  *
  * @param {object} input
  *   proof     candidate `telegram_consumed.v1` record

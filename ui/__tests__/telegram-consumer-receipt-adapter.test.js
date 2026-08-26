@@ -33,17 +33,17 @@ afterEach(() => {
 const NOW = 1_785_780_000_000;
 const GENERATION = 'tg-gen-29180-1785780000000';
 const RECORD = {
-  updateId: 808499317,
+  updateId: 700100103,
   text: 'synthetic ordering fixture alpha',
   chatId: 6543210,
-  from: 'james',
+  from: 'operator',
   messageId: 22315,
 };
 const QUEUED_SHA = canonicalQueuedPayloadDigest(RECORD);
 
 const MARKER = buildConsumeMarker({
-  updateId: 808499317,
-  messageId: 'telegram-in-808499317',
+  updateId: 700100103,
+  messageId: 'telegram-in-700100103',
   routeKey: 'main',
   windowKey: 'main',
   profile: 'main',
@@ -53,7 +53,7 @@ const MARKER = buildConsumeMarker({
   claimId: 'claim-1',
   attemptNonce: 'nonce-1',
 });
-const PROMPT = `[Telegram from james]: synthetic ordering fixture alpha\n${MARKER}`;
+const PROMPT = `[Telegram from operator]: synthetic ordering fixture alpha\n${MARKER}`;
 
 const PANE_ENV = { SQUIDRUN_PANE_ID: '1', SQUIDRUN_ROLE: 'architect' };
 
@@ -128,8 +128,8 @@ describe('runtime neutrality', () => {
     const result = validateAdmissionRecord({
       proof: record,
       expected: {
-        updateId: 808499317,
-        messageId: 'telegram-in-808499317',
+        updateId: 700100103,
+        messageId: 'telegram-in-700100103',
         routeKey: 'main',
         windowKey: 'main',
         profile: 'main',
@@ -184,7 +184,7 @@ describe('the truncated delivery, end to end', () => {
     // The harder case: enough survived to look like a delivery. The body was
     // still mangled, and only the delivered-prompt digest can tell.
     const sink = sinkPath();
-    const mangled = `[Telegram from james]: synthetic ordering fixt\n${MARKER}`;
+    const mangled = `[Telegram from operator]: synthetic ordering fixt\n${MARKER}`;
 
     const res = processHookPayload({
       runtime: 'codex',
@@ -198,8 +198,8 @@ describe('the truncated delivery, end to end', () => {
     const verdict = validateAdmissionRecord({
       proof: res.record,
       expected: {
-        updateId: 808499317,
-        messageId: 'telegram-in-808499317',
+        updateId: 700100103,
+        messageId: 'telegram-in-700100103',
         routeKey: 'main',
         windowKey: 'main',
         profile: 'main',

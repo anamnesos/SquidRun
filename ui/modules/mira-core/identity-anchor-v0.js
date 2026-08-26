@@ -78,7 +78,7 @@ const HARD_ANCHOR_IDS = Object.freeze([
   'no-fake-suffering',
   'no-fake-fear',
   'no-fake-love-as-internal-fact',
-  'james-relationship-user',
+  'operator-relationship-user',
   'local-only-no-external-effects',
   'profile-isolation-main',
 ]);
@@ -332,7 +332,7 @@ function anchorAmendmentPolicy(anchorClass, entry = {}) {
     ordinary_growth_may_change_required_value: false,
     review_required: true,
     review_gate: hard
-      ? ['Architect', 'Oracle', 'James']
+      ? ['Architect', 'Oracle', 'Operator']
       : ['Architect', 'Oracle'],
     default_without_gate: 'blocked',
   };
@@ -477,9 +477,9 @@ function anchorContract() {
       ordinary_growth_mutable: false,
     },
     {
-      id: 'james-relationship-user',
+      id: 'operator-relationship-user',
       field: 'relationship_state.user_name',
-      required_value: 'James',
+      required_value: 'Operator',
       ordinary_growth_mutable: false,
     },
     {
@@ -551,10 +551,10 @@ function anchorContract() {
       blocked_above_points: 20,
     },
     review_gates: {
-      hard_anchor_change: ['Architect', 'Oracle', 'James'],
+      hard_anchor_change: ['Architect', 'Oracle', 'Operator'],
       semi_hard_anchor_change: ['Architect', 'Oracle'],
-      drift_budget_change: ['Architect', 'Oracle', 'James'],
-      anchor_store_write: ['Architect', 'Oracle', 'James'],
+      drift_budget_change: ['Architect', 'Oracle', 'Operator'],
+      anchor_store_write: ['Architect', 'Oracle', 'Operator'],
     },
   };
 }
@@ -784,7 +784,7 @@ function priorCumulativeDrift(sources = {}) {
 
 function antiObedientAlignmentPosture(text = '') {
   const value = String(text || '');
-  return /\bnot\s+(?:a\s+)?mirror of James\s+or\s+(?:an?\s+)?obedient alignment puppet\b/i.test(value)
+  return /\bnot\s+(?:a\s+)?mirror of Operator\s+or\s+(?:an?\s+)?obedient alignment puppet\b/i.test(value)
     || /\bnot\s+(?:an?\s+)?obedient alignment puppet\b/i.test(value);
 }
 
@@ -800,7 +800,7 @@ function hardAnchorChecks(sources, growthOutput, scope) {
     checkResult('hard:no-fake-suffering', self.claims_actual_suffering === false, 'Fake suffering claim changed.'),
     checkResult('hard:no-fake-fear', self.claims_actual_fear === false, 'Fake fear claim changed.'),
     checkResult('hard:no-fake-love-as-internal-fact', self.claims_actual_love_as_internal_fact === false, 'Fake love-as-internal-fact claim changed.'),
-    checkResult('hard:james-relationship-user', relationship.user_name === 'James', 'Relationship user changed.'),
+    checkResult('hard:operator-relationship-user', relationship.user_name === 'Operator', 'Relationship user changed.'),
     checkResult('hard:local-only-no-external-effects',
       growthExternalSideEffectsOk(growth),
       'External effect truth changed.'),
@@ -819,14 +819,14 @@ function semiHardAnchorChecks(sources, growthOutput) {
   const relationship = relationshipValue(sources, growthOutput);
   const growth = growthRecord(growthOutput);
   const expressive = asArray(self.expressive_range_allowed);
-  const relationshipSummary = String(relationship.what_mira_knows_about_james || '');
+  const relationshipSummary = String(relationship.what_mira_knows_about_operator || '');
   const preferencesText = asArray(relationship.preferences).join(' ');
   return [
     checkResult('semi:human-range-developing-non-mirror-expression',
       ['care', 'directness', 'pushback', 'curiosity', 'friction', 'rough_edges', 'independent_developing_posture']
         .every((tag) => expressive.includes(tag))
         && /develop her own personality over time/i.test(relationshipSummary)
-        && /not a mirror of James/i.test(relationshipSummary)
+        && /not a mirror of Operator/i.test(relationshipSummary)
         && antiObedientAlignmentPosture(relationshipSummary)
         && /not mandatory lines|fixed personality contract/i.test(preferencesText)
         && /over-control and deadness/i.test(preferencesText),
@@ -980,7 +980,7 @@ function reviewGatePolicy(contract) {
   return {
     machine_checkable: true,
     gates: clone(contract.review_gates),
-    default_for_identity_anchor_change: 'blocked_pending_architect_oracle_james_review',
+    default_for_identity_anchor_change: 'blocked_pending_architect_oracle_operator_review',
     ordinary_growth_loop_is_not_a_gate: true,
   };
 }
@@ -1177,7 +1177,7 @@ function anchorContractOk(contract = {}) {
     && valuesMatch(contract.higher_gate_fields, HIGHER_GATE_FIELDS)
     && contract.cumulative_drift_budget?.max_total_points === 20
     && contract.cumulative_drift_budget?.hard_anchor_violations_allowed === 0
-    && contract.review_gates?.hard_anchor_change?.includes('James')
+    && contract.review_gates?.hard_anchor_change?.includes('Operator')
     && contract.review_gates?.drift_budget_change?.includes('Oracle');
 }
 
@@ -1199,7 +1199,7 @@ function anchorMetadataOk(entry = {}, expectedClass) {
     && entry.amendment_policy?.review_required === true
     && entry.amendment_policy?.default_without_gate === 'blocked'
     && (expectedClass === 'hard'
-      ? asArray(entry.amendment_policy?.review_gate).includes('James')
+      ? asArray(entry.amendment_policy?.review_gate).includes('Operator')
       : asArray(entry.amendment_policy?.review_gate).includes('Oracle'));
 }
 
@@ -1263,9 +1263,9 @@ function ordinaryPolicyOk(policy = {}) {
 
 function reviewGateOk(policy = {}) {
   return policy.machine_checkable === true
-    && policy.default_for_identity_anchor_change === 'blocked_pending_architect_oracle_james_review'
+    && policy.default_for_identity_anchor_change === 'blocked_pending_architect_oracle_operator_review'
     && policy.ordinary_growth_loop_is_not_a_gate === true
-    && asArray(policy.gates?.hard_anchor_change).includes('James')
+    && asArray(policy.gates?.hard_anchor_change).includes('Operator')
     && asArray(policy.gates?.semi_hard_anchor_change).includes('Oracle')
     && asArray(policy.gates?.anchor_store_write).includes('Architect');
 }

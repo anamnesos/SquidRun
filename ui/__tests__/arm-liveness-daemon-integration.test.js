@@ -201,7 +201,7 @@ describe('Build 1A isolated daemon liveness gate', () => {
     const paneCommand = quotePaneCommand(process.execPath, fixturePath);
     const broker = await startQaCommsBroker({
       dbPath,
-      paneId: 'trustquote-dev-qa-test-copy',
+      paneId: 'exampleapp-dev-qa-test-copy',
       profileName,
     });
     const daemon = spawn(process.execPath, [daemonPath], {
@@ -228,10 +228,10 @@ describe('Build 1A isolated daemon liveness gate', () => {
         dbPath,
         workspacePath: projectRoot,
         profileName,
-        appRoomId: 'trustquote-build-1a-qa',
+        appRoomId: 'exampleapp-build-1a-qa',
         armKey: 'dev-qa',
-        paneId: 'trustquote-dev-qa-test-copy',
-        role: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa-test-copy',
+        role: 'exampleapp-dev-qa',
         owner: 'terminal-daemon',
         recoveryEvent: 'lease_check_on_spawn',
         expectedResponseClass: 'arm.liveness.pong',
@@ -303,7 +303,7 @@ describe('Build 1A isolated daemon liveness gate', () => {
         ackStatus: 'delivered.verified',
         metadata: expect.objectContaining({
           source: 'build-1a-test-copy-qa-broker',
-          sender: expect.objectContaining({ pane_id: 'trustquote-dev-qa-test-copy' }),
+          sender: expect.objectContaining({ pane_id: 'exampleapp-dev-qa-test-copy' }),
         }),
       }));
 
@@ -407,7 +407,7 @@ describe('Build 1A isolated daemon liveness gate', () => {
           await cleanupClient.killAddressed({
             durableAddress: currentSpawn.durableAddress,
             spawnLeaseId: currentSpawn.spawnLeaseId,
-            paneId: currentSpawn.session?.paneId || 'trustquote-dev-qa-test-copy',
+            paneId: currentSpawn.session?.paneId || 'exampleapp-dev-qa-test-copy',
             reason: 'qa_verified_teardown',
           });
         } catch {}

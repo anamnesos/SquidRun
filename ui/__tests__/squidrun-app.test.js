@@ -301,7 +301,7 @@ jest.mock('../scripts/hm-telegram-routing', () => ({
       return { ok: true, chatId: text, windowKey: 'client-profile', profile: 'client-profile', reason: 'explicit_non_owner_route' };
     }
     if (text === '4444444444') {
-      return { ok: true, chatId: text, windowKey: 'sideprofile', profile: 'sideprofile', reason: 'explicit_non_owner_route' };
+      return { ok: true, chatId: text, windowKey: 'client', profile: 'client', reason: 'explicit_non_owner_route' };
     }
     return { ok: false, blocked: true, chatId: text, reason: 'unknown_non_owner_chat' };
   }),
@@ -497,9 +497,9 @@ const {
   closeArmSpawnJournalStores,
   queryArmSpawnSessions,
 } = require('../modules/main/arm-spawn-journal');
-const { seedTrustQuoteArmRegistry } = require('../modules/main/trustquote-arm-registry-seed');
+const { seedExampleAppArmRegistry } = require('../modules/main/exampleapp-arm-registry-seed');
 const SquidRunApp = require('../modules/main/squidrun-app');
-function createReadyTrustQuoteWindow(overrides = {}) {
+function createReadyExampleAppWindow(overrides = {}) {
   const { webContents: webContentsOverrides = {}, ...windowOverrides } = overrides;
   return {
     webContents: {
@@ -513,15 +513,15 @@ function createReadyTrustQuoteWindow(overrides = {}) {
         startupStage: '',
         startupPercent: '100%',
         panes: [
-          { paneId: 'trustquote-app', effectivePaneId: 'trustquote-app', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
-          { paneId: 'trustquote-invoice', effectivePaneId: 'trustquote-invoice', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+          { paneId: 'exampleapp-app', effectivePaneId: 'exampleapp-app', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
+          { paneId: 'exampleapp-invoice', effectivePaneId: 'exampleapp-invoice', paneVisible: true, terminalVisible: true, hasTerminalShell: true },
         ],
       }),
       ...webContentsOverrides,
     },
     isDestroyed: jest.fn().mockReturnValue(false),
     isVisible: jest.fn().mockReturnValue(true),
-    getTitle: jest.fn().mockReturnValue('SquidRun - Trustquote'),
+    getTitle: jest.fn().mockReturnValue('SquidRun - ExampleApp'),
     ...windowOverrides,
   };
 }
@@ -554,7 +554,7 @@ async function flushTelegramDrain(app) {
 const scopedRootEnvKeys = [
   'SQUIDRUN_SCOPED_PROJECT_ROOT',
   'SQUIDRUN_CLIENT_PROFILE_PROJECT_ROOT',
-  'SQUIDRUN_sideprofile_PROJECT_ROOT',
+  'SQUIDRUN_CLIENT_PROJECT_ROOT',
 ];
 let scopedProfileRoot = null;
 
@@ -921,13 +921,13 @@ describe('SquidRunApp', () => {
         fs.writeFileSync(
           path.join(dataRoot, '.squidrun', 'settings', 'telegram.json'),
           JSON.stringify({
-            botToken: 'owned-sideprofile-token',
-            ownerChatId: 'REDACTED-CHAT-ID',
+            botToken: 'owned-client-token',
+            ownerChatId: '7000000002',
           }, null, 2),
           'utf8'
         );
         process.env.TELEGRAM_BOT_TOKEN = 'main-token-leak';
-        process.env.TELEGRAM_CHAT_ID = 'REDACTED';
+        process.env.TELEGRAM_CHAT_ID = '7000000001';
 
         const app = new SquidRunApp(mockAppContext, mockManagers);
         app.installedDeployment = {
@@ -969,19 +969,19 @@ describe('SquidRunApp', () => {
         '1',
         '2',
         '3',
-        'trustquote-lead',
-        'trustquote-schedule-dispatch',
-        'trustquote-app',
-        'trustquote-invoice',
+        'exampleapp-lead',
+        'exampleapp-schedule-dispatch',
+        'exampleapp-app',
+        'exampleapp-invoice',
       ]));
     });
 
     it('routes restart ownership to main for core panes and Squid Room for arm panes', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
-      const mainWindow = createReadyTrustQuoteWindow({
+      const mainWindow = createReadyExampleAppWindow({
         getTitle: jest.fn().mockReturnValue('SquidRun'),
       });
-      const squidRoomWindow = createReadyTrustQuoteWindow({
+      const squidRoomWindow = createReadyExampleAppWindow({
         getTitle: jest.fn().mockReturnValue('SquidRun - Squid Room'),
       });
       mockAppContext.setMainWindow(mainWindow);
@@ -1004,7 +1004,7 @@ describe('SquidRunApp', () => {
       mainWindow.webContents.send.mockClear();
       squidRoomWindow.webContents.send.mockClear();
 
-      const armRestart = app.requestPaneRestart('trustquote-app', { source: 'test-arm' });
+      const armRestart = app.requestPaneRestart('exampleapp-app', { source: 'test-arm' });
       expect(armRestart).toEqual(expect.objectContaining({
         ok: true,
         granted: true,
@@ -1012,7 +1012,7 @@ describe('SquidRunApp', () => {
         ownerWindowKey: 'squid-room',
       }));
       expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         source: 'test-arm',
         restartClaimId: expect.any(String),
       }));
@@ -1033,7 +1033,7 @@ describe('SquidRunApp', () => {
       let reopenedStore = null;
 
       try {
-        const seeded = seedTrustQuoteArmRegistry({
+        const seeded = seedExampleAppArmRegistry({
           dbPath,
           mainSessionId: 'app-session-l0',
           nowMs: 10_000,
@@ -1041,8 +1041,8 @@ describe('SquidRunApp', () => {
         expect(seeded).toEqual(expect.objectContaining({
           ok: true,
           registry: expect.objectContaining({
-            appRoomId: 'trustquote',
-            sessionId: 'app-room:trustquote',
+            appRoomId: 'exampleapp',
+            sessionId: 'app-room:exampleapp',
             desiredCount: 4,
           }),
         }));
@@ -1050,10 +1050,10 @@ describe('SquidRunApp', () => {
         const spawnInput = {
           dbPath,
           workspacePath: tempDir,
-          appRoomId: 'trustquote',
+          appRoomId: 'exampleapp',
           armKey: 'lead',
-          paneId: 'trustquote-lead',
-          role: 'trustquote-lead',
+          paneId: 'exampleapp-lead',
+          role: 'exampleapp-lead',
           registryId: seeded.registry.registryId,
           armId: leadArm.armId,
           sourceMessageId: 'l0-headless-ping',
@@ -1062,18 +1062,18 @@ describe('SquidRunApp', () => {
           nowMs: 11_000,
         };
 
-        const owner = app.resolvePaneRestartOwner('trustquote-lead');
+        const owner = app.resolvePaneRestartOwner('exampleapp-lead');
         expect(owner).toEqual(expect.objectContaining({
           ownerWindowKey: 'squid-room',
           webContents: null,
           requiresWebContents: true,
         }));
 
-        expect(app.requestPaneRestart('trustquote-lead', { source: 'build-1a-l0' })).toEqual({
+        expect(app.requestPaneRestart('exampleapp-lead', { source: 'build-1a-l0' })).toEqual({
           ok: false,
           granted: false,
           reason: 'restart_owner_unavailable',
-          paneId: 'trustquote-lead',
+          paneId: 'exampleapp-lead',
           ownerWindowKey: 'squid-room',
         });
         expect(spawnAddressed).not.toHaveBeenCalled();
@@ -1123,7 +1123,7 @@ describe('SquidRunApp', () => {
           spawnLeaseId: 'lease-l0-success',
           session: expect.objectContaining({
             status: 'active',
-            paneId: 'trustquote-lead',
+            paneId: 'exampleapp-lead',
             spawnLeaseId: 'lease-l0-success',
           }),
         }));
@@ -1135,17 +1135,17 @@ describe('SquidRunApp', () => {
         reopenedStore = new EvidenceLedgerStore({ dbPath });
         expect(reopenedStore.init().ok).toBe(true);
         const persisted = reopenedStore.getArmRegistryManifest({
-          appRoomId: 'trustquote',
-          sessionId: 'app-room:trustquote',
+          appRoomId: 'exampleapp',
+          sessionId: 'app-room:exampleapp',
         });
         expect(persisted).toEqual(expect.objectContaining({
-          sessionId: 'app-room:trustquote',
+          sessionId: 'app-room:exampleapp',
           desiredCount: 4,
         }));
         expect(persisted.arms).toEqual(expect.arrayContaining([
           expect.objectContaining({
             armKey: 'lead',
-            paneId: 'trustquote-lead',
+            paneId: 'exampleapp-lead',
           }),
         ]));
         expect(reopenedStore.queryArmSpawnSessions({
@@ -1176,9 +1176,9 @@ describe('SquidRunApp', () => {
       const receipt = {
         eventClass: 'arm.spawn.released',
         status: 'released',
-        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
         spawnLeaseId: 'lease-qa-1',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         owner: 'terminal-daemon',
         recoveryEvent: 'pty_exit',
         sourceMessageId: 'qa-ping-1',
@@ -1188,7 +1188,7 @@ describe('SquidRunApp', () => {
 
       expect(app.handleArmSpawnLifecycleEvent({
         type: 'arm.spawn.released',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         payload: receipt,
       }, {
         recordLifecycle,
@@ -1199,7 +1199,7 @@ describe('SquidRunApp', () => {
         eventClass: 'arm.spawn.released',
         receipt,
         mainSessionId: 'app-session-build-1a-qa',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
       }, {
         dbPath: 'D:\\qa\\evidence-ledger.db',
         nowMs: 20_001,
@@ -1209,9 +1209,9 @@ describe('SquidRunApp', () => {
     it('returns Build 1A success only after a journal-correlated liveness proof', async () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       const session = {
-        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
         spawnLeaseId: 'lease-qa-1',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         sourceMessageId: 'qa-ping-1',
         status: 'active',
       };
@@ -1257,9 +1257,9 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.commsSessionScopeId = 'app-session-build-1a-qa';
       const session = {
-        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
         spawnLeaseId: 'lease-qa-1',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         sourceMessageId: 'qa-ping-1',
         status: 'active',
       };
@@ -1335,38 +1335,38 @@ describe('SquidRunApp', () => {
 
     it('routes restart ownership to the active profile window for colliding core pane ids', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
-      app.activeProfileName = 'sideprofile';
+      app.activeProfileName = 'client';
       app.commsSessionScopeId = 'app-session-428';
       app.setLaunchWindowProfile({
-        profileName: 'sideprofile',
-        windowKey: 'sideprofile',
+        profileName: 'client',
+        windowKey: 'client',
         includeMainWindow: false,
         standaloneWindow: true,
       });
-      const mainWindow = createReadyTrustQuoteWindow({
+      const mainWindow = createReadyExampleAppWindow({
         getTitle: jest.fn().mockReturnValue('SquidRun'),
       });
-      const profileWindow = createReadyTrustQuoteWindow({
-        getTitle: jest.fn().mockReturnValue('SquidRun - sideprofile'),
+      const profileWindow = createReadyExampleAppWindow({
+        getTitle: jest.fn().mockReturnValue('SquidRun - Client'),
       });
       app.registerAppWindow('main', mainWindow, {
         profileName: 'main',
         sessionScopeId: 'app-session-428',
       });
-      app.registerAppWindow('sideprofile', profileWindow, {
-        profileName: 'sideprofile',
-        sessionScopeId: 'app-session-428:sideprofile',
+      app.registerAppWindow('client', profileWindow, {
+        profileName: 'client',
+        sessionScopeId: 'app-session-428:client',
       });
 
       const owner = app.resolvePaneRestartOwner('3');
       expect(owner).toEqual(expect.objectContaining({
-        ownerWindowKey: 'sideprofile',
-        ownerProfileName: 'sideprofile',
-        ownerSessionScopeId: 'app-session-428:sideprofile',
+        ownerWindowKey: 'client',
+        ownerProfileName: 'client',
+        ownerSessionScopeId: 'app-session-428:client',
         ownerInstance: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
-          sessionScopeId: 'app-session-428:sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
+          sessionScopeId: 'app-session-428:client',
         },
       }));
 
@@ -1375,19 +1375,19 @@ describe('SquidRunApp', () => {
         ok: true,
         granted: true,
         delivered: true,
-        ownerWindowKey: 'sideprofile',
+        ownerWindowKey: 'client',
       }));
       expect(profileWindow.webContents.send).toHaveBeenCalledWith('restart-pane', expect.objectContaining({
         paneId: '3',
         source: 'test-profile',
         restartClaim: expect.objectContaining({
-          ownerWindowKey: 'sideprofile',
-          ownerProfileName: 'sideprofile',
-          ownerSessionScopeId: 'app-session-428:sideprofile',
+          ownerWindowKey: 'client',
+          ownerProfileName: 'client',
+          ownerSessionScopeId: 'app-session-428:client',
           ownerInstance: {
-            profileName: 'sideprofile',
-            windowKey: 'sideprofile',
-            sessionScopeId: 'app-session-428:sideprofile',
+            profileName: 'client',
+            windowKey: 'client',
+            sessionScopeId: 'app-session-428:client',
           },
         }),
         restartClaimId: expect.any(String),
@@ -1484,14 +1484,14 @@ describe('SquidRunApp', () => {
 
       const payload = {
         panes: ['2'],
-        message: 'sideprofile scoped Architect -> Builder message',
-        deliveryId: 'delivery-sideprofile-replay-1',
+        message: 'Client scoped Architect -> Builder message',
+        deliveryId: 'delivery-client-replay-1',
         traceContext: {
-          messageId: 'hm-sideprofile-visible-replay-1',
+          messageId: 'hm-client-visible-replay-1',
         },
         meta: {
-          windowKey: 'sideprofile',
-          profileName: 'sideprofile',
+          windowKey: 'client',
+          profileName: 'client',
         },
       };
 
@@ -1500,15 +1500,15 @@ describe('SquidRunApp', () => {
 
       const injectCalls = sendToVisibleWindow.mock.calls.filter(([channel]) => channel === 'inject-message');
       expect(injectCalls).toHaveLength(1);
-      expect(injectCalls[0][2]).toEqual(expect.objectContaining({ windowKey: 'sideprofile' }));
+      expect(injectCalls[0][2]).toEqual(expect.objectContaining({ windowKey: 'client' }));
       expect(injectCalls[0][1]).toEqual(expect.objectContaining({
         panes: ['2'],
         message: payload.message,
         _ipcPacketized: true,
         _routerAttempted: true,
         meta: expect.objectContaining({
-          windowKey: 'sideprofile',
-          profileName: 'sideprofile',
+          windowKey: 'client',
+          profileName: 'client',
         }),
       }));
       expect(app.visibleInjectDeliveryCache.size).toBe(1);
@@ -1584,7 +1584,7 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.activeProfileName = 'main';
       app.commsSessionScopeId = 'app-session-462';
-      app.registerAppWindow('main', createReadyTrustQuoteWindow(), {
+      app.registerAppWindow('main', createReadyExampleAppWindow(), {
         profileName: 'main',
         sessionScopeId: 'app-session-462',
       });
@@ -1592,7 +1592,7 @@ describe('SquidRunApp', () => {
 
       expect(app.routeInjectMessage({
         panes: ['2'],
-        message: 'This body says sideprofile/scoped, but the envelope belongs to main.',
+        message: 'This body says Client/scoped, but the envelope belongs to main.',
         traceContext: { messageId: 'hm-route-metadata-correct-body-misleading' },
         meta: {
           windowKey: 'main',
@@ -1605,7 +1605,7 @@ describe('SquidRunApp', () => {
       expect(sendToVisibleWindow).toHaveBeenCalledWith(
         'inject-message',
         expect.objectContaining({
-          message: 'This body says sideprofile/scoped, but the envelope belongs to main.',
+          message: 'This body says Client/scoped, but the envelope belongs to main.',
           meta: expect.objectContaining({
             windowKey: 'main',
             profileName: 'main',
@@ -1621,7 +1621,7 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.activeProfileName = 'main';
       app.commsSessionScopeId = 'app-session-462';
-      app.registerAppWindow('main', createReadyTrustQuoteWindow(), {
+      app.registerAppWindow('main', createReadyExampleAppWindow(), {
         profileName: 'main',
         sessionScopeId: 'app-session-462',
       });
@@ -1633,8 +1633,8 @@ describe('SquidRunApp', () => {
         traceContext: { messageId: 'hm-route-metadata-wrong-body-plausible' },
         meta: {
           windowKey: 'main',
-          profileName: 'sideprofile',
-          sessionScopeId: 'app-session-462:sideprofile',
+          profileName: 'client',
+          sessionScopeId: 'app-session-462:client',
           routeKind: 'agent_message',
         },
       })).toBe(false);
@@ -1645,13 +1645,13 @@ describe('SquidRunApp', () => {
         reason: 'inject_route_metadata_mismatch',
         paneId: '2',
         blockers: expect.arrayContaining([
-          'profile_mismatch:sideprofile->main',
-          'session_scope_mismatch:app-session-462:sideprofile->app-session-462',
+          'profile_mismatch:client->main',
+          'session_scope_mismatch:app-session-462:client->app-session-462',
         ]),
         routeMetadata: expect.objectContaining({
           windowKey: 'main',
-          profileName: 'sideprofile',
-          sessionScopeId: 'app-session-462:sideprofile',
+          profileName: 'client',
+          sessionScopeId: 'app-session-462:client',
         }),
         targetScope: expect.objectContaining({
           windowKey: 'main',
@@ -1665,7 +1665,7 @@ describe('SquidRunApp', () => {
       const app = new SquidRunApp(mockAppContext, mockManagers);
       app.activeProfileName = 'main';
       app.commsSessionScopeId = 'app-session-462';
-      app.registerAppWindow('main', createReadyTrustQuoteWindow(), {
+      app.registerAppWindow('main', createReadyExampleAppWindow(), {
         profileName: 'main',
         sessionScopeId: 'app-session-462',
       });
@@ -1715,11 +1715,11 @@ describe('SquidRunApp', () => {
         panes: ['2'],
         message: 'retry after failed scoped visible handoff',
         traceContext: {
-          messageId: 'hm-sideprofile-visible-retry-1',
+          messageId: 'hm-client-visible-retry-1',
         },
         meta: {
-          windowKey: 'sideprofile',
-          profileName: 'sideprofile',
+          windowKey: 'client',
+          profileName: 'client',
         },
       };
 
@@ -1870,21 +1870,21 @@ describe('SquidRunApp', () => {
         connected: true,
         getTerminals: jest.fn(() => [
           {
-            paneId: 'trustquote-invoice',
+            paneId: 'exampleapp-invoice',
             alive: true,
             pid: 610968,
             mode: 'pty',
-            scrollback: 'PS D:\\projects\\TrustQuote> ',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
           },
         ]),
         getTerminal: jest.fn((paneId) => (
-          paneId === 'trustquote-invoice'
+          paneId === 'exampleapp-invoice'
             ? {
-              paneId: 'trustquote-invoice',
+              paneId: 'exampleapp-invoice',
               alive: true,
               pid: 610968,
               mode: 'pty',
-              scrollback: 'PS D:\\projects\\TrustQuote> ',
+              scrollback: 'PS D:\\projects\\ExampleApp> ',
             }
             : null
         )),
@@ -1897,13 +1897,13 @@ describe('SquidRunApp', () => {
         },
       };
       app.registerAppWindow('main', mainWindow);
-      app.paneHostMissingPanes = new Set(['trustquote-invoice']);
+      app.paneHostMissingPanes = new Set(['exampleapp-invoice']);
       app.paneHostLastErrorReason = 'inject_hidden_not_ready';
       app.paneHostLastErrorAt = '2026-06-07T09:39:10.096Z';
       app.paneHostWindowManager.getPaneWindow = jest.fn(() => null);
 
       const routed = app.routeInjectMessage({
-        panes: ['trustquote-invoice'],
+        panes: ['exampleapp-invoice'],
         message: 'status',
         meta: {
           preferHiddenPaneHost: true,
@@ -1914,7 +1914,7 @@ describe('SquidRunApp', () => {
       expect(mainWindow.webContents.send).toHaveBeenCalledWith(
         'inject-message',
         expect.objectContaining({
-          panes: ['trustquote-invoice'],
+          panes: ['exampleapp-invoice'],
           meta: expect.objectContaining({
             deliveryPath: 'visible_fallback',
           }),
@@ -1922,7 +1922,7 @@ describe('SquidRunApp', () => {
       );
       expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
       expect(app.paneHostLastErrorReason).toBeNull();
-      expect(app.paneHostReady.has('trustquote-invoice')).toBe(true);
+      expect(app.paneHostReady.has('exampleapp-invoice')).toBe(true);
     });
 
     it('routes pane-host inject IPC through the shared inject router and chunks long payloads', async () => {
@@ -2295,6 +2295,57 @@ describe('SquidRunApp', () => {
       }
     });
 
+    it('closing an installed main window cannot strand a headless host behind another app window', async () => {
+      const electron = require('electron');
+      const previousDataRoot = process.env.SQUIDRUN_DATA_ROOT;
+      const previousProfile = process.env.SQUIDRUN_PROFILE;
+      const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-installed-close-'));
+      try {
+        electron.app.isPackaged = true;
+        electron.app.getPath.mockImplementation((name) => (name === 'home' ? path.join(dataRoot, '..') : '/mock/app/path'));
+        process.env.SQUIDRUN_PROFILE = 'main';
+        process.env.SQUIDRUN_DATA_ROOT = dataRoot;
+
+        const installedApp = new SquidRunApp(mockAppContext, mockManagers);
+        jest.spyOn(installedApp, 'installMainWindowSendInterceptor').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'ensurePaneHostReadyForwarder').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'setupPermissions').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initModules').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'initPostLoad').mockResolvedValue();
+        jest.spyOn(installedApp, 'restorePersistedSquidRoomWindow').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'schedulePaneHostBootstrap').mockImplementation(() => {});
+        jest.spyOn(installedApp, 'getOpenAppWindowCount').mockReturnValue(1);
+        jest.spyOn(installedApp, 'confirmFullShutdown').mockResolvedValue(true);
+        const shutdownSpy = jest.spyOn(installedApp, 'performFullShutdown').mockResolvedValue({ success: true });
+
+        await installedApp.createWindow();
+        const mainWindow = installedApp.ctx.mainWindow;
+        const closeHandler = mainWindow.on.mock.calls.find(([eventName]) => eventName === 'close')?.[1];
+        const event = { preventDefault: jest.fn() };
+
+        closeHandler(event);
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(event.preventDefault).toHaveBeenCalled();
+        expect(installedApp.confirmFullShutdown).toHaveBeenCalledWith(mainWindow);
+        expect(shutdownSpy).toHaveBeenCalledWith('window-close');
+      } finally {
+        electron.app.isPackaged = false;
+        electron.app.getPath.mockReturnValue('/mock/app/path');
+        if (previousDataRoot === undefined) {
+          delete process.env.SQUIDRUN_DATA_ROOT;
+        } else {
+          process.env.SQUIDRUN_DATA_ROOT = previousDataRoot;
+        }
+        if (previousProfile === undefined) {
+          delete process.env.SQUIDRUN_PROFILE;
+        } else {
+          process.env.SQUIDRUN_PROFILE = previousProfile;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+      }
+    });
+
     it('generates packaged runtime manifest and memory dependencies', () => {
       const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-bin-'));
       const uiRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-packaged-ui-'));
@@ -2431,7 +2482,7 @@ describe('SquidRunApp', () => {
       );
     });
 
-    it('opens Squid Room without TrustQuote preparation or startup bundle materialization', async () => {
+    it('opens Squid Room without ExampleApp preparation or startup bundle materialization', async () => {
       const writeBundle = jest.spyOn(app, 'writeProfileStartupBundle');
 
       await expect(app.openAppWindow('squid-room')).resolves.toEqual(expect.objectContaining({
@@ -2930,19 +2981,19 @@ describe('SquidRunApp', () => {
       app.setupWindowListeners.mockRestore();
       jest.spyOn(app, 'initPostLoad').mockResolvedValue();
       const bundleSpy = jest.spyOn(app, 'writeProfileStartupBundle').mockResolvedValue({
-        bundlePath: '/test/workspace/runtime/window-teams/sideprofile/startup-bundle.md',
+        bundlePath: '/test/workspace/runtime/window-teams/client/startup-bundle.md',
         sourcePaths: ['/test/profile/AGENTS.md', '/test/profile/CLAUDE.md', '/test/profile/ROLES.md'],
-        text: 'sideprofile startup bundle',
-        sessionScopeId: 'app-test:sideprofile',
+        text: 'Client startup bundle',
+        sessionScopeId: 'app-test:client',
       });
-      app.activeProfileName = 'sideprofile';
+      app.activeProfileName = 'client';
 
       await app.launchWindowsForProfile({
-        profileName: 'sideprofile',
-        windowKey: 'sideprofile',
+        profileName: 'client',
+        windowKey: 'client',
         includeMainWindow: false,
       });
-      const profileWindow = app.ctx.getWindow('sideprofile');
+      const profileWindow = app.ctx.getWindow('client');
       const didFinishLoad = profileWindow.webContents.on.mock.calls.find(([eventName]) => eventName === 'did-finish-load')?.[1];
 
       expect(typeof didFinishLoad).toBe('function');
@@ -2950,10 +3001,10 @@ describe('SquidRunApp', () => {
         expect.stringContaining('index.html'),
         expect.objectContaining({
           query: expect.objectContaining({
-            windowKey: 'sideprofile',
-            windowTeam: 'sideprofile',
-            profileName: 'sideprofile',
-            profileLabel: 'sideprofile',
+            windowKey: 'client',
+            windowTeam: 'client',
+            profileName: 'client',
+            profileLabel: 'Client',
             startupBundleReady: 'true',
             autoBootAgents: 'true',
             standaloneWindow: 'true',
@@ -2965,15 +3016,15 @@ describe('SquidRunApp', () => {
 
       await didFinishLoad();
 
-      expect(bundleSpy).toHaveBeenCalledWith('sideprofile');
+      expect(bundleSpy).toHaveBeenCalledWith('client');
       expect(profileWindow.webContents.send).toHaveBeenCalledWith(
         'window-context',
         expect.objectContaining({
-          windowKey: 'sideprofile',
-          windowTeam: 'sideprofile',
-          profileName: 'sideprofile',
-          profileLabel: 'sideprofile',
-          startupBundlePath: '/test/workspace/runtime/window-teams/sideprofile/startup-bundle.md',
+          windowKey: 'client',
+          windowTeam: 'client',
+          profileName: 'client',
+          profileLabel: 'Client',
+          startupBundlePath: '/test/workspace/runtime/window-teams/client/startup-bundle.md',
           startupBundleReady: true,
           autoBootAgents: true,
           standaloneWindow: true,
@@ -2983,16 +3034,16 @@ describe('SquidRunApp', () => {
     });
 
     it('writes profile-local link metadata so side agents keep the profile workspace identity', () => {
-      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-sideprofile-profile-'));
+      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-client-profile-'));
       try {
         app.commsSessionScopeId = 'app-test';
-        const linkPath = app.ensureProfileWorkspaceLink('sideprofile', profileRoot);
+        const linkPath = app.ensureProfileWorkspaceLink('client', profileRoot);
         const payload = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
 
         expect(payload).toEqual(expect.objectContaining({
           workspace: profileRoot.replace(/\\/g, '/'),
-          session_id: 'app-test:sideprofile',
-          profile: 'sideprofile',
+          session_id: 'app-test:client',
+          profile: 'client',
           version: 1,
         }));
         expect(payload.comms.hm_send).toContain('/ui/scripts/hm-send.js');
@@ -3002,7 +3053,7 @@ describe('SquidRunApp', () => {
     });
 
     it('writes profile-local link metadata to packaged runtime scripts when source scripts are absent', () => {
-      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-sideprofile-profile-'));
+      const profileRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-client-profile-'));
       const runtimeRoot = path.resolve(path.join(__dirname, '..', '..', '.squidrun', 'bin', 'runtime', 'ui', 'scripts'));
       const runtimeHmSend = path.join(runtimeRoot, 'hm-send.js');
       const runtimeHmComms = path.join(runtimeRoot, 'hm-comms.js');
@@ -3018,7 +3069,7 @@ describe('SquidRunApp', () => {
       });
       try {
         app.commsSessionScopeId = 'app-test';
-        const linkPath = app.ensureProfileWorkspaceLink('sideprofile', profileRoot);
+        const linkPath = app.ensureProfileWorkspaceLink('client', profileRoot);
         const payload = JSON.parse(fs.readFileSync(linkPath, 'utf8'));
 
         expect(payload.comms.hm_send).toBe(runtimeHmSend.replace(/\\/g, '/'));
@@ -3091,10 +3142,10 @@ describe('SquidRunApp', () => {
         '1',
         '2',
         '3',
-        'trustquote-lead',
-        'trustquote-schedule-dispatch',
-        'trustquote-app',
-        'trustquote-invoice',
+        'exampleapp-lead',
+        'exampleapp-schedule-dispatch',
+        'exampleapp-app',
+        'exampleapp-invoice',
       ];
       app.paneHostMissingPanes = new Set(paneIds);
       app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
@@ -3116,7 +3167,7 @@ describe('SquidRunApp', () => {
     it('clears stale degraded pane-host status when hidden pane hosts are disabled', () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = false;
       app.paneHostMissingPanes = new Set(['1', '2', '3']);
-      app.paneHostReady = new Set(['trustquote-invoice']);
+      app.paneHostReady = new Set(['exampleapp-invoice']);
       app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
       app.paneHostLastErrorAt = '2026-06-12T07:09:07.638Z';
 
@@ -3145,7 +3196,7 @@ describe('SquidRunApp', () => {
     it('clears stale degraded pane-host status on mode-off bootstrap early return', async () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = false;
       app.paneHostMissingPanes = new Set(['1', '2', '3']);
-      app.paneHostReady = new Set(['trustquote-invoice']);
+      app.paneHostReady = new Set(['exampleapp-invoice']);
       app.paneHostLastErrorReason = 'bootstrap_ready_signal_missing';
       app.paneHostLastErrorAt = '2026-06-12T07:09:07.638Z';
 
@@ -3174,24 +3225,24 @@ describe('SquidRunApp', () => {
 
     it('clears stale dynamic pane-host degradation from a live daemon terminal', () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
-      app.paneHostMissingPanes = new Set(['trustquote-invoice']);
+      app.paneHostMissingPanes = new Set(['exampleapp-invoice']);
       app.paneHostLastErrorReason = 'inject_hidden_not_ready';
       app.paneHostLastErrorAt = '2026-06-07T09:39:10.096Z';
 
       const result = app.reconcilePaneHostStatusFromDaemonTerminals([
         {
-          paneId: 'trustquote-invoice',
+          paneId: 'exampleapp-invoice',
           alive: true,
           pid: 610968,
           mode: 'pty',
-          cwd: 'D:\\projects\\TrustQuote',
-          scrollback: 'PS D:\\projects\\TrustQuote> ',
+          cwd: 'D:\\projects\\ExampleApp',
+          scrollback: 'PS D:\\projects\\ExampleApp> ',
         },
       ], { source: 'test_live_terminal' });
 
-      expect(result.recovered).toEqual(['trustquote-invoice']);
+      expect(result.recovered).toEqual(['exampleapp-invoice']);
       expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
-      expect(app.paneHostReady.has('trustquote-invoice')).toBe(true);
+      expect(app.paneHostReady.has('exampleapp-invoice')).toBe(true);
       expect(app.paneHostLastErrorReason).toBeNull();
       expect(app.paneHostLastErrorAt).toBeNull();
       expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
@@ -3200,7 +3251,7 @@ describe('SquidRunApp', () => {
             paneHost: expect.objectContaining({
               degraded: false,
               missingPanes: [],
-              readyPanes: expect.arrayContaining(['trustquote-invoice']),
+              readyPanes: expect.arrayContaining(['exampleapp-invoice']),
             }),
           }),
         })
@@ -3210,42 +3261,42 @@ describe('SquidRunApp', () => {
     it('derives Squid Room arm readiness from live daemon PTYs when writing pane-host status', () => {
       app.ctx.currentSettings.hiddenPaneHostsEnabled = true;
       app.paneHostReady = new Set(['1', '2', '3']);
-      app.paneHostMissingPanes = new Set(['trustquote-invoice', 'trustquote-schedule-dispatch']);
+      app.paneHostMissingPanes = new Set(['exampleapp-invoice', 'exampleapp-schedule-dispatch']);
       app.paneHostLastErrorReason = 'inject_hidden_not_ready';
       app.paneHostLastErrorAt = '2026-06-07T09:51:25.850Z';
       app.ctx.daemonClient = {
         getTerminals: jest.fn(() => [
           {
-            paneId: 'trustquote-invoice',
+            paneId: 'exampleapp-invoice',
             alive: true,
             pid: 610968,
             mode: 'pty',
-            cwd: 'D:\\projects\\TrustQuote',
-            scrollback: 'PS D:\\projects\\TrustQuote> ',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
           },
           {
-            paneId: 'trustquote-schedule-dispatch',
+            paneId: 'exampleapp-schedule-dispatch',
             alive: true,
             pid: 646232,
             mode: 'pty',
-            cwd: 'D:\\projects\\TrustQuote',
-            scrollback: 'PS D:\\projects\\TrustQuote> ',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
           },
           {
-            paneId: 'trustquote-money-documents',
+            paneId: 'exampleapp-money-documents',
             alive: true,
             pid: 111111,
             mode: 'pty',
-            cwd: 'D:\\projects\\TrustQuote',
-            scrollback: 'PS D:\\projects\\TrustQuote> ',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
           },
           {
-            paneId: 'trustquote-work-schedule',
+            paneId: 'exampleapp-work-schedule',
             alive: true,
             pid: 222222,
             mode: 'pty',
-            cwd: 'D:\\projects\\TrustQuote',
-            scrollback: 'PS D:\\projects\\TrustQuote> ',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
           },
         ]),
       };
@@ -3269,12 +3320,12 @@ describe('SquidRunApp', () => {
         '1',
         '2',
         '3',
-        'trustquote-invoice',
-        'trustquote-schedule-dispatch',
+        'exampleapp-invoice',
+        'exampleapp-schedule-dispatch',
       ]));
       expect(paneHostPatch.readyPanes).toEqual(expect.not.arrayContaining([
-        'trustquote-money-documents',
-        'trustquote-work-schedule',
+        'exampleapp-money-documents',
+        'exampleapp-work-schedule',
       ]));
     });
 
@@ -3283,25 +3334,25 @@ describe('SquidRunApp', () => {
       app.ctx.daemonClient = {
         getTerminals: jest.fn(() => [
           {
-            paneId: 'trustquote-invoice',
+            paneId: 'exampleapp-invoice',
             alive: true,
             pid: 610968,
             mode: 'pty',
-            cwd: 'D:\\projects\\TrustQuote',
-            scrollback: 'PS D:\\projects\\TrustQuote> ',
+            cwd: 'D:\\projects\\ExampleApp',
+            scrollback: 'PS D:\\projects\\ExampleApp> ',
           },
         ]),
         getTerminal: jest.fn(() => null),
       };
 
       app.reportPaneHostDegraded({
-        paneId: 'trustquote-invoice',
+        paneId: 'exampleapp-invoice',
         reason: 'inject_hidden_not_ready',
-        message: 'Hidden pane host unavailable/not ready for pane trustquote-invoice.',
+        message: 'Hidden pane host unavailable/not ready for pane exampleapp-invoice.',
       });
 
       expect(Array.from(app.paneHostMissingPanes)).toEqual([]);
-      expect(app.paneHostReady.has('trustquote-invoice')).toBe(true);
+      expect(app.paneHostReady.has('exampleapp-invoice')).toBe(true);
       expect(app.paneHostLastErrorReason).toBeNull();
       expect(app.paneHostLastErrorAt).toBeNull();
       expect(mockManagers.settings.writeAppStatus).toHaveBeenCalledWith(
@@ -3310,7 +3361,7 @@ describe('SquidRunApp', () => {
             paneHost: expect.objectContaining({
               degraded: false,
               missingPanes: [],
-              readyPanes: expect.arrayContaining(['trustquote-invoice']),
+              readyPanes: expect.arrayContaining(['exampleapp-invoice']),
             }),
           }),
         })
@@ -3666,12 +3717,12 @@ describe('SquidRunApp', () => {
       const { checkAndRecoverTelegramPoller } = require('../scripts/hm-telegram-poller-watchdog');
       app.installedDeployment = {
         active: true,
-        dataRoot: 'D:\\SquidRun\\sideprofile',
+        dataRoot: 'D:\\SquidRun\\Client',
         source: 'env',
       };
 
       const result = await app.runStartupHealthTelegramPollerAutoRecover({
-        projectRoot: 'D:\\SquidRun\\sideprofile',
+        projectRoot: 'D:\\SquidRun\\Client',
         profileName: 'main',
       });
 
@@ -3696,7 +3747,7 @@ describe('SquidRunApp', () => {
       const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
 
       const result = await app.refreshStartupHealthArtifacts({
-        profileName: 'sideprofile',
+        profileName: 'client',
         sessionNumber: 777,
       });
 
@@ -3713,7 +3764,7 @@ describe('SquidRunApp', () => {
       expect(checkAndRecoverTelegramPoller).not.toHaveBeenCalled();
       expect(startBidirectionalWakeWatchdogRunner).not.toHaveBeenCalled();
       expect(writeFileAtomic).toHaveBeenCalledWith(
-        expect.stringContaining('startup-health-sideprofile.md'),
+        expect.stringContaining('startup-health-client.md'),
         expect.any(String)
       );
     });
@@ -3788,10 +3839,10 @@ describe('SquidRunApp', () => {
       const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
       createHealthSnapshot.mockReturnValueOnce({
         generatedAt: '2026-03-13T00:00:00.000Z',
-        profileName: 'sideprofile',
+        profileName: 'client',
         appStatus: {
           sessionNumber: 777,
-          sessionId: 'app-session-777-sideprofile',
+          sessionId: 'app-session-777-client',
         },
         tests: {
           testFileCount: 194,
@@ -3813,7 +3864,7 @@ describe('SquidRunApp', () => {
           mode: 'connected',
           running: true,
           relayUrl: 'wss://relay.example.test',
-          deviceId: 'sideprofile',
+          deviceId: 'CLIENT',
           state: 'connected',
         },
         memoryConsistency: {
@@ -3831,24 +3882,24 @@ describe('SquidRunApp', () => {
       const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
 
       const result = await app.refreshStartupHealthArtifacts({
-        profileName: 'sideprofile',
+        profileName: 'client',
       });
 
-      expect(result.outputPath).toContain('startup-health-sideprofile.md');
+      expect(result.outputPath).toContain('startup-health-client.md');
       expect(result.outputPath).not.toContain('startup-health.md');
       expect(writeFileAtomic).toHaveBeenNthCalledWith(
         1,
-        expect.stringContaining('startup-health-sideprofile.md'),
+        expect.stringContaining('startup-health-client.md'),
         expect.stringContaining('App Session: unknown')
       );
       expect(writeFileAtomic).toHaveBeenNthCalledWith(
         2,
-        expect.stringContaining('startup-health-sideprofile.md'),
+        expect.stringContaining('startup-health-client.md'),
         expect.stringContaining('Session context: session 777 ACTIVE (APP)')
       );
       expect(createHealthSnapshot).toHaveBeenCalledWith(expect.objectContaining({
         projectRoot: '/test',
-        profileName: 'sideprofile',
+        profileName: 'client',
       }));
       expect(evidenceLedger.executeEvidenceLedgerOperation).toHaveBeenCalledWith(
         'get-context',
@@ -3856,7 +3907,7 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           source: expect.objectContaining({
             via: 'startup-health',
-            profileName: 'sideprofile',
+            profileName: 'client',
           }),
         })
       );
@@ -3868,10 +3919,10 @@ describe('SquidRunApp', () => {
       const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');
       createHealthSnapshot.mockReturnValueOnce({
         generatedAt: '2026-03-13T00:00:00.000Z',
-        profileName: 'sideprofile',
+        profileName: 'client',
         appStatus: {
           sessionNumber: 777,
-          sessionId: 'app-session-777-sideprofile',
+          sessionId: 'app-session-777-client',
         },
         tests: {
           testFileCount: 1,
@@ -3906,18 +3957,18 @@ describe('SquidRunApp', () => {
       const writeFileAtomic = jest.spyOn(app, 'writeFileAtomic').mockReturnValue(true);
 
       await app.refreshStartupHealthArtifacts({
-        profileName: 'sideprofile',
+        profileName: 'client',
         sessionNumber: 777,
       });
 
       expect(writeFileAtomic).toHaveBeenNthCalledWith(
         1,
-        expect.stringContaining('startup-health-sideprofile.md'),
+        expect.stringContaining('startup-health-client.md'),
         expect.stringContaining('App Session: session 777')
       );
       expect(writeFileAtomic).toHaveBeenNthCalledWith(
         2,
-        expect.stringContaining('startup-health-sideprofile.md'),
+        expect.stringContaining('startup-health-client.md'),
         expect.stringContaining('Session context: session 777 ACTIVE (APP)')
       );
       const writeTargets = writeFileAtomic.mock.calls.map(([targetPath]) => String(targetPath).replace(/\\/g, '/'));
@@ -4363,7 +4414,7 @@ describe('SquidRunApp', () => {
       Object.defineProperty(process, 'execPath', {
         configurable: true,
         writable: true,
-        value: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+        value: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
       });
       Object.defineProperty(process, 'versions', {
         configurable: true,
@@ -4381,7 +4432,7 @@ describe('SquidRunApp', () => {
           spawned: true,
         }));
         expect(spawn).toHaveBeenCalledWith(
-          'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+          'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
           [
             asarDaemonScriptPath,
             '--pid-path',
@@ -4714,7 +4765,7 @@ describe('SquidRunApp', () => {
       }));
     });
 
-    it('routes TrustQuote arm hm-send targets into their PTY panes', async () => {
+    it('routes ExampleApp arm hm-send targets into their PTY panes', async () => {
       const { app, options } = await initWebSocketApp();
       const write = jest.fn().mockReturnValue(true);
       app.ctx.daemonClient = {
@@ -4723,32 +4774,32 @@ describe('SquidRunApp', () => {
       };
 
       const result = await options.onMessage({
-        role: 'trustquote-invoice',
-        paneId: 'trustquote-invoice',
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
         traceContext: { traceId: 'hm-arm-to-lead-1' },
         message: {
           type: 'send',
-          target: 'trustquote-lead',
-          content: '(TRUSTQUOTE-INVOICE #1): status for lead',
+          target: 'exampleapp-lead',
+          content: '(EXAMPLEAPP-INVOICE #1): status for lead',
           messageId: 'hm-arm-to-lead-1',
         },
       });
 
       expect(result).toEqual(expect.objectContaining({
         accepted: true,
-        paneId: 'trustquote-lead',
+        paneId: 'exampleapp-lead',
         status: 'accepted.daemon_pty_unverified',
         mode: 'daemon-pty',
       }));
       expect(write).toHaveBeenCalledWith(
-        'trustquote-lead',
-        expect.stringContaining('(TRUSTQUOTE-INVOICE #1): status for lead'),
+        'exampleapp-lead',
+        expect.stringContaining('(EXAMPLEAPP-INVOICE #1): status for lead'),
         expect.objectContaining({
           source: 'squidrun-app.direct-pane-delivery',
         })
       );
       expect(write).toHaveBeenCalledWith(
-        'trustquote-lead',
+        'exampleapp-lead',
         '\r',
         expect.objectContaining({
           source: 'squidrun-app.direct-pane-delivery',
@@ -5235,7 +5286,7 @@ describe('SquidRunApp', () => {
         senderRole: 'builder',
         targetRole: 'architect',
         sourceMessageId: 'm-builder-architect-watchdog-close',
-        content: '(BUILDER #18): Watchdog check: the earlier correction was received and its outcome is complete. No reply or rework needed; please close the watchdog without waking James.',
+        content: '(BUILDER #18): Watchdog check: the earlier correction was received and its outcome is complete. No reply or rework needed; please close the watchdog without waking Operator.',
         sentAtMs: new Date('2026-08-23T04:29:00').getTime(),
       })).toBe(false);
 
@@ -5961,13 +6012,13 @@ describe('SquidRunApp', () => {
         write: jest.fn(() => true),
       };
 
-      const result = app.dispatchPaneHostEnter('trustquote-app');
+      const result = app.dispatchPaneHostEnter('exampleapp-app');
 
       expect(app.ctx.daemonClient.write.mock.calls).toEqual([
-        ['trustquote-app', '\u001b[201~'],
-        ['trustquote-app', '\r'],
+        ['exampleapp-app', '\u001b[201~'],
+        ['exampleapp-app', '\r'],
       ]);
-      expect(result).toEqual({ success: true, paneId: 'trustquote-app' });
+      expect(result).toEqual({ success: true, paneId: 'exampleapp-app' });
     });
 
     it('classifies default Codex workroom exit zero as graceful completion', () => {
@@ -5980,7 +6031,7 @@ describe('SquidRunApp', () => {
       app.initRecoveryManager();
 
       const recoveryOptions = createRecoveryManager.mock.calls[0][0];
-      expect(recoveryOptions.isCodexPane('trustquote-app')).toBe(true);
+      expect(recoveryOptions.isCodexPane('exampleapp-app')).toBe(true);
     });
 
     it('uses persisted settings when current pane command is stale non-Codex', () => {
@@ -6338,7 +6389,7 @@ describe('SquidRunApp', () => {
         messageId: 'direct-codex-long-1',
       });
 
-      // v1.0 pinned skip-and-drop here; that class ate James's words twice.
+      // v1.0 pinned skip-and-drop here; that class ate Operator's words twice.
       // v1.1+ writes a marked pointer through the ONE submit path.
       const calls = app.ctx.daemonClient.write.mock.calls;
       expect(calls[0][1]).toContain('FULL MSG AT');
@@ -7254,20 +7305,20 @@ describe('SquidRunApp', () => {
         mainWindow.webContents.send.mockClear();
         squidRoomWindow.webContents.send.mockClear();
 
-        dataListener('trustquote-app', 'arm-live-output');
+        dataListener('exampleapp-app', 'arm-live-output');
         jest.advanceTimersByTime(16);
         kernelListener({
           type: 'pty.data.received',
-          paneId: 'trustquote-app',
-          payload: { paneId: 'trustquote-app', byteLen: Buffer.byteLength('arm-live-output', 'utf8') },
+          paneId: 'exampleapp-app',
+          payload: { paneId: 'exampleapp-app', byteLen: Buffer.byteLength('arm-live-output', 'utf8') },
           kernelMeta: null,
         });
-        exitListener('trustquote-app', 0);
+        exitListener('exampleapp-app', 0);
 
-        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-data-trustquote-app', 'arm-live-output');
-        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-exit-trustquote-app', 0);
-        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-trustquote-app', 'arm-live-output');
-        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-exit-trustquote-app', 0);
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-data-exampleapp-app', 'arm-live-output');
+        expect(squidRoomWindow.webContents.send).toHaveBeenCalledWith('pty-exit-exampleapp-app', 0);
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-data-exampleapp-app', 'arm-live-output');
+        expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('pty-exit-exampleapp-app', 0);
       } finally {
         jest.useRealTimers();
       }
@@ -7455,7 +7506,7 @@ describe('SquidRunApp', () => {
         {
           ...exactVerifier,
           durableAddress:
-            `arm://sideprofile/dcb5c1a396802917/computer-use-proof/${paneId}`,
+            `arm://client/dcb5c1a396802917/computer-use-proof/${paneId}`,
         }
       )).toBe(false);
 
@@ -7806,7 +7857,7 @@ describe('SquidRunApp', () => {
           expect(jest.getTimerCount()).toBe(1);
           const oldGeneration = app.telegramFreshnessWatchGeneration;
 
-          app.activeProfileName = 'sideprofile';
+          app.activeProfileName = 'client';
           expect(app.startTelegramFreshnessWatch()).toMatchObject({ started: false });
 
           expect(app.telegramFreshnessWatchTimer).toBe(null);
@@ -7821,7 +7872,7 @@ describe('SquidRunApp', () => {
 
       it('A SIDE PROFILE ARMS NOTHING AND INSPECTS NOTHING', async () => {
         armWatch(app, { ok: true, status: 'stale', wedged: true });
-        app.activeProfileName = 'sideprofile';
+        app.activeProfileName = 'client';
 
         expect(app.startTelegramFreshnessWatch()).toMatchObject({
           started: false, reason: 'not_main_profile',
@@ -8093,9 +8144,9 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       expect(typeof options.onMessage).toBe('function');
 
-      options.onMessage('/task build passed', 'james', {
-        chatId: REDACTED,
-        updateId: 808498637,
+      options.onMessage('/task build passed', 'operator', {
+        chatId: 7000000001,
+        updateId: 700100020,
         messageId: 20580,
       });
       await new Promise((resolve) => setImmediate(resolve));
@@ -8103,13 +8154,13 @@ describe('SquidRunApp', () => {
       expect(deliverySpy).toHaveBeenCalledWith(
         // The pane receives the DECORATED, MARKED bytes; the message is a substring
         // of them, and the marker being absent would itself be the defect.
-        expect.stringContaining('[Telegram from james]: /task build passed'),
+        expect.stringContaining('[Telegram from operator]: /task build passed'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
           windowKey: 'main',
           channel: 'telegram',
-          sender: 'james',
+          sender: 'operator',
           metadata: expect.objectContaining({
             windowKey: 'main',
           }),
@@ -8118,12 +8169,12 @@ describe('SquidRunApp', () => {
       );
       expect(app.telegramInboundContext).toEqual(
         expect.objectContaining({
-          sender: 'james',
-          messageId: 'telegram-in-808498637',
-          inboundMessageId: 'telegram-in-808498637',
-          updateId: 808498637,
+          sender: 'operator',
+          messageId: 'telegram-in-700100020',
+          inboundMessageId: 'telegram-in-700100020',
+          updateId: 700100020,
           telegramMessageId: 20580,
-          chatId: 'REDACTED',
+          chatId: '7000000001',
           windowKey: 'main',
         })
       );
@@ -8198,7 +8249,7 @@ describe('SquidRunApp', () => {
         app.startTelegramPoller();
 
         const options = telegramPoller.start.mock.calls[0][0];
-        options.onMessage('main hello', 'james', { chatId: REDACTED, updateId: 101 });
+        options.onMessage('main hello', 'operator', { chatId: 7000000001, updateId: 101 });
 
         await new Promise((resolve) => setImmediate(resolve));
         await new Promise((resolve) => setImmediate(resolve));
@@ -8207,22 +8258,22 @@ describe('SquidRunApp', () => {
         expect(deliverySpy).toHaveBeenCalledWith(
           // The pane receives the DECORATED, MARKED bytes; the message is a substring
           // of them, and the marker being absent would itself be the defect.
-          expect.stringContaining('[Telegram from james]: main hello'),
+          expect.stringContaining('[Telegram from operator]: main hello'),
           expect.objectContaining({
             paneId: '1',
             role: 'architect',
             windowKey: 'main',
             channel: 'telegram',
-            sender: 'james',
+            sender: 'operator',
             messageId: 'telegram-in-101',
-            chatId: REDACTED,
-            telegramChatId: REDACTED,
+            chatId: 7000000001,
+            telegramChatId: 7000000001,
           }),
           'Telegram'
         );
         expect(app.telegramInboundContext).toEqual(expect.objectContaining({
-          sender: 'james',
-          chatId: 'REDACTED',
+          sender: 'operator',
+          chatId: '7000000001',
           windowKey: 'main',
           profile: 'main',
           lastInboundBody: 'main hello',
@@ -8242,14 +8293,14 @@ describe('SquidRunApp', () => {
       const previousFlag = process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED;
       process.env.SQUIDRUN_TELEGRAM_MAIN_MIRA_LIVE_ENABLED = '1';
       const body = 'what are we doing next?';
-      const metadata = { chatId: 'REDACTED', updateId: 167, messageId: 7001 };
+      const metadata = { chatId: '7000000001', updateId: 167, messageId: 7001 };
       const sessionId = 'app-session-377:main';
 
       try {
         const inboundRoute = app.resolveTelegramInboundRoute(metadata.chatId);
         expect(inboundRoute).toEqual(expect.objectContaining({
           ok: true,
-          chatId: 'REDACTED',
+          chatId: '7000000001',
           windowKey: 'main',
           profile: 'main',
           reason: 'owner_chat',
@@ -8261,13 +8312,13 @@ describe('SquidRunApp', () => {
 
         const currentMiraLiveReply = await app.buildTelegramMiraLiveReply(body, {
           sessionId,
-          sender: 'james',
+          sender: 'operator',
           metadata,
           inboundMessageId: 'telegram-in-167',
         });
         const newMiraCandidate = buildNewMiraTelegramTurnCandidate({
           body,
-          sender: 'james',
+          sender: 'operator',
           metadata,
           inboundRoute,
           inboundSessionScopeId: sessionId,
@@ -8365,15 +8416,15 @@ describe('SquidRunApp', () => {
           direction: 'outbound',
           status: 'routed',
           brokeredAtMs: Date.parse('2026-05-27T09:10:00.000Z'),
-          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: make the current James-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker.',
+          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: make the current Operator-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker.',
           metadata: { windowKey: 'main' },
         },
       ]);
 
       const result = await app.routeMainTelegramInboundToMira({
         body: 'status',
-        sender: 'james',
-        metadata: { chatId: 'REDACTED', updateId: 201, messageId: 9001 },
+        sender: 'operator',
+        metadata: { chatId: '7000000001', updateId: 201, messageId: 9001 },
         inboundMessageId: 'telegram-in-201',
         inboundSessionScopeId: 'app-session-382',
         nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
@@ -8401,7 +8452,7 @@ describe('SquidRunApp', () => {
       }));
       expect(result.directChannelStatusAnswer).toEqual(expect.objectContaining({
         ok: true,
-        james_action_line_count: 1,
+        operator_action_line_count: 1,
         route: expect.objectContaining({
           currentOwner: 'squidrun-telegram-guard-stack',
           miraOwnsTelegram: false,
@@ -8418,12 +8469,12 @@ describe('SquidRunApp', () => {
       expect(sentText).toContain('official progress 73% BLOCKED at HEAD 84d70b21');
       expect(sentText).toContain('Current lane: Direct Channel Reachability checkpoint');
       expect(sentText).toContain('source architect#161');
-      expect(sentText).toContain('JAMES ACTION: NONE');
+      expect(sentText).toContain('OPERATOR ACTION: NONE');
       expect(sentText).not.toMatch(/\[(?:AGENT MSG|CURRENT PROJECT)\]|\((?:ARCHITECT|BUILDER|ORACLE)\s+#\d+\):|\[Telegram from/i);
       expect(sendRoutedTelegramMessage.mock.calls[0][2]).toEqual(expect.objectContaining({
         messageId: 'telegram-in-201-mira-direct-status-reply',
         senderRole: 'mira',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         metadata: expect.objectContaining({
           routeKind: 'telegram',
           windowKey: 'main',
@@ -8441,8 +8492,8 @@ describe('SquidRunApp', () => {
 
       const first = await app.routeMainTelegramInboundToMira({
         body: 'continue',
-        sender: 'james',
-        metadata: { chatId: 'REDACTED' },
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
         inboundMessageId: 'telegram-in-continue-1',
         inboundSessionScopeId: 'app-session-382',
         nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
@@ -8458,8 +8509,8 @@ describe('SquidRunApp', () => {
       });
       const duplicate = await app.routeMainTelegramInboundToMira({
         body: 'continue',
-        sender: 'james',
-        metadata: { chatId: 'REDACTED' },
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
         inboundMessageId: 'telegram-in-continue-2',
         inboundSessionScopeId: 'app-session-382',
         nowMs: Date.parse('2026-05-27T09:12:00.000Z'),
@@ -8529,8 +8580,8 @@ describe('SquidRunApp', () => {
 
       await app.routeMainTelegramInboundToMira({
         body: 'wtf worthless chat gpt output again',
-        sender: 'james',
-        metadata: { chatId: 'REDACTED' },
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
         inboundMessageId: 'telegram-in-meta-loop',
       });
 
@@ -8545,8 +8596,8 @@ describe('SquidRunApp', () => {
 
       await app.routeMainTelegramInboundToMira({
         body: 'second hello',
-        sender: 'james',
-        metadata: { chatId: 'REDACTED' },
+        sender: 'operator',
+        metadata: { chatId: '7000000001' },
         inboundMessageId: 'telegram-in-102',
       });
 
@@ -8556,7 +8607,7 @@ describe('SquidRunApp', () => {
         expect.objectContaining({
           messageId: 'telegram-in-102-mira-reply',
           senderRole: 'mira',
-          chatId: 'REDACTED',
+          chatId: '7000000001',
         })
       );
     });
@@ -8570,7 +8621,7 @@ describe('SquidRunApp', () => {
         content: 'Same reply.',
         fromRole: 'mira',
         messageId: 'telegram-dedupe-1',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8581,7 +8632,7 @@ describe('SquidRunApp', () => {
         content: 'Same reply.',
         fromRole: 'mira',
         messageId: 'telegram-dedupe-2',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_duplicate_suppressed',
@@ -8596,7 +8647,7 @@ describe('SquidRunApp', () => {
         .mockResolvedValueOnce({ ok: false, error: 'read ECONNRESET' })
         .mockResolvedValueOnce({
           ok: true,
-          chatId: REDACTED,
+          chatId: 7000000001,
           messageId: 42,
           method: 'hm-send-telegram',
         });
@@ -8606,7 +8657,7 @@ describe('SquidRunApp', () => {
         content: 'Retryable reply.',
         fromRole: 'mira',
         messageId: 'telegram-retry-1',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: false,
         status: 'telegram_send_failed',
@@ -8617,7 +8668,7 @@ describe('SquidRunApp', () => {
         content: 'Retryable reply.',
         fromRole: 'mira',
         messageId: 'telegram-retry-2',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8630,9 +8681,9 @@ describe('SquidRunApp', () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const nowMs = Date.now();
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: nowMs,
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-test:main',
@@ -8646,7 +8697,7 @@ describe('SquidRunApp', () => {
         content: 'I got "Blake Keller." Send me the action or context for that name.',
         fromRole: 'architect',
         messageId: 'telegram-stray-clarify',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_stray_clarification_suppressed',
@@ -8659,7 +8710,7 @@ describe('SquidRunApp', () => {
         content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction. I will check the inbound route so it does not become a ghost action.',
         fromRole: 'architect',
         messageId: 'telegram-stray-contain',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8670,7 +8721,7 @@ describe('SquidRunApp', () => {
         content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text, not a stale replay or wrong-window route. Looks upstream of SquidRun, so I am treating it as stray and taking no action on the name.',
         fromRole: 'architect',
         messageId: 'telegram-stray-verdict',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_stray_correction_coalesced',
@@ -8685,9 +8736,9 @@ describe('SquidRunApp', () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const nowMs = Date.now();
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: nowMs,
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-test:main',
@@ -8701,7 +8752,7 @@ describe('SquidRunApp', () => {
         content: 'I got "Blake Keller." Send me the action or context for that name.',
         fromRole: 'architect',
         messageId: 'telegram-stray-request-clarify',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_stray_clarification_suppressed',
@@ -8713,7 +8764,7 @@ describe('SquidRunApp', () => {
         content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
         fromRole: 'architect',
         messageId: 'telegram-stray-urgent-state',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8724,7 +8775,7 @@ describe('SquidRunApp', () => {
         content: 'Urgent: the Telegram route shows a security issue and you need to act now.',
         fromRole: 'architect',
         messageId: 'telegram-stray-urgent',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8733,13 +8784,13 @@ describe('SquidRunApp', () => {
       expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
     });
 
-    it('does not coalesce replies when James explicitly asks for the stray-route result', async () => {
+    it('does not coalesce replies when Operator explicitly asks for the stray-route result', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const nowMs = Date.now();
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: nowMs,
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-test:main',
@@ -8753,7 +8804,7 @@ describe('SquidRunApp', () => {
         content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
         fromRole: 'architect',
         messageId: 'telegram-stray-request-state',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8764,7 +8815,7 @@ describe('SquidRunApp', () => {
         content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
         fromRole: 'architect',
         messageId: 'telegram-stray-request-result',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8773,13 +8824,13 @@ describe('SquidRunApp', () => {
       expect(sendRoutedTelegramMessage).toHaveBeenCalledTimes(2);
     });
 
-    it('does not coalesce when James asks what happened without can-you-check phrasing', async () => {
+    it('does not coalesce when Operator asks what happened without can-you-check phrasing', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const nowMs = Date.now();
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: nowMs,
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-test:main',
@@ -8793,7 +8844,7 @@ describe('SquidRunApp', () => {
         content: 'I got "Blake Keller." Send me the action or context for that name.',
         fromRole: 'architect',
         messageId: 'telegram-stray-what-happened-clarify',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_stray_clarification_suppressed',
@@ -8805,7 +8856,7 @@ describe('SquidRunApp', () => {
         content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
         fromRole: 'architect',
         messageId: 'telegram-stray-what-happened-state',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8816,7 +8867,7 @@ describe('SquidRunApp', () => {
         content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
         fromRole: 'architect',
         messageId: 'telegram-stray-what-happened-result',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8829,9 +8880,9 @@ describe('SquidRunApp', () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       const nowMs = Date.now();
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: nowMs,
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-test:main',
@@ -8845,7 +8896,7 @@ describe('SquidRunApp', () => {
         content: 'Got it. I am treating "Blake Keller" as stray text, not an instruction.',
         fromRole: 'architect',
         messageId: 'telegram-stray-risk-state',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8856,7 +8907,7 @@ describe('SquidRunApp', () => {
         content: 'I checked it. SquidRun received "Blake Keller" as a fresh real Telegram text.',
         fromRole: 'architect',
         messageId: 'telegram-stray-risk-result',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
       })).resolves.toEqual(expect.objectContaining({
         ok: true,
         status: 'telegram_delivered',
@@ -8879,7 +8930,7 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('/task fix the route', 'james', { chatId: REDACTED, updateId: 108 });
+      options.onMessage('/task fix the route', 'operator', { chatId: 7000000001, updateId: 108 });
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(sendMiraLivePrompt).not.toHaveBeenCalled();
@@ -8887,7 +8938,7 @@ describe('SquidRunApp', () => {
       expect(deliverySpy).toHaveBeenCalledWith(
         // The pane receives the DECORATED, MARKED bytes; the message is a substring
         // of them, and the marker being absent would itself be the defect.
-        expect.stringContaining('[Telegram from james]: /task fix the route'),
+        expect.stringContaining('[Telegram from operator]: /task fix the route'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -8913,7 +8964,7 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
 
       const options = telegramPoller.start.mock.calls[0][0];
-      options.onMessage('(ARCHITECT #1): route Builder this check', 'james', { chatId: REDACTED, updateId: 109 });
+      options.onMessage('(ARCHITECT #1): route Builder this check', 'operator', { chatId: 7000000001, updateId: 109 });
 
       await new Promise((resolve) => setImmediate(resolve));
       expect(sendMiraLivePrompt).not.toHaveBeenCalled();
@@ -8921,7 +8972,7 @@ describe('SquidRunApp', () => {
       expect(deliverySpy).toHaveBeenCalledWith(
         // The pane receives the DECORATED, MARKED bytes; the message is a substring
         // of them, and the marker being absent would itself be the defect.
-        expect.stringContaining('[Telegram from james]: (ARCHITECT #1): route Builder this check'),
+        expect.stringContaining('[Telegram from operator]: (ARCHITECT #1): route Builder this check'),
         expect.objectContaining({
           paneId: '1',
           role: 'architect',
@@ -9186,7 +9237,7 @@ describe('SquidRunApp', () => {
       expect(deliverySpy).not.toHaveBeenCalled();
     });
 
-    it('refuses sideprofile Telegram inbound at the scoped cutover without disturbing main reply context', async () => {
+    it('refuses Client Telegram inbound at the scoped cutover without disturbing main reply context', async () => {
       const telegramPoller = require('../modules/telegram-poller');
       telegramPoller.start.mockReturnValue(true);
       const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-telegram-context-'));
@@ -9194,7 +9245,7 @@ describe('SquidRunApp', () => {
       const previousPersistedContext = {
         chatId: '1111111111',
         defaultChatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-test:main',
@@ -9227,7 +9278,7 @@ describe('SquidRunApp', () => {
         status: 'delivered.daemon_pty',
       });
       const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
-      app.registerAppWindow('sideprofile', {
+      app.registerAppWindow('client', {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
           isDestroyed: jest.fn().mockReturnValue(false),
@@ -9239,12 +9290,12 @@ describe('SquidRunApp', () => {
         app.startTelegramPoller();
 
         const options = telegramPoller.start.mock.calls[0][0];
-        options.onMessage('hello sideprofile lane', '@sideprofile', { chatId: 4444444444, updateId: 106 });
+        options.onMessage('hello Client lane', '@Client', { chatId: 4444444444, updateId: 106 });
 
         await flushTelegramDrain(app);
         expect(scopedRuntimeSpy).not.toHaveBeenCalled();
         expectScopedSourceOnlyRefusal({
-          updateId: 106, routeKey: 'sideprofile', chatId: 4444444444,
+          updateId: 106, routeKey: 'client', chatId: 4444444444,
         });
         expect(forwardSpy).not.toHaveBeenCalled();
         expect(deliverySpy).not.toHaveBeenCalled();
@@ -9440,7 +9491,7 @@ describe('SquidRunApp', () => {
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('[Photo received]', '@ScopedContact', {
         chatId: 2222222222,
-        updateId: 808489705,
+        updateId: 700100001,
         media: {
           kind: 'photo',
           localPath: 'D:\\projects\\Example Case\\telegram-photos\\photo-11.jpg',
@@ -9452,7 +9503,7 @@ describe('SquidRunApp', () => {
       expect(scopedRuntimeSpy).not.toHaveBeenCalled();
       expect(deliverySpy).not.toHaveBeenCalled();
       const source = expectScopedSourceOnlyRefusal({
-        updateId: 808489705, routeKey: 'scoped', chatId: 2222222222,
+        updateId: 700100001, routeKey: 'scoped', chatId: 2222222222,
       });
       // A PHOTO'S IDENTITY IS NOT ITS CAPTION, and the row proves that through
       // its CANONICAL PAYLOAD digest, which is computed over the whole queued
@@ -9481,7 +9532,7 @@ describe('SquidRunApp', () => {
         .not.toBe(source.canonical_payload_sha256);
       // `source_only` is a loud delivery refusal, not a queue lock. The drain
       // retires it and continues under the current no-hold contract.
-      expect(readScopedPendingRecord(808489705)).toBeNull();
+      expect(readScopedPendingRecord(700100001)).toBeNull();
     });
 
     it('records an empty-body photo as a scoped source with its own identity and refuses delivery', async () => {
@@ -9512,7 +9563,7 @@ describe('SquidRunApp', () => {
 
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('', '@ScopedContact', {
-        updateId: 808489706,
+        updateId: 700100002,
         messageId: 555,
         chatId: 2222222222,
         photo: {
@@ -9526,7 +9577,7 @@ describe('SquidRunApp', () => {
       // AN EMPTY BODY IS NOT AN EMPTY MESSAGE. A photo with no caption still
       // gets one immutable row, and it is the row a recovery has to find.
       expectScopedSourceOnlyRefusal({
-        updateId: 808489706, routeKey: 'scoped', chatId: 2222222222,
+        updateId: 700100002, routeKey: 'scoped', chatId: 2222222222,
       });
     });
 
@@ -9552,9 +9603,9 @@ describe('SquidRunApp', () => {
       app.startTelegramPoller();
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('', '@PhotoSender', {
-        updateId: 808489709,
+        updateId: 700100004,
         messageId: 557,
-        chatId: REDACTED,
+        chatId: 7000000001,
         photo: { file_id: 'photo-abc' },
         media: {
           kind: 'photo',
@@ -9589,9 +9640,9 @@ describe('SquidRunApp', () => {
 
       const options = telegramPoller.start.mock.calls[0][0];
       options.onMessage('', '@VideoSender', {
-        updateId: 808489707,
+        updateId: 700100003,
         messageId: 556,
-        chatId: REDACTED,
+        chatId: 7000000001,
         video: {
           file_id: 'video-xyz',
         },
@@ -9681,14 +9732,14 @@ describe('SquidRunApp', () => {
       app.inboundPollerService.stopTelegram = jest.fn()
         .mockResolvedValue({ ok: true, exited: true });
       app.startTelegramPoller = jest.fn(() => true);
-      const reloadsideprofile = jest.fn();
+      const reloadClient = jest.fn();
       const launchSpy = jest.spyOn(app, 'launchWindowsForProfile').mockResolvedValue();
       const createWindowSpy = jest.spyOn(app, 'createWindow').mockResolvedValue();
-      app.registerAppWindow('sideprofile', {
+      app.registerAppWindow('client', {
         isDestroyed: jest.fn().mockReturnValue(false),
         webContents: {
           isDestroyed: jest.fn().mockReturnValue(false),
-          reloadIgnoringCache: reloadsideprofile,
+          reloadIgnoringCache: reloadClient,
           send: jest.fn(),
         },
       });
@@ -9706,7 +9757,7 @@ describe('SquidRunApp', () => {
       // children end up alive at once.
       expect(app.inboundPollerService.stopTelegram).toHaveBeenCalledTimes(1);
       expect(app.startTelegramPoller).toHaveBeenCalledTimes(1);
-      expect(reloadsideprofile).not.toHaveBeenCalled();
+      expect(reloadClient).not.toHaveBeenCalled();
       expect(launchSpy).not.toHaveBeenCalled();
       expect(createWindowSpy).not.toHaveBeenCalled();
     });
@@ -9891,11 +9942,11 @@ describe('SquidRunApp', () => {
       });
 
       const result = await app.deliverHumanMessageWithRecall(
-        '[Telegram from james]: plain inbound message',
+        '[Telegram from operator]: plain inbound message',
         {
           paneId: '1',
           channel: 'telegram',
-          sender: 'james',
+          sender: 'operator',
           messageId: 'telegram-in-plain-1',
         },
         'Telegram'
@@ -9906,7 +9957,7 @@ describe('SquidRunApp', () => {
       }));
       expect(triggers.sendDirectMessage).toHaveBeenCalledWith(
         ['1'],
-        expect.stringContaining('[Telegram from james]: plain inbound message'),
+        expect.stringContaining('[Telegram from operator]: plain inbound message'),
         null,
         expect.any(Object)
       );
@@ -9925,11 +9976,11 @@ describe('SquidRunApp', () => {
       });
 
       await app.deliverHumanMessageWithRecall(
-        '[Telegram from james]: route this back',
+        '[Telegram from operator]: route this back',
         {
           paneId: '1',
           channel: 'telegram',
-          sender: 'james',
+          sender: 'operator',
           messageId: 'telegram-in-reply-target-1',
           chatId: '1111111111',
           metadata: {
@@ -9970,7 +10021,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           windowKey: 'main',
           profileName: 'main',
-          senderRole: 'james',
+          senderRole: 'operator',
           targetRole: 'architect',
           metadata: expect.objectContaining({
             source: 'squidrun-app.telegram-reply-guard',
@@ -9996,7 +10047,7 @@ describe('SquidRunApp', () => {
           paneId: '2',
           windowKey: 'main',
           profileName: 'main',
-          senderRole: 'james',
+          senderRole: 'operator',
           status: 'open',
           openedAtMs: nowMs - 1000,
           deadlineAtMs: nowMs + 60_000,
@@ -10009,7 +10060,7 @@ describe('SquidRunApp', () => {
           paneId: '3',
           windowKey: 'main',
           profileName: 'main',
-          senderRole: 'james',
+          senderRole: 'operator',
           status: 'open',
           openedAtMs: nowMs - 120_000,
           deadlineAtMs: nowMs - 1,
@@ -10078,7 +10129,7 @@ describe('SquidRunApp', () => {
             paneId: '1',
             windowKey: 'main',
             profileName: 'main',
-            senderRole: 'james',
+            senderRole: 'operator',
             status: 'open',
             openedAtMs: nowMs - 30_000,
             deadlineAtMs: nowMs + 1000,
@@ -10125,7 +10176,7 @@ describe('SquidRunApp', () => {
               rank: 1,
               sourceKind: 'vector_cognitive',
               title: 'Communication preference',
-              excerpt: 'James wants non-jargon plain English updates.',
+              excerpt: 'Operator wants non-jargon plain English updates.',
               ref: 'memory:plain-english',
             },
           ],
@@ -10141,18 +10192,18 @@ describe('SquidRunApp', () => {
       });
 
       await app.deliverHumanMessageWithRecall(
-        '[Telegram from james]: what did you do?',
+        '[Telegram from operator]: what did you do?',
         {
           paneId: '1',
           channel: 'telegram',
-          sender: 'james',
+          sender: 'operator',
           messageId: 'telegram-in-recall-1',
         },
         'Telegram'
       );
 
       expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
-        '[Telegram from james]: what did you do?',
+        '[Telegram from operator]: what did you do?',
         expect.objectContaining({
           channel: 'telegram',
           paneId: '1',
@@ -10164,15 +10215,15 @@ describe('SquidRunApp', () => {
       );
       const deliveredMessage = triggers.sendDirectMessage.mock.calls[0][1];
       expect(deliveredMessage).toContain('[SQUIDRUN MEMORY RECALL]');
-      expect(deliveredMessage).toContain('James wants non-jargon plain English updates.');
-      expect(deliveredMessage).toContain('[Telegram from james]: what did you do?');
-      expect(deliveredMessage.indexOf('[Telegram from james]: what did you do?'))
+      expect(deliveredMessage).toContain('Operator wants non-jargon plain English updates.');
+      expect(deliveredMessage).toContain('[Telegram from operator]: what did you do?');
+      expect(deliveredMessage.indexOf('[Telegram from operator]: what did you do?'))
         .toBeLessThan(deliveredMessage.indexOf('[SQUIDRUN MEMORY RECALL]'));
     });
 
     it('keeps Telegram body inside first injection window before long recall context', async () => {
       const triggers = require('../modules/triggers');
-      const telegramBody = '[Telegram from james]: synthetic emergency update body that must be visible before any recall context or large header.';
+      const telegramBody = '[Telegram from operator]: synthetic emergency update body that must be visible before any recall context or large header.';
       mockManagers.memoryBroker = {
         recall: jest.fn(async () => ({
           ok: true,
@@ -10199,7 +10250,7 @@ describe('SquidRunApp', () => {
         {
           paneId: '1',
           channel: 'telegram',
-          sender: 'james',
+          sender: 'operator',
           messageId: 'telegram-in-body-first-1',
           recallLimit: 8,
         },
@@ -10247,35 +10298,35 @@ describe('SquidRunApp', () => {
       });
 
       await app.deliverHumanMessageWithRecall(
-        '[Telegram from sideprofile]: status?',
+        '[Telegram from client]: status?',
         {
           paneId: '1',
           channel: 'telegram',
-          sender: 'sideprofile',
-          messageId: 'telegram-in-sideprofile-1',
-          windowKey: 'sideprofile',
-          profileName: 'sideprofile',
-          sessionScopeId: 'app-test:sideprofile',
+          sender: 'client',
+          messageId: 'telegram-in-client-1',
+          windowKey: 'client',
+          profileName: 'client',
+          sessionScopeId: 'app-test:client',
         },
         'Telegram'
       );
 
       expect(mockManagers.memoryBroker.recall).toHaveBeenCalledWith(
-        '[Telegram from sideprofile]: status?',
+        '[Telegram from client]: status?',
         expect.objectContaining({
           channel: 'telegram',
           paneId: '1',
-          windowKey: 'sideprofile',
-          profileName: 'sideprofile',
-          sessionScopeId: 'app-test:sideprofile',
+          windowKey: 'client',
+          profileName: 'client',
+          sessionScopeId: 'app-test:client',
         }),
         expect.objectContaining({ limit: 4, providerLimit: 3 })
       );
       expect(triggers.sendDirectMessage.mock.calls[0][3]).toEqual(expect.objectContaining({
         meta: expect.objectContaining({
-          windowKey: 'sideprofile',
-          profileName: 'sideprofile',
-          sessionScopeId: 'app-test:sideprofile',
+          windowKey: 'client',
+          profileName: 'client',
+          sessionScopeId: 'app-test:client',
         }),
       }));
     });
@@ -10299,7 +10350,7 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-visible-output-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
 
       jest.useFakeTimers();
@@ -10370,7 +10421,7 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-throttled-unresolved-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
       const emitSpy = jest.spyOn(app, 'emitTelegramReplyRequirementNotice');
 
@@ -10403,7 +10454,7 @@ describe('SquidRunApp', () => {
       jest.useRealTimers();
     });
 
-    it('routes unanswered Telegram reply requirements to agent lanes instead of James-facing notices', async () => {
+    it('routes unanswered Telegram reply requirements to agent lanes instead of Operator-facing notices', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       jest.useFakeTimers({ now: 1700000000000 });
       try {
@@ -10425,7 +10476,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-expire-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
         });
         guardedApp.inspectPaneOutputForReplyGuards('1', 'RAW PANE HALF THOUGHT - do not text this', {
           outputKind: 'agent_visible_output',
@@ -10516,7 +10567,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-expire-zero-output-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: 'app-session-expire-zero-output',
         });
         expect(app.pendingTelegramReplyGuardJournalReconcileTimer).not.toBeNull();
@@ -10556,7 +10607,7 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-no-spam-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
 
       const first = await app.sendTelegramReplyRequirementAgentEscalation('1');
@@ -10587,7 +10638,7 @@ describe('SquidRunApp', () => {
         paneId: '2',
         messageId: 'telegram-in-agent-alert-fail-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
       jest.spyOn(app, 'sendInternalHmMessage').mockReturnValue(false);
 
@@ -10699,7 +10750,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-clear-before-phone-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
         });
 
         const result = await app.routeTelegramReply({
@@ -10732,12 +10783,12 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-echo-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
 
       const result = app.inspectPaneOutputForReplyGuards(
         '1',
-        '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]\n\n[Telegram from james]: hello',
+        '[SQUIDRUN REPLY TARGET: TELEGRAM REQUIRED]\n\n[Telegram from operator]: hello',
         { outputKind: 'squidrun_injected_echo' }
       );
 
@@ -10801,13 +10852,13 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-marker-text-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
 
       jest.useFakeTimers();
       const result = guardedApp.inspectPaneOutputForReplyGuards(
         '1',
-        '[Telegram from James]: yes, fixed it, deploying',
+        '[Telegram from Operator]: yes, fixed it, deploying',
         { outputKind: 'agent_visible_output' }
       );
 
@@ -10851,7 +10902,7 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-marker-quote-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
 
       jest.useFakeTimers();
@@ -10888,7 +10939,7 @@ describe('SquidRunApp', () => {
         paneId: '1',
         messageId: 'telegram-in-clear-1',
         chatId: '1111111111',
-        sender: 'james',
+        sender: 'operator',
       });
       expect(app.inspectPaneOutputForReplyGuards('1', 'pane-only does not clear first', {
         outputKind: 'agent_visible_output',
@@ -11002,7 +11053,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-dedupe-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11095,7 +11146,7 @@ describe('SquidRunApp', () => {
             paneId: '1',
             windowKey: 'main',
             profileName: 'main',
-            senderRole: 'james',
+            senderRole: 'operator',
             status: 'open',
             openedAtMs: createdAtMs - 20_000,
             deadlineAtMs: createdAtMs + 60_000,
@@ -11198,7 +11249,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-query-fail-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
           persistDurable: false,
         });
@@ -11246,7 +11297,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-target-user-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11299,9 +11350,9 @@ describe('SquidRunApp', () => {
         app.commsSessionScopeId = sessionId;
         app.markPendingTelegramReplyGuard({
           paneId: '1',
-          messageId: 'telegram-in-808498637',
-          chatId: 'REDACTED',
-          sender: 'james',
+          messageId: 'telegram-in-700100020',
+          chatId: '7000000001',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11338,7 +11389,7 @@ describe('SquidRunApp', () => {
               source: 'hm-telegram',
               mode: 'message',
               telegramMessageId: 20581,
-              chatId: REDACTED,
+              chatId: 7000000001,
             },
             updatedAtMs: 1780422929186,
           },
@@ -11364,9 +11415,9 @@ describe('SquidRunApp', () => {
           pendingCount: 0,
           reconciled: [
             expect.objectContaining({
-              inboundMessageId: 'telegram-in-808498637',
+              inboundMessageId: 'telegram-in-700100020',
               egressMessageId: 'hm-1780422928508-4rxl3m',
-              chatId: 'REDACTED',
+              chatId: '7000000001',
               sessionScopeId: sessionId,
             }),
           ],
@@ -11385,9 +11436,9 @@ describe('SquidRunApp', () => {
         app.commsSessionScopeId = sessionId;
         app.markPendingTelegramReplyGuard({
           paneId: '1',
-          messageId: 'telegram-in-808498646',
-          chatId: 'REDACTED',
-          sender: 'james',
+          messageId: 'telegram-in-700100022',
+          chatId: '7000000001',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11406,9 +11457,9 @@ describe('SquidRunApp', () => {
             metadata: {
               directTarget: 'telegram',
               telegramMessageId: 20598,
-              replyToMessageId: 'telegram-in-808498645',
-              inboundMessageId: 'telegram-in-808498645',
-              chatId: REDACTED,
+              replyToMessageId: 'telegram-in-700100021',
+              inboundMessageId: 'telegram-in-700100021',
+              chatId: 7000000001,
               source: 'hm-telegram',
               envelope: {
                 session_id: sessionId,
@@ -11436,9 +11487,9 @@ describe('SquidRunApp', () => {
           status: 'telegram_reply_requirement_satisfied_by_journal',
           guard: null,
           satisfaction: expect.objectContaining({
-            inboundMessageId: 'telegram-in-808498646',
+            inboundMessageId: 'telegram-in-700100022',
             egressMessageId: 'hm-1780431576782-bst8n4',
-            chatId: 'REDACTED',
+            chatId: '7000000001',
             sessionScopeId: sessionId,
           }),
         }));
@@ -11484,7 +11535,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-injected-query-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
 
@@ -11551,7 +11602,7 @@ describe('SquidRunApp', () => {
         app.markPendingTelegramReplyGuard({
           paneId: '1',
           messageId: 'telegram-in-null-guard-chat-1',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
 
@@ -11582,7 +11633,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-periodic-reconcile-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11639,7 +11690,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-cross-chat-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11704,7 +11755,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-pre-inbound-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11760,7 +11811,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-wrong-session-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -11817,7 +11868,7 @@ describe('SquidRunApp', () => {
           paneId: '1',
           messageId: 'telegram-in-current-1',
           chatId: '1111111111',
-          sender: 'james',
+          sender: 'operator',
           sessionScopeId: sessionId,
         });
         queryCommsJournalEntries.mockReturnValue([
@@ -12185,16 +12236,16 @@ describe('SquidRunApp', () => {
       fs.writeFileSync(queuePath, JSON.stringify({
         items: [
           {
-            queueKey: 'telegram-in-900000185',
+            queueKey: 'telegram-in-700100011',
             paneId: '1',
-            message: '[Telegram from @REDACTED-EMAIL]: stale Tony Lu task',
-            messageId: 'telegram-in-900000185',
+            message: '[Telegram from @example_sender]: stale task',
+            messageId: 'telegram-in-700100011',
             channel: 'telegram',
-            sender: '@REDACTED-EMAIL',
+            sender: '@example_sender',
             createdAt: '2026-05-08T00:45:48.915Z',
             attemptCount: 3,
             meta: {
-              updateId: 808497185,
+              updateId: 700100011,
               messageId: 17488,
               windowKey: 'main',
               sessionScopeId: 'app-session-329',
@@ -12218,7 +12269,7 @@ describe('SquidRunApp', () => {
           remainingCount: 0,
         }));
         expect(app.recordPendingPaneDeliveryDrop).toHaveBeenCalledWith(
-          expect.objectContaining({ queueKey: 'telegram-in-900000185' }),
+          expect.objectContaining({ queueKey: 'telegram-in-700100011' }),
           expect.objectContaining({
             reason: 'stale_telegram_pending_session_scope',
             expectedSessionScopeId: 'app-session-330',
@@ -12247,14 +12298,14 @@ describe('SquidRunApp', () => {
           {
             queueKey: 'telegram-in-no-scope',
             paneId: '1',
-            message: '[Telegram from @REDACTED-EMAIL]: stale no-scope task',
+            message: '[Telegram from @example_sender]: stale no-scope task',
             messageId: 'telegram-in-no-scope',
             channel: 'telegram',
-            sender: '@REDACTED-EMAIL',
+            sender: '@example_sender',
             createdAt: '2026-05-08T03:00:00.000Z',
             attemptCount: 1,
             meta: {
-              updateId: 808497100,
+              updateId: 700100010,
               windowKey: 'main',
             },
           },
@@ -12420,7 +12471,7 @@ describe('SquidRunApp', () => {
         .mockReturnValueOnce(null)
         .mockReturnValue({ ok: true, status: 'telegram_reply_requirement_satisfied_by_journal' });
 
-      app.inspectPaneOutputForReplyGuards('1', 'pane-only answer to James', { outputKind: 'agent_visible_output' });
+      app.inspectPaneOutputForReplyGuards('1', 'pane-only answer to Operator', { outputKind: 'agent_visible_output' });
       jest.advanceTimersByTime(91_000);
 
       expect(emit).not.toHaveBeenCalled();
@@ -12451,7 +12502,7 @@ describe('SquidRunApp', () => {
 
     it('routes user target to Telegram when inbound context is recent', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
-      app.markTelegramInboundContext('james');
+      app.markTelegramInboundContext('operator');
 
       const result = await app.routeTelegramReply({
         target: 'user',
@@ -12493,12 +12544,12 @@ describe('SquidRunApp', () => {
     it('fails closed for user target when inherited reply context belongs to a scoped profile', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.telegramInboundContext = {
-        sender: '@sideprofile',
+        sender: '@Client',
         lastInboundAtMs: Date.now(),
         chatId: '4444444444',
-        windowKey: 'sideprofile',
-        profile: 'sideprofile',
-        sessionScopeId: 'app-test:sideprofile',
+        windowKey: 'client',
+        profile: 'client',
+        sessionScopeId: 'app-test:client',
       };
 
       const result = await app.routeTelegramReply({
@@ -12513,10 +12564,10 @@ describe('SquidRunApp', () => {
           handled: true,
           ok: false,
           status: 'telegram_privacy_route_cross_profile_context',
-          windowKey: 'sideprofile',
-          profile: 'sideprofile',
+          windowKey: 'client',
+          profile: 'client',
           chatId: '4444444444',
-          sessionScopeId: 'app-test:sideprofile',
+          sessionScopeId: 'app-test:client',
         })
       );
     });
@@ -12524,7 +12575,7 @@ describe('SquidRunApp', () => {
     it('fails closed for user target when the reply chat route resolves outside main', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: Date.now(),
         chatId: '4444444444',
         windowKey: 'main',
@@ -12544,10 +12595,10 @@ describe('SquidRunApp', () => {
           handled: true,
           ok: false,
           status: 'telegram_privacy_route_cross_profile_context',
-          windowKey: 'sideprofile',
-          profile: 'sideprofile',
+          windowKey: 'client',
+          profile: 'client',
           chatId: '4444444444',
-          sessionScopeId: expect.stringContaining(':sideprofile'),
+          sessionScopeId: expect.stringContaining(':client'),
         })
       );
     });
@@ -12555,7 +12606,7 @@ describe('SquidRunApp', () => {
     it('does not route user target when inbound context is stale', async () => {
       const { sendRoutedTelegramMessage } = require('../scripts/hm-telegram-routing');
       app.telegramInboundContext = {
-        sender: 'james',
+        sender: 'operator',
         lastInboundAtMs: Date.now() - (6 * 60 * 1000),
       };
 
@@ -13352,12 +13403,12 @@ describe('SquidRunApp', () => {
       app.startScopedTelegramTriggerDrainPoller();
       expect(getPathsSpy).not.toHaveBeenCalled();
 
-      app.activeProfileName = 'sideprofile';
+      app.activeProfileName = 'client';
       getPathsSpy.mockReturnValue([]); 
       app.startScopedTelegramTriggerDrainPoller();
       
       jest.advanceTimersByTime(11000);
-      expect(getPathsSpy).toHaveBeenCalledWith('sideprofile');
+      expect(getPathsSpy).toHaveBeenCalledWith('client');
 
       getPathsSpy.mockRestore();
       jest.useRealTimers();
@@ -13368,9 +13419,9 @@ describe('SquidRunApp', () => {
       jest.setSystemTime(new Date('2026-06-30T12:00:00.000Z'));
       const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-accepted-'));
       const triggerPath = path.join(triggerDir, 'architect.txt');
-      fs.writeFileSync(triggerPath, '[Telegram from @Rachelchoi]: payload\n', 'utf8');
+      fs.writeFileSync(triggerPath, '[Telegram from @Clientchoi]: payload\n', 'utf8');
 
-      app.activeProfileName = 'sideprofile';
+      app.activeProfileName = 'client';
       const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
       const deliverSpy = jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
         ok: true,
@@ -13406,9 +13457,9 @@ describe('SquidRunApp', () => {
       jest.setSystemTime(new Date('2026-06-30T12:00:00.000Z'));
       const triggerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-drain-quarantine-'));
       const triggerPath = path.join(triggerDir, 'architect.txt');
-      fs.writeFileSync(triggerPath, '[Telegram from @Rachelchoi]: stuck payload\n', 'utf8');
+      fs.writeFileSync(triggerPath, '[Telegram from @Clientchoi]: stuck payload\n', 'utf8');
 
-      app.activeProfileName = 'sideprofile';
+      app.activeProfileName = 'client';
       const getPathsSpy = jest.spyOn(app, 'getScopedTelegramTriggerPaths').mockReturnValue([triggerPath]);
       const deliverSpy = jest.spyOn(app, 'deliverScopedTelegramInboundWithRetry').mockResolvedValue({
         ok: false,
@@ -13468,16 +13519,16 @@ describe('SquidRunApp', () => {
       const { parseConsumeMarker } = require('../modules/main/telegram-consume-marker');
 
       const record = {
-        updateId: 808499999,
+        updateId: 700100999,
         text: 'the tankless job, not the other one',
-        chatId: REDACTED,
-        from: 'james',
+        chatId: 7000000001,
+        from: 'operator',
         messageId: 24001,
         routeKey: 'main',
         targetProfile: 'main',
         targetWindow: 'main',
         timestampMs: Date.now(),
-        rawMetadata: { chatId: REDACTED, updateId: 808499999 },
+        rawMetadata: { chatId: 7000000001, updateId: 700100999 },
       };
 
       let deliveredText = null;
@@ -13488,8 +13539,8 @@ describe('SquidRunApp', () => {
 
       const built = app.buildTelegramInboundJob({
         record,
-        messageId: 'telegram-in-808499999',
-        updateId: 808499999,
+        messageId: 'telegram-in-700100999',
+        updateId: 700100999,
         windowKey: 'main',
         profile: 'main',
         sessionScopeId: 'app-session-492',
@@ -13510,7 +13561,7 @@ describe('SquidRunApp', () => {
       try {
         const identity = writer.db
           .prepare('SELECT * FROM telegram_source_identity WHERE message_id = ?')
-          .get('telegram-in-808499999');
+          .get('telegram-in-700100999');
         expect(identity).toBeTruthy();
         expect(identity.canonical_payload_sha256).toBe(expectedDigest);
         expect(identity.canonical_payload_sha256).not.toBe(emptyDigest);
@@ -13568,7 +13619,7 @@ describe('SquidRunApp', () => {
       ['ambiguous send', { ok: false, ambiguous: true, status: 'telegram_send_ambiguous' }],
       ['accepted but not ok', { ok: false, accepted: true, status: 'telegram_send_ambiguous' }],
     ])('MIRA %s HOLDS and never falls back to the Architect pane', async (_l, miraOutcome) => {
-      // A send that may already have reached James must not be followed by an
+      // A send that may already have reached Operator must not be followed by an
       // Architect reply: that is two visible answers to one inbound message,
       // inside a SINGLE delivery attempt, which no queue bookkeeping can undo.
       jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
@@ -13581,7 +13632,7 @@ describe('SquidRunApp', () => {
       });
 
       const result = await app.deliverTelegramInboundJob({
-        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 995 },
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 995 },
         media: null, photo: null, document: null, archivePath: null,
         inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
         inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
@@ -13607,7 +13658,7 @@ describe('SquidRunApp', () => {
       });
 
       await app.deliverTelegramInboundJob({
-        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 996 },
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 996 },
         media: null, photo: null, document: null, archivePath: null,
         inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
         inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
@@ -13668,7 +13719,7 @@ describe('SquidRunApp', () => {
 
       const outcome = await app.routeMainTelegramInboundToMira({
         body: direct ? 'status' : 'hello',
-        sender: 'james',
+        sender: 'operator',
         metadata: { chatId: 111, updateId: 998 },
         inboundMessageId: 'telegram-in-998',
         inboundSessionScopeId: 'sess',
@@ -13689,8 +13740,8 @@ describe('SquidRunApp', () => {
       // scoped profile NAMESPACES the first coord segment, so plain `runtime`
       // would address a database that never exists, read as ABSENCE, and mean
       // "never delivered" — a duplicate dressed as a miss.
-      const resolved = app.resolveScopedLedgerDbPath('sideprofile');
-      expect(resolved).toContain(`${path.sep}runtime-sideprofile${path.sep}`);
+      const resolved = app.resolveScopedLedgerDbPath('client');
+      expect(resolved).toContain(`${path.sep}runtime-client${path.sep}`);
       expect(resolved).not.toContain(`${path.sep}runtime${path.sep}`);
       expect(resolved.endsWith('evidence-ledger.db')).toBe(true);
     });
@@ -14025,7 +14076,7 @@ describe('SquidRunApp', () => {
       });
 
       const result = await app.deliverTelegramInboundJob({
-        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 810 },
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 810 },
         media: null, photo: null, document: null, archivePath: null,
         inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
         inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
@@ -14115,7 +14166,7 @@ describe('SquidRunApp', () => {
 
     it('THE QUIT NOTICE is sent AFTER quiesce and BEFORE the daemon dies', async () => {
       // The poller is alive here and will not be after daemon shutdown. Telling
-      // James his messages will wait is only honest while we can still send it.
+      // Operator his messages will wait is only honest while we can still send it.
       const order = [];
       app.telegramDrainCoordinator = { dispose: async () => { order.push('drain-quiesced'); } };
       jest.spyOn(app, 'sendQuitTelegramNotice').mockImplementation(async () => {
@@ -14359,7 +14410,7 @@ describe('SquidRunApp', () => {
       });
 
       it('NON-MAIN sends nothing at all: main owns polling', async () => {
-        app.activeProfileName = 'sideprofile';
+        app.activeProfileName = 'client';
         const result = await app.sendQuitTelegramNotice('test');
         expect(sendFn).not.toHaveBeenCalled();
         expect(result).toMatchObject({ skipped: true });
@@ -14553,7 +14604,7 @@ describe('SquidRunApp', () => {
     });
 
     it('PARTIAL EGRESS HOLDS even when Mira reports failure, instead of a second reply', async () => {
-      // A later chunk failed after part 1 already reached James. The aggregate
+      // A later chunk failed after part 1 already reached Operator. The aggregate
       // says ok:false, but falling back would put a second visible reply on top
       // of text he has already seen.
       jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
@@ -14568,7 +14619,7 @@ describe('SquidRunApp', () => {
       });
 
       const result = await app.deliverTelegramInboundJob({
-        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 992 },
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 992 },
         media: null, photo: null, document: null, archivePath: null,
         inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
         inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
@@ -14582,7 +14633,7 @@ describe('SquidRunApp', () => {
     it('A PROOF-LOOKUP FAILURE ON THE LIVE PATH HOLDS instead of being read as a delivery failure', async () => {
       // If this throw escaped into the caller's try, processRecord would read it
       // as deliver_threw -> DEFINITE -> retry, and retrying after Mira may
-      // already have sent is a second reply to James.
+      // already have sent is a second reply to Operator.
       jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
       jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({ ok: true, handled: true });
       jest.spyOn(app, 'inspectMiraOutboundEgress').mockImplementation(() => {
@@ -14593,7 +14644,7 @@ describe('SquidRunApp', () => {
       });
 
       const result = await app.deliverTelegramInboundJob({
-        body: 'hello', sender: 'james', metadata: { chatId: 111, updateId: 994 },
+        body: 'hello', sender: 'operator', metadata: { chatId: 111, updateId: 994 },
         media: null, photo: null, document: null, archivePath: null,
         inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
         inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
@@ -14620,7 +14671,7 @@ describe('SquidRunApp', () => {
     });
 
     it('Mira accepted with NO durable proof HOLDS and never falls back to the Architect pane', async () => {
-      // A fallback here would be a SECOND user-visible reply to James for one
+      // A fallback here would be a SECOND user-visible reply to Operator for one
       // inbound message. Only a definite Mira failure may fall back.
       jest.spyOn(app, 'shouldRouteMainTelegramInboundToMira').mockReturnValue(true);
       jest.spyOn(app, 'routeMainTelegramInboundToMira').mockResolvedValue({
@@ -14633,7 +14684,7 @@ describe('SquidRunApp', () => {
       });
 
       const result = await app.deliverTelegramInboundJob({
-        body: 'hello', sender: 'james', metadata: { chatId: 1111111111, updateId: 980 },
+        body: 'hello', sender: 'operator', metadata: { chatId: 1111111111, updateId: 980 },
         media: null, photo: null, document: null, archivePath: null,
         inboundRoute: { ok: true, profile: 'main', windowKey: 'main' },
         inboundWindowKey: 'main', inboundSessionScopeId: 'sess',
@@ -14748,7 +14799,7 @@ describe('SquidRunApp', () => {
     it('the generic model-prompt receipt store is NOT consulted for Telegram proof any more', async () => {
       // The ruled defect, pinned as a regression test: a `prompt_submitted`
       // receipt is a submission to a model endpoint, not consumption by a pane,
-      // and it must no longer be able to retire one of James's messages.
+      // and it must no longer be able to retire one of Operator's messages.
       const receipts = require('../modules/model-prompt-receipt');
       receipts.getModelPromptReceipt.mockReturnValue({
         messageId: 'telegram-in-962',
@@ -14787,7 +14838,7 @@ describe('SquidRunApp', () => {
           dataRoot: base,
           routeKey: 'main',
           text: `backlog ${updateId}`,
-          from: 'james',
+          from: 'operator',
           metadata: { updateId, chatId: 1111111111 },
           targetProfile: 'main',
           targetWindow: 'main',

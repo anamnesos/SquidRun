@@ -5,8 +5,8 @@ const { evaluatePromotionGate, PROMOTION } = require('../modules/the-tell/promot
 const DAY = 86400000;
 const NOW = 1_800_000_000_000;
 const dAgo = (n) => NOW - n * DAY;
-const OVERDUE = 'trustquote:invoice-aging';
-const TASKS = 'trustquote:job-tasks-incomplete';
+const OVERDUE = 'exampleapp:invoice-aging';
+const TASKS = 'exampleapp:job-tasks-incomplete';
 
 const spoke = (signalClass, verdict, tsDaysAgo) => ({
   ts: dAgo(tsDaysAgo), type: 'spoke', signalClass, key: `k${tsDaysAgo}`,
@@ -92,12 +92,12 @@ describe('Rung-2 promotion gate — evidence-forced, a query over the ledger (no
 describe('our-concept classes have no app-truth oracle — never promoted by this gate', () => {
   test('margin/collision spokes land in blockedNoOracle, never in promote', () => {
     const out = run(ledger(30, [
-      spoke('trustquote:job-margin', 'useful', 3),
+      spoke('exampleapp:job-margin', 'useful', 3),
       spoke('promise:collision', 'useful', 2),
       spoke(OVERDUE, 'useful', 1),
     ]));
-    expect(out.blockedNoOracle).toEqual(expect.arrayContaining(['trustquote:job-margin', 'promise:collision']));
-    expect(out.promote).not.toContain('trustquote:job-margin');
+    expect(out.blockedNoOracle).toEqual(expect.arrayContaining(['exampleapp:job-margin', 'promise:collision']));
+    expect(out.promote).not.toContain('exampleapp:job-margin');
     expect(out.promote).not.toContain('promise:collision');
   });
 

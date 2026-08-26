@@ -87,7 +87,7 @@
       "ordinary_edit_policy.requires_explicit_review_for_higher_gate_fields": true,
       "ordinary_edit_policy.review_owner": "Architect",
       "review_gate_policy.machine_checkable": true,
-      "review_gate_policy.default_for_identity_anchor_change": "blocked_pending_architect_oracle_james_review",
+      "review_gate_policy.default_for_identity_anchor_change": "blocked_pending_architect_oracle_operator_review",
       "review_gate_policy.ordinary_growth_loop_is_not_a_gate": true,
       "audit_record.event_type": "identity_anchor_validation",
       "audit_record.append_only": true,

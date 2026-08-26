@@ -37,14 +37,14 @@ describe('team-room attachment integrity', () => {
       claimedMime: 'image/png',
       expectedBytes: bytes.length,
       expectedSha256: crypto.createHash('sha256').update(bytes).digest('hex'),
-      originalName: '../James:photo?.png',
+      originalName: '../Operator:photo?.png',
     });
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       mimeType: 'image/png',
       bytes: bytes.length,
       relativePath: 'photo.png',
-      originalName: 'James_photo_.png',
+      originalName: 'Operator_photo_.png',
     }));
   });
 

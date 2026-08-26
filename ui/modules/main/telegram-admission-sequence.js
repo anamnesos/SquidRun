@@ -65,7 +65,7 @@ const nodeTypes = require('node:util').types;
  * The drain has to decide between "retry this" and "never touch this again
  * without a human". That decision is not derivable from an error string, and
  * guessing it wrong in either direction is a real outage: guess `retry` on an
- * ambiguous delivery and James reads the same message twice; guess `ambiguous`
+ * ambiguous delivery and Operator reads the same message twice; guess `ambiguous`
  * on a clean refusal and the queue wedges behind a message that was never sent.
  */
 const PHASES = Object.freeze({

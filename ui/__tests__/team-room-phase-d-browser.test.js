@@ -30,7 +30,7 @@ function removeBoundedSmokeRoot(candidate) {
 }
 
 function unexpectedElectronStderr(stderr) {
-  const knownWidgetRejection = /^\[\d+:\d{4}\/\d{6}\.\d{3}:ERROR:interface_endpoint_client\.cc\(702\)\] Message \d+ rejected by interface blink\.mojom\.Widget(?:Host)?$/u;
+  const knownWidgetRejection = /^\[\d+:\d{4}\/\d{6}\.\d{3}:ERROR:(?:.*[\\/])?interface_endpoint_client\.cc(?::\d+|\(\d+\))\] Message \d+ rejected by interface blink\.mojom\.Widget(?:Host)?$/u;
   return String(stderr || '').split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -81,7 +81,7 @@ function waitForProcessesExit(pids, timeoutMs = 5_000) {
 }
 
 describe('Team Room Phase D browser recovery flow', () => {
-  test('proves reconnect, restart, draft/upload recovery, PWA, scroll, and phone behavior in Electron 28', () => {
+  test('proves reconnect, restart, draft/upload recovery, PWA, scroll, and phone behavior in the installed Electron runtime', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-team-room-phase-d-jest-'));
     const outputPath = path.join(tempRoot, 'result.json');
     const electronPackageRoot = path.dirname(require.resolve('electron/package.json'));
@@ -125,8 +125,8 @@ describe('Team Room Phase D browser recovery flow', () => {
       }));
       expect(result).toEqual(expect.objectContaining({
         ok: true,
-        electron: '28.3.3',
-        node: '18.18.2',
+        electron: require('electron/package.json').version,
+        node: expect.stringMatching(/^\d+\.\d+\.\d+$/u),
         mainProcessExited: true,
         electronProcessesExited: true,
         temporaryPathCount: 0,

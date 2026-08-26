@@ -2,7 +2,7 @@
 /**
  * Squid Room pet atlas ADVANCER (step-2 of the S426 art correction).
  *
- * James's direction: keep the v0 look exactly ("I like how they look now"),
+ * Operator's direction: keep the v0 look exactly ("I like how they look now"),
  * advance it - white pupils that move "expressively... intelligently", less
  * grain, more polish. This pipeline therefore TRANSFORMS the v0 atlas pixels
  * in place instead of generating new art: it detects the cyan eye capsules in

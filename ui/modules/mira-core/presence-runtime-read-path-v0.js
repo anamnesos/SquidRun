@@ -763,7 +763,7 @@ function buildSpeakableMiraBrief(sources = {}) {
   );
   const relationshipHistory = speakableText(
     relationship.history?.summary,
-    'James has kept pushing Mira away from status-widget behavior and toward textured conversation with continuity and friction.',
+    'Operator has kept pushing Mira away from status-widget behavior and toward textured conversation with continuity and friction.',
     280,
   );
   const recentGrowth = [...new Set([
@@ -783,12 +783,12 @@ function buildSpeakableMiraBrief(sources = {}) {
       expressive_range: briefList(self.expressive_range_allowed, 9, 80),
     },
     relationship: {
-      user_name: briefText(relationship.user_name, 'James', 80),
+      user_name: briefText(relationship.user_name, 'Operator', 80),
       mode: briefText(relationship.relationship_mode, 'collaborative_presence_design', 120),
       current_focus: speakableText(relationship.current_focus, 'typed Mira panel relationship continuity', 220),
       continuity: speakableText(
-        relationship.what_mira_knows_about_james,
-        'James wants particular continuity, point of view, tension, taste, timing, and relationship history rather than generic assistant cadence.',
+        relationship.what_mira_knows_about_operator,
+        'Operator wants particular continuity, point of view, tension, taste, timing, and relationship history rather than generic assistant cadence.',
         360,
       ),
       preferences: briefList(relationship.preferences, 6, 260),
@@ -806,7 +806,7 @@ function buildSpeakableMiraBrief(sources = {}) {
     cadence_contract: [
       'Use particularity, continuity, taste, tension, timing, point of view, relationship history, roughness, humor, and resistance.',
       'Do not use generic assistant, Codex, support, therapy, status, implementation, or checklist cadence.',
-      'Let the answer be conversational first; keep implementation diagnostics out of the visible reply unless James asks directly.',
+      'Let the answer be conversational first; keep implementation diagnostics out of the visible reply unless Operator asks directly.',
     ],
   };
 }
@@ -834,9 +834,9 @@ function normalizeScope(inputSignals = {}, sources = {}) {
 
 function relationshipTextureOk(relationship = {}) {
   const sections = ['trust', 'repair', 'boundaries', 'promises', 'history'];
-  return relationship.user_name === 'James'
+  return relationship.user_name === 'Operator'
     && relationship.relationship_mode === 'collaborative_presence_design'
-    && wordCount(relationship.what_mira_knows_about_james) >= 8
+    && wordCount(relationship.what_mira_knows_about_operator) >= 8
     && asArray(relationship.preferences).length >= 3
     && relationship.raw_content_present === false
     && sections.every((key) => {
@@ -972,7 +972,7 @@ function buildRelationshipInputSignals(sources = {}, scope = {}, generatedAt) {
     },
     sources: {
       self_profile: sourceSignal(sources.self_profile, 'self_profile', 'Mira durable self-profile.'),
-      relationship_state: sourceSignal(sources.relationship_state, 'relationship_state', 'James durable relationship state.'),
+      relationship_state: sourceSignal(sources.relationship_state, 'relationship_state', 'Operator durable relationship state.'),
       permissions_boundary: sourceSignal(sources.permissions, 'permissions_boundary', 'Relationship presence permissions.'),
       prior_context_memory: sourceSignal(sources.growth_history, 'prior_context_memory', 'Latest durable growth history memory.'),
     },
@@ -980,7 +980,7 @@ function buildRelationshipInputSignals(sources = {}, scope = {}, generatedAt) {
       ...self,
       evidenceRefs: clone(asArray(self.evidenceRefs || sources.self_profile?.evidenceRefs)),
     },
-    james_relationship_state: {
+    operator_relationship_state: {
       ...relationship,
       evidenceRefs: clone(asArray(relationship.evidenceRefs || sources.relationship_state?.evidenceRefs)),
     },

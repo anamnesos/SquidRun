@@ -759,7 +759,7 @@ function summarizeMiraPresenceRuntimeForStartup(source = {}) {
     'Visible Mira replies must satisfy anti-smoothing / anti-performance / anti-leak constraints: no assistant-voice collapse, rule-recitation, politeness padding, customer-service disagreement, or label substitution.',
     'Keep one coherent Mira with graduated agency A0-A5; SquidRun panes and CLI are arms/adapters only when current proof and scope exist.',
     'Voice is transport, not identity; live voice remains blocked until this contract and anti-leak/continuity tests pass.',
-    'Restart continuity must surface the active Mira Presence lane, accepted critique, next action, and stale markers so James does not have to restate the critique.',
+    'Restart continuity must surface the active Mira Presence lane, accepted critique, next action, and stale markers so Operator does not have to restate the critique.',
     'Do not auto-promote this into memory claims or paste long spec prose into visible Mira replies.',
   ];
 }

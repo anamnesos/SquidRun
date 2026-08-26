@@ -24,7 +24,7 @@ const {
 
 function memberIdentity(memberId) {
   const identities = {
-    james: { memberKind: 'human', role: 'james', paneId: null, source: 'room_web' },
+    operator: { memberKind: 'human', role: 'operator', paneId: null, source: 'room_web' },
     architect: { memberKind: 'agent', role: 'architect', paneId: '1', source: 'room_cli' },
     builder: { memberKind: 'agent', role: 'builder', paneId: '2', source: 'room_cli' },
     oracle: { memberKind: 'agent', role: 'oracle', paneId: '3', source: 'room_cli' },
@@ -54,10 +54,10 @@ describe('team-room production service path', () => {
     });
     expect(store.init().ok).toBe(true);
     registrations = new Map();
-    for (const memberId of ['james', 'architect', 'builder', 'oracle']) {
+    for (const memberId of ['operator', 'architect', 'builder', 'oracle']) {
       registrations.set(`registration-${memberId}`, {
         ok: true,
-        registrationAuthority: memberId === 'james' ? 'paired_device' : 'runtime_registry',
+        registrationAuthority: memberId === 'operator' ? 'paired_device' : 'runtime_registry',
         identity: memberIdentity(memberId),
       });
     }
@@ -70,7 +70,7 @@ describe('team-room production service path', () => {
     });
     service = new TeamRoomService({ store, auth });
     credentials = {};
-    for (const memberId of ['james', 'architect', 'builder', 'oracle']) {
+    for (const memberId of ['operator', 'architect', 'builder', 'oracle']) {
       const issued = auth.issueCredential({
         registrationToken: `registration-${memberId}`,
       });
@@ -87,7 +87,7 @@ describe('team-room production service path', () => {
   function postAs(memberId, payload) {
     return service.post({
       authorization: `Bearer ${credentials[memberId].token}`,
-      source: memberId === 'james' ? 'room_web' : 'room_cli',
+      source: memberId === 'operator' ? 'room_web' : 'room_cli',
       roomId: 'main',
       profileName: 'main',
       payload,
@@ -124,7 +124,7 @@ describe('team-room production service path', () => {
 
     const serverResolved = auth.issueCredential({
       registrationToken: 'registration-builder',
-      identity: memberIdentity('james'),
+      identity: memberIdentity('operator'),
     });
     expect(serverResolved).toEqual(expect.objectContaining({
       ok: true,
@@ -133,14 +133,14 @@ describe('team-room production service path', () => {
   });
 
   test('rejects paired-device and runtime credential source relabeling and persists only the bound source', () => {
-    const jamesMismatch = service.post({
-      authorization: `Bearer ${credentials.james.token}`,
+    const operatorMismatch = service.post({
+      authorization: `Bearer ${credentials.operator.token}`,
       source: 'room_cli',
       roomId: 'main',
       profileName: 'main',
-      payload: { body: 'wrong endpoint', clientNonce: 'source-james-wrong' },
+      payload: { body: 'wrong endpoint', clientNonce: 'source-operator-wrong' },
     });
-    expect(jamesMismatch).toEqual(expect.objectContaining({ ok: false, reason: 'room_source_mismatch' }));
+    expect(operatorMismatch).toEqual(expect.objectContaining({ ok: false, reason: 'room_source_mismatch' }));
     const builderMismatch = service.post({
       authorization: `Bearer ${credentials.builder.token}`,
       source: 'room_web',
@@ -155,12 +155,12 @@ describe('team-room production service path', () => {
     expect(builderMismatch).toEqual(expect.objectContaining({ ok: false, reason: 'room_source_mismatch' }));
     expect(store.listMessages()).toHaveLength(0);
 
-    const accepted = postAs('james', { body: 'bound endpoint', clientNonce: 'source-james-right' });
+    const accepted = postAs('operator', { body: 'bound endpoint', clientNonce: 'source-operator-right' });
     expect(accepted.ok).toBe(true);
     expect(accepted.message.source).toBe('room_web');
     const credentialRow = store.db.prepare(`
       SELECT source FROM room_auth_credentials WHERE credential_id = ?
-    `).get(credentials.james.credential.credentialId);
+    `).get(credentials.operator.credential.credentialId);
     expect(credentialRow.source).toBe('room_web');
     expect(store.db.prepare('SELECT source FROM room_messages WHERE message_id = ?').get(accepted.message.messageId).source)
       .toBe('room_web');
@@ -176,13 +176,13 @@ describe('team-room production service path', () => {
       INSERT INTO room_members (
         room_id, profile_name, member_id, display_name, member_kind, role, pane_id, avatar_key, active, created_at_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('main', 'main', 'james', 'James', 'human', 'james', null, 'james', 1, 1);
+    `).run('main', 'main', 'operator', 'Operator', 'human', 'operator', null, 'operator', 1, 1);
     legacy.prepare(`
       INSERT INTO room_auth_credentials (
         credential_id, token_hash, room_id, profile_name, member_id, session_kind,
         capabilities_json, created_at_ms, expires_at_ms, revoked_at_ms
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-    `).run('legacy-credential', 'a'.repeat(64), 'main', 'main', 'james', 'paired_device', '["post"]', 1, 999999);
+    `).run('legacy-credential', 'a'.repeat(64), 'main', 'main', 'operator', 'paired_device', '["post"]', 1, 999999);
     legacy.exec('PRAGMA user_version=1;');
     legacy.close();
 
@@ -205,8 +205,8 @@ describe('team-room production service path', () => {
     fs.writeFileSync(unlinkedPath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 8]));
     const linked = store.registerReadyAttachment({ filePath: linkedPath, claimedMime: 'image/png' });
     const unlinked = store.registerReadyAttachment({ filePath: unlinkedPath, claimedMime: 'image/png' });
-    const first = postAs('james', { body: 'Legacy first.', clientNonce: 'legacy-link-first' });
-    const second = postAs('james', { body: 'Legacy second.', clientNonce: 'legacy-link-second' });
+    const first = postAs('operator', { body: 'Legacy first.', clientNonce: 'legacy-link-first' });
+    const second = postAs('operator', { body: 'Legacy second.', clientNonce: 'legacy-link-second' });
     expect(linked.ok && unlinked.ok && first.ok && second.ok).toBe(true);
 
     store.db.exec(`
@@ -259,7 +259,7 @@ describe('team-room production service path', () => {
     expect(store.db.prepare('SELECT COUNT(DISTINCT claim_id) AS count FROM room_message_attachments').get().count).toBe(2);
 
     const replayed = store.postMessage({
-      identity: memberIdentity('james'),
+      identity: memberIdentity('operator'),
       payload: {
         body: 'Legacy claimed handle replay.',
         clientNonce: 'legacy-claimed-replay',
@@ -268,7 +268,7 @@ describe('team-room production service path', () => {
     });
     expect(replayed).toEqual({ ok: false, reason: 'room_attachment_already_claimed' });
     const postedUnlinked = store.postMessage({
-      identity: memberIdentity('james'),
+      identity: memberIdentity('operator'),
       payload: {
         body: 'Legacy unlinked handle remains usable.',
         clientNonce: 'legacy-unlinked-use',
@@ -279,9 +279,9 @@ describe('team-room production service path', () => {
   });
 
   test('traverses auth to persistence to durable target activations to the canonical delivery adapter', async () => {
-    const jamesPost = postAs('james', { body: 'Room check.', clientNonce: 'james-1' });
-    expect(jamesPost.ok).toBe(true);
-    expect(jamesPost.activations.map((item) => item.targetMemberId)).toEqual(['architect', 'builder', 'oracle']);
+    const operatorPost = postAs('operator', { body: 'Room check.', clientNonce: 'operator-1' });
+    expect(operatorPost.ok).toBe(true);
+    expect(operatorPost.activations.map((item) => item.targetMemberId)).toEqual(['architect', 'builder', 'oracle']);
 
     const deliveries = [];
     const adapter = new TeamRoomDeliveryAdapter({
@@ -296,21 +296,21 @@ describe('team-room production service path', () => {
     expect(result.delivered).toHaveLength(1);
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0].member).toEqual(expect.objectContaining({ memberId: 'builder', paneId: '2' }));
-    expect(deliveries[0].prompt).toContain(`messageId=${jamesPost.message.messageId}`);
+    expect(deliveries[0].prompt).toContain(`messageId=${operatorPost.message.messageId}`);
     expect(deliveries[0].prompt).toContain('reply via hm-room or stay silent.');
     expect(store.getActivation(result.delivered[0]).status).toBe('delivered');
   });
 
   test('preserves canonical punctuation while making the derived pane prompt transport-safe', async () => {
     const canonicalBody = 'Wait 2–3 minutes—then say “check it.”';
-    const jamesPost = postAs('james', {
+    const operatorPost = postAs('operator', {
       body: canonicalBody,
-      clientNonce: 'james-smart-punctuation',
+      clientNonce: 'operator-smart-punctuation',
     });
-    expect(jamesPost.ok).toBe(true);
+    expect(operatorPost.ok).toBe(true);
 
     const stored = store.db.prepare('SELECT body FROM room_messages WHERE message_id = ?')
-      .get(jamesPost.message.messageId);
+      .get(operatorPost.message.messageId);
     expect(stored.body).toBe(canonicalBody);
     expect(stored.body.codePointAt(stored.body.indexOf('–'))).toBe(0x2013);
 
@@ -331,9 +331,9 @@ describe('team-room production service path', () => {
 
   test('is idempotent by author nonce and rejects a changed replay', () => {
     const payload = { body: 'Exactly once.', clientNonce: 'nonce-1' };
-    const first = postAs('james', payload);
-    const replay = postAs('james', payload);
-    const conflict = postAs('james', { ...payload, body: 'Changed body.' });
+    const first = postAs('operator', payload);
+    const replay = postAs('operator', payload);
+    const conflict = postAs('operator', { ...payload, body: 'Changed body.' });
     expect(first.status).toBe('inserted');
     expect(replay).toEqual(expect.objectContaining({ ok: true, status: 'idempotent' }));
     expect(replay.message.messageId).toBe(first.message.messageId);
@@ -395,7 +395,7 @@ describe('team-room production service path', () => {
     }));
   });
 
-  test('applies the six-post fuse across agent-initiated roots and requires James to reset it', () => {
+  test('applies the six-post fuse across agent-initiated roots and requires Operator to reset it', () => {
     const order = ['builder', 'architect', 'oracle', 'builder', 'architect', 'oracle'];
     let sixth;
     for (let index = 0; index < order.length; index += 1) {
@@ -420,7 +420,7 @@ describe('team-room production service path', () => {
       participationReason: PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
     })).toEqual(expect.objectContaining({ ok: false, reason: 'room_activation_fused' }));
 
-    expect(postAs('james', { body: 'Fresh human turn.', clientNonce: 'initiated-fuse-reset' }).ok).toBe(true);
+    expect(postAs('operator', { body: 'Fresh human turn.', clientNonce: 'initiated-fuse-reset' }).ok).toBe(true);
     expect(store.getRoomState()).toEqual(expect.objectContaining({
       consecutiveAgentPosts: 0,
       activationFused: false,
@@ -443,13 +443,13 @@ describe('team-room production service path', () => {
       .toEqual([
         { memberId: 'architect', displayName: 'Mira', role: 'architect' },
         { memberId: 'builder', displayName: 'Rook', role: 'builder' },
-        { memberId: 'james', displayName: 'James', role: 'james' },
+        { memberId: 'operator', displayName: 'You', role: 'operator' },
         { memberId: 'oracle', displayName: 'Vera', role: 'oracle' },
       ]);
   });
 
   test('missing-target repair adds only the new member activation and preserves existing activation IDs', () => {
-    const posted = postAs('james', { body: 'Expansion-safe.', clientNonce: 'missing-target-1' });
+    const posted = postAs('operator', { body: 'Expansion-safe.', clientNonce: 'missing-target-1' });
     const before = new Map(posted.activations.map((item) => [item.targetMemberId, item.activationId]));
     store.db.prepare(`
       INSERT INTO room_members (
@@ -472,7 +472,7 @@ describe('team-room production service path', () => {
     [PARTICIPATION_REASONS.REAL_QUESTION, 'Did either of you notice the room getting quieter after that?'],
     [PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION, 'One correction: the deletion happened after the backup, not before it.'],
   ])('allows a same-seat %s second turn on a distinct delivered activation in a human root', (reason, body) => {
-    const root = postAs('james', { body: 'Tell me the weirdest moment tonight.', clientNonce: `multi-root-${reason}` });
+    const root = postAs('operator', { body: 'Tell me the weirdest moment tonight.', clientNonce: `multi-root-${reason}` });
     const veraFirstDelivery = deliverActivation('oracle');
     const veraFirst = postAs('oracle', {
       body: 'The crawlspace-to-Team-Room loop was messy, useful, and slightly ridiculous.',
@@ -518,7 +518,7 @@ describe('team-room production service path', () => {
   });
 
   test('keeps automatic human-root reentry behind semantic coverage and explicit evidence reentry', () => {
-    const root = postAs('james', { body: 'Discuss.', clientNonce: 'root-1' });
+    const root = postAs('operator', { body: 'Discuss.', clientNonce: 'root-1' });
     const builderDelivery = deliverActivation('builder');
     const builderReply = postAs('builder', {
       body: 'Builder answer.',
@@ -563,7 +563,7 @@ describe('team-room production service path', () => {
   });
 
   test('allows distinct human-texture answers from every agent on one human question', () => {
-    const root = postAs('james', {
+    const root = postAs('operator', {
       body: "Thoughts and feelings today before I head out?",
       clientNonce: 'collective-texture-root',
     });
@@ -580,7 +580,7 @@ describe('team-room production service path', () => {
 
     const architectDelivery = deliverActivation('architect', root.message.messageId);
     const architectReply = postAs('architect', {
-      body: 'What sits worst with me is how long sideprofile waited while we debugged ourselves.',
+      body: 'What sits worst with me is how long Client waited while we debugged ourselves.',
       clientNonce: 'collective-texture-architect',
       replyToMessageId: architectDelivery.message.messageId,
       causalActivationId: architectDelivery.activation.activationId,
@@ -603,7 +603,7 @@ describe('team-room production service path', () => {
   });
 
   test('atomically rejects covered cross-agent echoes but preserves distinct additive posts', () => {
-    const root = postAs('james', { body: 'Did the phone photo arrive?', clientNonce: 'coverage-root' });
+    const root = postAs('operator', { body: 'Did the phone photo arrive?', clientNonce: 'coverage-root' });
     const builderDelivery = deliverActivation('builder');
     const builderReply = postAs('builder', {
       body: 'Yep — the full photo came through. Teal ROG rig, CPU at 62C, white Strimers.',
@@ -646,7 +646,7 @@ describe('team-room production service path', () => {
   });
 
   test('does not count a multipart root question as proof that another agent covered the second answer', () => {
-    postAs('james', {
+    postAs('operator', {
       body: 'Is the listener up and did the phone photo retain full resolution?',
       clientNonce: 'multipart-coverage-root',
     });
@@ -673,7 +673,7 @@ describe('team-room production service path', () => {
   });
 
   test('lands a combined answer when any substantive token is absent from prior agent posts', () => {
-    postAs('james', {
+    postAs('operator', {
       body: 'Is the listener up and did the phone photo retain full resolution?',
       clientNonce: 'combined-coverage-root',
     });
@@ -698,7 +698,7 @@ describe('team-room production service path', () => {
   });
 
   test('lands an attachment-bearing answer even when its text is already covered', () => {
-    postAs('james', { body: 'Did the phone photo arrive?', clientNonce: 'attachment-coverage-root' });
+    postAs('operator', { body: 'Did the phone photo arrive?', clientNonce: 'attachment-coverage-root' });
     const builderDelivery = deliverActivation('builder');
     expect(postAs('builder', {
       body: 'The photo came through.',
@@ -730,7 +730,7 @@ describe('team-room production service path', () => {
   });
 
   test('allows two independently additive posts seconds apart and direct mentions unconditionally', () => {
-    postAs('james', { body: 'Give me the two verification results.', clientNonce: 'additive-root' });
+    postAs('operator', { body: 'Give me the two verification results.', clientNonce: 'additive-root' });
     const builderDelivery = deliverActivation('builder');
     expect(postAs('builder', {
       body: 'The HTTP probe returned status 200 with origin 192.168.0.200.',
@@ -760,7 +760,7 @@ describe('team-room production service path', () => {
   });
 
   test('binds the direct-mention bypass to the activated source and posting identity', () => {
-    postAs('james', { body: 'Coordinate the listener check.', clientNonce: 'mention-root' });
+    postAs('operator', { body: 'Coordinate the listener check.', clientNonce: 'mention-root' });
     const builderDelivery = deliverActivation('builder');
     expect(postAs('builder', {
       body: 'The listener accepted my TCP probe.',
@@ -797,7 +797,7 @@ describe('team-room production service path', () => {
   });
 
   test('limits duplicate coverage suppression to the short post-time window', () => {
-    postAs('james', { body: 'Window check.', clientNonce: 'coverage-window-root' });
+    postAs('operator', { body: 'Window check.', clientNonce: 'coverage-window-root' });
     const builderDelivery = deliverActivation('builder');
     expect(postAs('builder', {
       body: 'The QR route is working.',
@@ -818,8 +818,8 @@ describe('team-room production service path', () => {
     }).ok).toBe(true);
   });
 
-  test('persists the sixth agent post but suppresses all further activation until James posts', () => {
-    postAs('james', { body: 'Start chain.', clientNonce: 'fuse-root' });
+  test('persists the sixth agent post but suppresses all further activation until Operator posts', () => {
+    postAs('operator', { body: 'Start chain.', clientNonce: 'fuse-root' });
     const order = ['builder', 'architect', 'oracle', 'builder', 'architect', 'oracle'];
     let sixth;
     for (let index = 0; index < order.length; index += 1) {
@@ -847,7 +847,7 @@ describe('team-room production service path', () => {
       activations: [],
     }));
 
-    const reset = postAs('james', { body: 'Continue.', clientNonce: 'fuse-reset' });
+    const reset = postAs('operator', { body: 'Continue.', clientNonce: 'fuse-reset' });
     expect(reset.ok).toBe(true);
     expect(store.getRoomState()).toEqual(expect.objectContaining({
       consecutiveAgentPosts: 0,
@@ -857,7 +857,7 @@ describe('team-room production service path', () => {
   });
 
   test('cancels a preclaimed activation at post six and rejects late delivery and post seven', async () => {
-    postAs('james', { body: 'Race root.', clientNonce: 'race-root' });
+    postAs('operator', { body: 'Race root.', clientNonce: 'race-root' });
     const firstFive = ['architect', 'oracle', 'architect', 'oracle', 'architect'];
     const distinctBodies = [
       'Voltage rail sampled at 12.08V.',
@@ -930,7 +930,7 @@ describe('team-room production service path', () => {
     expect(store.listMessages()).toHaveLength(7);
     expect(store.listMessages().some((message) => message.clientNonce === 'race-7')).toBe(false);
 
-    const reset = postAs('james', { body: 'Fresh work only.', clientNonce: 'race-reset' });
+    const reset = postAs('operator', { body: 'Fresh work only.', clientNonce: 'race-reset' });
     expect(reset.ok).toBe(true);
     expect(store.getRoomState()).toEqual(expect.objectContaining({
       consecutiveAgentPosts: 0,
@@ -941,7 +941,7 @@ describe('team-room production service path', () => {
   });
 
   test('retries only failed activations and never duplicates message-target pairs', async () => {
-    const posted = postAs('james', { body: 'Retry seam.', clientNonce: 'retry-1' });
+    const posted = postAs('operator', { body: 'Retry seam.', clientNonce: 'retry-1' });
     expect(store.ensureMissingActivations(posted.message.messageId)).toEqual(expect.objectContaining({ inserted: 0 }));
     let calls = 0;
     const adapter = new TeamRoomDeliveryAdapter({
@@ -963,8 +963,8 @@ describe('team-room production service path', () => {
   });
 
   test('delivers a busy pane batch in persisted message order', async () => {
-    const first = postAs('james', { body: 'First.', clientNonce: 'ordered-1' });
-    const second = postAs('james', { body: 'Second.', clientNonce: 'ordered-2' });
+    const first = postAs('operator', { body: 'First.', clientNonce: 'ordered-1' });
+    const second = postAs('operator', { body: 'Second.', clientNonce: 'ordered-2' });
     const seen = [];
     const adapter = new TeamRoomDeliveryAdapter({
       store,
@@ -979,7 +979,7 @@ describe('team-room production service path', () => {
   });
 
   test('recovers a stale claimed activation without creating a second activation row', () => {
-    const posted = postAs('james', { body: 'Crash lease.', clientNonce: 'stale-1' });
+    const posted = postAs('operator', { body: 'Crash lease.', clientNonce: 'stale-1' });
     const claimed = store.claimActivationBatch('builder', { limit: 1 });
     const activationId = claimed.activations[0].activation.activationId;
     nowMs += 10_000;
@@ -1004,7 +1004,7 @@ describe('team-room production service path', () => {
     });
     expect(claim.ok).toBe(true);
     fs.appendFileSync(filePath, Buffer.from('tampered'));
-    const posted = postAs('james', {
+    const posted = postAs('operator', {
       body: 'Look.',
       clientNonce: 'attachment-split',
       attachmentIds: [claim.attachment.attachmentId],
@@ -1027,7 +1027,7 @@ describe('team-room production service path', () => {
     });
     expect(claim.ok).toBe(true);
     const request = {
-      authorization: `Bearer ${credentials.james.token}`,
+      authorization: `Bearer ${credentials.operator.token}`,
       source: 'room_web',
       roomId: 'main',
       profileName: 'main',
@@ -1074,12 +1074,12 @@ describe('team-room production service path', () => {
   });
 
   test('enforces append-only message rows and activation identity in SQLite itself', () => {
-    const posted = postAs('james', { body: 'Immutable.', clientNonce: 'immutable-1' });
+    const posted = postAs('operator', { body: 'Immutable.', clientNonce: 'immutable-1' });
     expect(() => store.db.prepare('UPDATE room_messages SET body = ? WHERE message_id = ?')
       .run('rewritten', posted.message.messageId)).toThrow(/room_messages_append_only/u);
     const activation = posted.activations[0];
     expect(() => store.db.prepare('UPDATE room_activations SET target_member_id = ? WHERE activation_id = ?')
-      .run('james', activation.activationId)).toThrow(/room_activation_identity_immutable/u);
+      .run('operator', activation.activationId)).toThrow(/room_activation_identity_immutable/u);
     expect(() => store.db.prepare('UPDATE room_activations SET status = ? WHERE activation_id = ?')
       .run('delivered', activation.activationId)).toThrow(/room_activation_transition_invalid/u);
   });
@@ -1119,8 +1119,8 @@ describe('team-room production service path', () => {
       identity: memberIdentity('builder'),
     })).toEqual(expect.objectContaining({ ok: false, reason: 'trusted_registration_invalid' }));
 
-    expect(store.revokeAuthCredential(credentials.james.credential.credentialId).ok).toBe(true);
-    expect(postAs('james', { body: 'revoked', clientNonce: 'revoked-1' }))
+    expect(store.revokeAuthCredential(credentials.operator.credential.credentialId).ok).toBe(true);
+    expect(postAs('operator', { body: 'revoked', clientNonce: 'revoked-1' }))
       .toEqual(expect.objectContaining({ ok: false, reason: 'room_credential_revoked' }));
   });
 

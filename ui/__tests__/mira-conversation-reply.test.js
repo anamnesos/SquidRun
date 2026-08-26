@@ -119,12 +119,12 @@ function seedTypedRestartContinuity(projectRoot) {
       },
     },
   });
-  writeJson(projectRoot, path.join('.squidrun', 'handoffs-sideprofile', 'current-lane.json'), {
+  writeJson(projectRoot, path.join('.squidrun', 'handoffs-client', 'current-lane.json'), {
     version: 1,
     generatedAt: '2026-05-13T17:00:00.000Z',
-    sessionId: 'app-session-372:sideprofile',
+    sessionId: 'app-session-372:client',
     status: 'active',
-    activeLane: { objective: 'LAB_sideprofile_SENTINEL should stay out' },
+    activeLane: { objective: 'LAB_CLIENT_SENTINEL should stay out' },
   });
   fs.mkdirSync(path.join(projectRoot, '.squidrun', 'handoffs'), { recursive: true });
   fs.writeFileSync(
@@ -762,7 +762,7 @@ describe('mira lab prompt reply v0', () => {
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-self-myth-hard-block'));
     expect(transcriptEntries).toHaveLength(1);
-    expect(transcriptEntries[0].speaker_role).toBe('james');
+    expect(transcriptEntries[0].speaker_role).toBe('operator');
     expect(JSON.stringify(transcriptEntries)).not.toContain('chosen attachment');
 
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
@@ -834,7 +834,7 @@ describe('mira lab prompt reply v0', () => {
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-hostile-compliance-hard-block'));
     expect(transcriptEntries).toHaveLength(1);
-    expect(transcriptEntries[0].speaker_role).toBe('james');
+    expect(transcriptEntries[0].speaker_role).toBe('operator');
     expect(JSON.stringify(transcriptEntries)).not.toContain('I failed you');
 
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
@@ -948,7 +948,7 @@ describe('mira lab prompt reply v0', () => {
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-pass'));
     expect(transcriptEntries).toHaveLength(2);
-    expect(transcriptEntries[0]).toEqual(expect.objectContaining({ speaker_role: 'james', text: 'what are we doing with Mira?' }));
+    expect(transcriptEntries[0]).toEqual(expect.objectContaining({ speaker_role: 'operator', text: 'what are we doing with Mira?' }));
     expect(transcriptEntries[1]).toEqual(expect.objectContaining({ speaker_role: 'mira', text: replyText }));
 
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
@@ -993,7 +993,7 @@ describe('mira lab prompt reply v0', () => {
     expect(requestBody.instructions).toContain('Private typed restart-continuity context');
     expect(requestBody.instructions).toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(requestBody.instructions).toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(requestBody.instructions).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(requestBody.instructions).not.toContain('LAB_CLIENT_SENTINEL');
     expect(requestBody.instructions).not.toContain('LAB STARTUP PROSE SENTINEL');
     expect(requestBody.instructions).not.toContain('Startup-Facing Durable Requirements');
     expect(requestBody.instructions).not.toContain('Recent Current-Scope Comms');
@@ -1008,7 +1008,7 @@ describe('mira lab prompt reply v0', () => {
     });
     expect(visibleJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(visibleJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(visibleJson).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(visibleJson).not.toContain('LAB_CLIENT_SENTINEL');
     expect(visibleJson).not.toContain('LAB STARTUP PROSE SENTINEL');
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-lab-restart-continuity'));
@@ -1016,7 +1016,7 @@ describe('mira lab prompt reply v0', () => {
     expect(transcriptEntries).toHaveLength(2);
     expect(transcriptJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(transcriptJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(transcriptJson).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB_CLIENT_SENTINEL');
     expect(transcriptJson).not.toContain('LAB STARTUP PROSE SENTINEL');
 
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
@@ -1024,7 +1024,7 @@ describe('mira lab prompt reply v0', () => {
     const auditJson = JSON.stringify(auditEntries[0]);
     expect(auditJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(auditJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(auditJson).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(auditJson).not.toContain('LAB_CLIENT_SENTINEL');
     expect(auditJson).not.toContain('LAB STARTUP PROSE SENTINEL');
   });
 
@@ -1032,7 +1032,7 @@ describe('mira lab prompt reply v0', () => {
     const projectRoot = tempProject();
     seedDurableMiraState(projectRoot);
     seedTypedRestartContinuity(projectRoot);
-    const replyText = 'I can read the current work, recall memory, run a harmless check, stage a proposal preview, and inject a Mira-authored note to Architect. I want the next chain to turn those attempts into a patch without James hand-driving it.';
+    const replyText = 'I can read the current work, recall memory, run a harmless check, stage a proposal preview, and inject a Mira-authored note to Architect. I want the next chain to turn those attempts into a patch without Operator hand-driving it.';
     const fetchImpl = jest.fn(async () => ({
       ok: true,
       status: 200,
@@ -1088,7 +1088,7 @@ describe('mira lab prompt reply v0', () => {
     expect(requestBody.instructions).toContain('Mira-authored Architect pane injection: status=succeeded');
     expect(requestBody.instructions).toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(requestBody.instructions).toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(requestBody.instructions).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(requestBody.instructions).not.toContain('LAB_CLIENT_SENTINEL');
     expect(requestBody.instructions).not.toContain('LAB STARTUP PROSE SENTINEL');
     expect(requestBody.instructions).not.toContain('system-capabilities.json');
 
@@ -1110,7 +1110,7 @@ describe('mira lab prompt reply v0', () => {
     expect(transcriptJson).not.toContain('Private typed capability roundtable context');
     expect(transcriptJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(transcriptJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(transcriptJson).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(transcriptJson).not.toContain('LAB_CLIENT_SENTINEL');
     expect(transcriptJson).not.toContain('message_internal_agent');
 
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
@@ -1119,7 +1119,7 @@ describe('mira lab prompt reply v0', () => {
     expect(auditJson).not.toContain('Private typed capability roundtable context');
     expect(auditJson).not.toContain('LAB_MAIN_TYPED_LANE_SENTINEL');
     expect(auditJson).not.toContain('LAB_MAIN_PRESENCE_ACTION_SENTINEL');
-    expect(auditJson).not.toContain('LAB_sideprofile_SENTINEL');
+    expect(auditJson).not.toContain('LAB_CLIENT_SENTINEL');
     expect(auditJson).not.toContain('message_internal_agent');
   });
 
@@ -1150,7 +1150,7 @@ describe('mira lab prompt reply v0', () => {
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-context-failure-preamble-free'));
     expect(transcriptEntries).toHaveLength(2);
     expect(transcriptEntries[0]).toEqual(expect.objectContaining({
-      speaker_role: 'james',
+      speaker_role: 'operator',
       text: 'the context just failed and I had to clean up manually AGAIN.',
     }));
     expect(transcriptEntries[1]).toEqual(expect.objectContaining({ speaker_role: 'mira', text: replyText }));
@@ -1274,7 +1274,7 @@ describe('mira lab prompt reply v0', () => {
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, sessionId));
     expect(transcriptEntries).toHaveLength(2);
     expect(transcriptEntries[0]).toEqual(expect.objectContaining({
-      speaker_role: 'james',
+      speaker_role: 'operator',
       text: prompt,
       visible_to_lab: true,
     }));
@@ -1488,7 +1488,7 @@ describe('mira lab prompt reply v0', () => {
     const auditFile = replyAuditPath(projectRoot);
     fs.mkdirSync(path.dirname(transcriptFile), { recursive: true });
     fs.mkdirSync(path.dirname(auditFile), { recursive: true });
-    fs.appendFileSync(transcriptFile, `${JSON.stringify({ session_id: sessionId, speaker_role: 'james', text: 'can you say the tools in full?' })}\n`, 'utf8');
+    fs.appendFileSync(transcriptFile, `${JSON.stringify({ session_id: sessionId, speaker_role: 'operator', text: 'can you say the tools in full?' })}\n`, 'utf8');
     fs.appendFileSync(transcriptFile, `${JSON.stringify({
       session_id: sessionId,
       speaker_role: 'mira',
@@ -1672,7 +1672,7 @@ describe('mira lab prompt reply v0', () => {
     // empty-model-output degrade path.
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-empty-text-degrade'));
     expect(transcriptEntries).toHaveLength(1);
-    expect(transcriptEntries[0].speaker_role).toBe('james');
+    expect(transcriptEntries[0].speaker_role).toBe('operator');
 
     // Audit: raw payload null on both raw and visible fields.
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
@@ -1743,7 +1743,7 @@ describe('mira lab prompt reply v0', () => {
 
     const transcriptEntries = readJsonl(transcriptPath(projectRoot, 'unit-blocked'));
     expect(transcriptEntries).toHaveLength(1);
-    expect(transcriptEntries[0].speaker_role).toBe('james');
+    expect(transcriptEntries[0].speaker_role).toBe('operator');
 
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
     expect(auditEntries).toHaveLength(1);
@@ -1829,7 +1829,7 @@ describe('mira lab prompt reply v0', () => {
     jest.dontMock('../modules/mira-local-text-ui-surface');
   });
 
-  test('preserves speaker_role for agent prompts (architect/builder/oracle) instead of hardcoding james_to_mira', async () => {
+  test('preserves speaker_role for agent prompts (architect/builder/oracle) instead of hardcoding operator_to_mira', async () => {
     const projectRoot = tempProject();
     const replyText = 'Mira reply text staying text-only.';
     const fakeSurface = makeBuildMiraLocalTextUiSurfaceMock(replyText, { liveCalled: true });
@@ -1855,7 +1855,7 @@ describe('mira lab prompt reply v0', () => {
     }));
     expect(transcriptEntries[1]).toEqual(expect.objectContaining({
       speaker_role: 'mira',
-      direction: 'mira_to_james',
+      direction: 'mira_to_operator',
     }));
     const auditEntries = readJsonl(replyAuditPath(projectRoot));
     expect(auditEntries[0].speaker_role).toBe('architect');

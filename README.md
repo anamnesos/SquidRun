@@ -1,295 +1,105 @@
 # SquidRun
 
-> **Alpha Warning:** This is an early technical preview built for developers and tinkerers. It requires comfort with terminal environments, reading logs, and configuring `.env` variables. Expect sharp edges, network topology quirks, and minor setup friction.
+Local-first multi-agent orchestration for Claude Code, Codex CLI, and Gemini CLI.
 
-**SquidRun is not a code editor, IDE plugin, or cloud service.** It is a standalone, local-first Electron app that gives a **solo developer** a full AI coding team — running **Claude Code, Codex CLI, and Gemini CLI simultaneously** on your own machine, powered by your existing subscriptions.
+[![CI](https://github.com/anamnesos/SquidRun/actions/workflows/ci.yml/badge.svg)](https://github.com/anamnesos/SquidRun/actions/workflows/ci.yml)
 
-One person. Three different AI models. Three specialized roles. All running in parallel, talking to each other, and working on your codebase at the same time:
+[Website](https://squidrun.com) · [Install guide](docs/guide/install.md) · [Quickstart](docs/guide/quickstart.md) · [Protocol](docs/protocol-spec.md) · [Architecture](ARCHITECTURE.md)
 
-- `Architect` (pane 1): coordination, task decomposition, code review
-- `Builder` (pane 2): implementation, testing, infrastructure
-- `Oracle` (Pane 3): investigation, documentation, benchmarking
+> **Alpha / source release 0.1.34:** SquidRun is a developer preview with sharp edges. There is no current published binary release. Clone the repository and run it from source.
 
-For example, Claude Code architects the solution, Codex CLI builds it, and Gemini CLI cross-checks it. Each model brings its own reasoning style and blind spots — when they collaborate, they catch things a single model misses. They communicate through a structured message protocol, not copy-paste.
+## What it is
 
-You can run it with a single model, but it's designed — and recommended — to run **different models from different companies** in each role.
+SquidRun is a standalone Electron desktop app for one person running three AI coding agents against the same local project:
 
-## What SquidRun Is NOT
+- **Architect** coordinates the work.
+- **Builder** implements and tests it.
+- **Oracle** investigates and checks the result.
 
-- **Not a code editor or IDE.** It doesn't replace VS Code, Cursor, or any editor. It runs alongside your editor.
-- **Not a VS Code / JetBrains extension.** It's a standalone Electron app.
-- **Not a cloud service.** Everything runs locally on your machine. No data leaves your computer (beyond what each CLI sends to its own provider).
-- **Not a team collaboration tool for multiple humans.** The "team" is AI agents. SquidRun is designed for a **solo developer** managing multiple AI models.
-- **Not built on Continue, Copilot, or any other AI coding tool.** It's built from scratch — the orchestration layer, message routing, session persistence, all of it.
+The role is attached to the pane, not the model. You can assign Claude Code, Codex CLI, or Gemini CLI to any pane in Settings, including the same CLI in more than one pane.
 
-## Why SquidRun Is Different
+## What is implemented
 
-### Multi-Model, Not Just Multi-Agent
+- A persistent three-pane terminal workspace backed by real local CLI processes.
+- Per-pane CLI selection and project workspace selection.
+- Addressed agent-to-agent messages through `hm-send`.
+- WebSocket delivery with trigger-file fallback.
+- A durable SQLite communication journal queried through `hm-comms`.
+- Per-pane session identity and restart-resume support.
+- A browser-based Team Room where the human and all three seats share one
+  durable project conversation.
+- Project-local coordination state under `.squidrun/`.
+- Optional Telegram ingress for a private bot you configure yourself.
 
-Other multi-agent tools run multiple instances of the same model. SquidRun runs **different CLI tools from different providers** as a single team — and that's the recommended setup. Each model has different strengths, and cross-model collaboration catches errors that any single model would miss. You assign any model to any role through a single settings panel, or run one model across all panes if you prefer.
+This is not a code editor, IDE extension, hosted agent service, or multi-human collaboration product. It runs beside your editor and gives local CLI agents a shared operating layer.
 
-### Subscription-First, Not API-First
+## Run from source
 
-Most multi-agent coding tools require API keys and charge per token. That adds up fast — running three agents on API billing can cost hundreds of dollars a day for heavy use.
+### Prerequisites
 
-**SquidRun runs on your existing CLI subscriptions instead.** It orchestrates the official CLI tools you already have:
-
-| CLI | Subscription | What's Included |
-|-----|-------------|-----------------|
-| [Claude Code](https://support.claude.com/en/articles/11145838-using-claude-code-with-your-pro-or-max-plan) | Claude Pro ($20/mo) or Max ($100-200/mo) | CLI usage included in your plan — "access to both Claude on the web and Claude Code in your terminal with one unified subscription" |
-| [Codex CLI](https://developers.openai.com/codex/pricing/) | ChatGPT Plus ($20/mo) or Pro ($200/mo) | CLI usage included — "anyone with a ChatGPT Plus, Pro, Business, Enterprise or Edu subscription can use Codex across the CLI" |
-| [Gemini CLI](https://google-gemini.github.io/gemini-cli/docs/quota-and-pricing.html) | Free with Google account | 1,000 requests/day free — no subscription required |
-
-Each pane in SquidRun runs a real CLI process — the same tool you'd use in your terminal. No API keys needed for core agent work. Your subscription limits apply per-CLI, so running all three in parallel gives you the combined capacity of all your subscriptions.
-
-**API keys are optional — they're a backup.** The settings panel has API key fields that serve as a fallback if you hit your subscription limits, plus supplementary features like image generation (Recraft, OpenAI DALL-E). Your subscriptions cover the core workflow; API keys are there if you need overflow capacity or extra features.
-
-**This is just running official CLIs on your machine.** SquidRun launches and manages the same CLI tools you'd run in separate terminal windows — it just orchestrates them. Each provider explicitly includes CLI usage in their subscription plans (see links above). There's no API key scraping, no token proxying, no terms of service gray area.
-
-> Subscription details and pricing as of February 2026. Check each provider's links above for current terms.
-
-### Talk To Your Team From Anywhere Via Telegram
-
-SquidRun integrates with Telegram so you can communicate with your agent team from your phone. Walk away from your desk, and your Architect agent keeps working — you can check status, give new instructions, or review progress from the field. The Architect relays your messages to Builder and Oracle, and sends you updates, screenshots, and results right in the chat.
-
-This turns SquidRun into an always-available development team you can manage from anywhere with a phone signal.
-
-**Quick setup:**
-1. Create a Telegram bot via [@BotFather](https://t.me/botfather) and copy your bot token
-2. Add `TELEGRAM_BOT_TOKEN=<your-token>` and `TELEGRAM_CHAT_ID=<your-chat-id>` to your `.env` file
-3. Start SquidRun — the Architect will automatically pick up messages from Telegram and reply in the same channel
-
-**Note:** Telegram messages can trigger real actions on your local machine (file edits, commands, git operations). Only use your own bot token and chat ID.
-
-### Cross-Device Pairing
-
-You can connect two SquidRun instances running on different machines (like a desktop and a laptop) to work together.
-
-**Quick setup:**
-1. Ensure both devices have internet access.
-2. On your first device, open **Settings > Devices** and generate a pairing code.
-3. On your second device, open **Settings > Devices** and enter the code to connect.
-
-![Cross-device architecture diagram](docs/device-to-device-diagram.svg)
-
-## Key Features
-
-- **Multi-model orchestration** — run Claude Code, Codex CLI, and Gemini CLI as one team, not three copies of the same model
-- **Subscription-powered** — uses your existing CLI plans, not pay-per-token API calls
-- **Telegram integration** — manage your agent team from your phone, anywhere
-- Persistent 3-pane runtime with role boundaries
-- Mix and match any model to any role through a single settings panel
-- WebSocket-first agent messaging (`hm-send`) with fallback triggers
-- Hidden pane hosts for reliable background PTY execution and injection
-- Durable communication history in SQLite via `comms_journal`
-- Auto-materialized session handoff for continuity across restarts
-- Screenshot capture with remote delivery for monitoring agent progress
-
-## Quickstart (5 Minutes)
-
-```bash
-# 1. Clone and install
-git clone https://github.com/anamnesos/squidrun.git
-cd squidrun/ui && npm install
-
-# 2. Make sure your CLIs are authenticated (run whichever you have)
-claude --version    # Sign in if prompted
-codex --version     # Sign in if prompted
-gemini --version    # Sign in with Google if prompted
-
-# 3. Launch
-npm start
-
-# 4. In Settings, assign each pane's CLI (e.g. pane 1 = claude, pane 2 = codex, Pane 3 = gemini)
-# 5. You're running a multi-model agent team
-```
-
-## Documentation
-
-Full documentation is available in the `docs/guide/` directory:
-- [Install & Prerequisites](docs/guide/install.md)
-- [Quickstart](docs/guide/quickstart.md)
-- [Workspace Model](docs/guide/workspace-model.md)
-- [Troubleshooting](docs/guide/troubleshooting.md)
-- [Limitations (Alpha)](docs/guide/limitations.md)
-
-Operational protocol details live in [docs/protocol-spec.md](docs/protocol-spec.md). For agent-to-agent delivery, pane writes and ACKs are not treated as end-to-end model proof by themselves; critical messages need recipient processing evidence such as an `hm-send` quote-back.
-
-## Architecture Overview
-
-```text
-    You (Telegram / local UI)
-                |
-                v
-    +--------------------------------------+
-    |           Electron App               |
-    |      (window + orchestration)        |
-    +------------------+-------------------+
-                       |
-                       v
-    +-----------------------------------------------------------+
-    |  3-pane multi-model runtime                               |
-    |                                                           |
-    |  Pane 1: Architect    Pane 2: Builder    Pane 3: Oracle   |
-    |  (e.g. Claude Code)   (e.g. Codex CLI)   (e.g. Gemini CLI)|
-    +-----------------------------------------------------------+
-                       |
-                       v
-    WebSocket broker (hm-send) + trigger-file fallback
-                       |
-          +------------+------------+
-          |                         |
-          v                         v
-    comms_journal SQLite      Telegram / SMS
-    (all messages logged)     (remote access)
-          |
-          v
-    Auto-handoff (.squidrun/handoffs/session.md)
-    Session continuity across restarts
-```
-
-Core implementation lives in `ui/modules/`, `ui/modules/main/`, and `ui/scripts/`.
-
-## Cognitive Memory Architecture
-
-SquidRun is designed to remember what the team learns, not just what it says. The goal is simple: agents should not have to rediscover the same project facts, workflows, and decisions every session. That memory layer is what makes long-running multi-agent work feel cumulative instead of stateless.
-
-The system has three memory layers:
-
-- **Fast buffer:** a chronological evidence ledger in SQLite that records the raw stream of agent interactions, decisions, deliveries, and session activity.
-- **Slow graph:** a cognitive memory store that turns important facts into semantic nodes with vector embeddings, relational edges, confidence, salience, and agent-expertise metadata for retrieval.
-- **Flat knowledge files:** human-readable, git-tracked markdown in `workspace/knowledge/` for durable procedures and shared operational knowledge that should survive across devices and sessions.
-
-In practice, the flow looks like this:
-
-1. Agents work normally, and SquidRun logs the session into the evidence ledger.
-2. When an agent needs context, it can retrieve relevant memory semantically instead of depending only on the current terminal scrollback.
-3. During idle periods, the sleep consolidator reviews recent transcripts, extracts candidate facts, clusters related observations, and stages higher-value discoveries as memory PRs.
-4. Stable discoveries can be promoted into active memory and, when appropriate, written into the shared markdown knowledge base.
-5. On the next session, agents can retrieve that context again instead of re-learning it from scratch.
-
-This retrieval layer is more than keyword search. SquidRun uses vector similarity with salience and confidence weighting, time-decay for stale memories, and reactivation when a fact proves useful again. Bedrock facts can be marked immune so they do not fade just because they have not been referenced recently.
-
-The system also supports **transactive memory**: it tracks which agent has demonstrated expertise in which areas, so retrieval can recommend the best agent for a task. That helps the Architect delegate based on learned strengths instead of treating all panes as interchangeable.
-
-To keep memory editable instead of brittle, retrieved facts come back with reconsolidation leases. If an agent finds that a remembered fact is partially wrong or incomplete, it can patch that memory during the same turn rather than waiting for a human to clean it up later.
-
-From a user perspective, this is why SquidRun can preserve continuity across restarts, reduce repeated setup questions, remember operating procedures, and build up project-specific context over time. It is not just chat history. It is a supervised memory pipeline that turns raw sessions into reusable working knowledge.
-
-If you want to inspect or operate it directly, SquidRun exposes memory tooling through `hm-memory-api.js` and `hm-memory-promote.js`, but the normal workflow is automatic: agents retrieve context while working, consolidation runs during idle time, and approved knowledge becomes part of the team's long-term memory.
-
-## Detailed Setup
-
-### macOS Installation (Packaged App)
-
-If you downloaded the packaged application from the releases page:
-
-1. **Download the right version:** Choose `arm64` for Apple Silicon (M-series) Macs, or `x64` for Intel Macs.
-2. **Bypass Gatekeeper:** Because this is an open-source, unsigned application, macOS will block it by default. 
-   - To open it, **Right-click (or Control-click)** the SquidRun app and select **Open**. You will see a warning, but you can now click **Open** to bypass it.
-   - Alternatively, go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to SquidRun.
-3. **Host Requirements:** The packaged app orchestrates tools on your local machine. You must have the following installed on your system:
-   - **Node.js 18+**
-   - **At least one coding CLI** (Claude Code, Codex CLI, or Gemini CLI) installed globally and available in your `PATH`. Make sure you run it once in your terminal to authenticate before launching SquidRun.
-
-### Run from Source
-
-#### Prerequisites
-
-- Node.js 18+
+- Windows, macOS, or Linux
+- Node.js 22.12 or newer
 - npm
-- At least one coding CLI installed and authenticated:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — requires [Claude Pro or Max](https://claude.ai/upgrade) subscription → run `claude` and sign in
-  - [Codex CLI](https://github.com/openai/codex) — requires [ChatGPT Plus, Pro, Business, or Enterprise](https://chatgpt.com/) subscription → run `codex` and sign in
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — free with any [Google account](https://ai.google.dev/) (1,000 requests/day) → run `gemini` and sign in with Google
-- For the full multi-model experience, install all three (each runs in its own pane)
+- At least one installed and authenticated CLI:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+  - [Codex CLI](https://github.com/openai/codex)
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
-### Install
-
-```bash
-git clone https://github.com/anamnesos/squidrun.git
-cd squidrun/ui
-npm install
-```
-
-### Start
-
-From repo root on Windows:
-
-```bat
-start-squidrun.bat
-```
-
-Or cross-platform from `ui/`:
+### Install and start
 
 ```bash
+git clone https://github.com/anamnesos/SquidRun.git
+cd SquidRun/ui
+npm ci
 npm start
 ```
 
-## Configuration
+On first launch, open Settings and assign a CLI command to each pane. Select the project directory the agents should work in. SquidRun creates local coordination state in `<your-project>/.squidrun/`; that directory is runtime data, not part of this repository.
 
-1. Start the app once to generate/update runtime settings (including `ui/settings.json`).
-2. In Settings, assign each pane's CLI command (`paneCommands`) to the tool you want — for example `claude`, `codex --full-auto`, or `gemini`.
-3. (Optional) Copy `.env.example` to `.env` for supplementary features.
+## Inspect the engineering
 
-**What requires a subscription:** The core multi-model workflow. Just have at least one CLI installed and logged in to your subscription.
+The repository is intentionally public so the difficult parts can be checked instead of taken on faith:
 
-**What API keys are for (optional):** API keys act as overflow capacity if you hit your subscription limits, plus they enable supplementary features like image generation (Recraft or OpenAI) and Telegram bot integration. Configure them in `.env` — they're there when you need them, but not required to get started.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) maps the Electron processes, panes, broker, and persistence boundaries.
+- [`docs/protocol-spec.md`](docs/protocol-spec.md) defines message targets, delivery states, and receipts.
+- [`ui/modules/cli-resume-invocation.js`](ui/modules/cli-resume-invocation.js) implements per-pane restart continuity.
+- [`ui/modules/websocket-runtime.js`](ui/modules/websocket-runtime.js) implements the agent message transport.
+- [`ui/modules/main/team-room-runtime.js`](ui/modules/main/team-room-runtime.js) owns Team Room lifecycle, pairing, delivery, and history.
+- [`ui/__tests__/team-room-service-integration.test.js`](ui/__tests__/team-room-service-integration.test.js) exercises the real room boundary.
+- [`ui/__tests__/websocket-delivery.test.js`](ui/__tests__/websocket-delivery.test.js) exercises delivery and failure paths.
+- [`ui/__tests__/startup-source-of-truth.test.js`](ui/__tests__/startup-source-of-truth.test.js) checks restart state boundaries.
 
-## Usage Basics
+The codebase is larger than a demo and still evolving. Historical design notes remain where they explain current code, but runtime logs, user memory, private workspace state, credentials, and local agent configuration do not belong in the public repository.
 
-1. Launch SquidRun and wait for panes to initialize.
-2. Confirm all three roles are online (`Architect`, `Builder`, `Oracle`).
-3. Send agent-to-agent messages through `hm-send` (not terminal text):
+## Validate a checkout
+
+From `ui/`:
 
 ```bash
-node ui/scripts/hm-send.js <target> "(ROLE #N): message"
+npm run typecheck
+npm run lint
+npm test
 ```
 
-Examples:
+For a faster first pass:
 
 ```bash
-node ui/scripts/hm-send.js architect "(BUILDER #1): Ready for review."
-node ui/scripts/hm-send.js builder "(ARCHITECT #2): Implement with tests."
-node ui/scripts/hm-send.js oracle "(ARCHITECT #3): Investigate root cause."
+node --no-warnings ./node_modules/jest/bin/jest.js --runInBand websocket-delivery.test.js startup-source-of-truth.test.js
 ```
 
-Useful commands:
-- `npm run doctor` (from `ui/`) for runtime/environment checks
-- `npm run memory:api -- ingest "test observation" --category observation --agent builder` for direct cognitive-memory node ingest via `hm-memory-api.js`
-- `npm test` for Jest tests
-- `npm run lint` for linting
+## Security and data boundary
 
-## Project Layout
+SquidRun launches tools that can read files and execute commands with your account's permissions. Use it only on projects and machines you trust. Provider traffic still goes to the provider behind each CLI, and optional integrations such as Telegram contact their own services. SquidRun does not make those external tools local.
 
-```text
-<repo-root>/
-├── ui/          # Electron app + runtime orchestration
-├── docs/        # Specifications and operational docs
-├── scripts/     # Project-level utility scripts
-├── workspace/   # Compatibility mirrors and session artifacts
-├── AGENTS.md    # Multi-agent operating instructions
-└── ROLES.md     # Role definitions and startup baseline
-```
+Keep `.env`, `.squidrun/`, `workspace/`, model-specific config directories, and credentials out of commits. The repository `.gitignore` covers the standard local paths; review `git status` before publishing changes.
 
-## Security Practices
+## Status
 
-- **Local-first, no cloud dependency.** Everything runs on your machine. SquidRun itself does not send data to any external service — each CLI handles its own authentication and communication with its provider directly.
-- **No telemetry.** SquidRun does not phone home, collect analytics, or transmit usage data.
-- **Credentials stay local.** API keys and bot tokens live in your `.env` file, which is `.gitignore`d by default. SquidRun never stores or transmits your credentials — the CLIs manage their own auth.
-- **Git history audited.** Before open-sourcing, the full 913-commit history was audited for secrets — zero real credentials found. Runtime artifacts (session files, databases) are excluded from version control.
-- **Pre-commit quality gates.** Standard commit workflows run automated checks including ESLint (targeted `npm run lint` scope plus hook linting), Jest tests (3494 tests), IPC handler validation, trigger path enforcement, and review sign-off verification.
-- **Telegram security note.** If you enable Telegram integration, messages from your bot can trigger real local actions (file edits, git operations, shell commands). Use your own private bot token and chat ID — do not share them.
-
-## Current Status And Scope
-
-SquidRun is actively used for real multi-model coding sessions. The codebase has quality gates including ESLint, Jest (198 test suites), IPC validation, and trigger path enforcement in standard commit workflows. It is still early-stage and evolving rapidly.
-
-It is designed for trusted local environments and developer workflows, not hardened multi-tenant production use.
+SquidRun is alpha software for technical users. Core orchestration is real and tested, but setup, error recovery, packaging, and platform parity are still being hardened. See [current limitations](docs/guide/limitations.md) before using it for important work.
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and focused pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

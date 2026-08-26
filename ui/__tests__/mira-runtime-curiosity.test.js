@@ -33,11 +33,11 @@ function seedKnowledge(projectRoot) {
     expressive_range_allowed: ['curiosity', 'friction', 'taste'],
     growth_events: [],
   });
-  writeJson(projectRoot, 'workspace/knowledge/james-relationship-state.json', {
-    schema: 'squidrun.james_relationship_state.v0',
+  writeJson(projectRoot, 'workspace/knowledge/operator-relationship-state.json', {
+    schema: 'squidrun.operator_relationship_state.v0',
     version: 3,
-    user_name: 'James',
-    what_mira_knows_about_james: 'James wants fast, concrete, self-directed improvement with evidence.',
+    user_name: 'Operator',
+    what_mira_knows_about_operator: 'Operator wants fast, concrete, self-directed improvement with evidence.',
     preferences: ['move fast', 'test against reality', 'avoid permission theater'],
     confidence: 0.88,
     raw_content_present: false,

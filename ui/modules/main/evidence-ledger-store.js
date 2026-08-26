@@ -585,15 +585,15 @@ CREATE TABLE IF NOT EXISTS obligations (
     creditor_address IN (
       'architect', 'builder', 'oracle', 'mira',
       'builder-bg-1', 'builder-bg-2', 'builder-bg-3',
-      'trustquote-lead', 'trustquote-app', 'trustquote-invoice', 'trustquote-schedule-dispatch',
-      'james', 'room'
+      'exampleapp-lead', 'exampleapp-app', 'exampleapp-invoice', 'exampleapp-schedule-dispatch',
+      'operator', 'room'
     )
   ),
   obligor_address TEXT NOT NULL CHECK (
     obligor_address IN (
       'architect', 'builder', 'oracle', 'mira',
       'builder-bg-1', 'builder-bg-2', 'builder-bg-3',
-      'trustquote-lead', 'trustquote-app', 'trustquote-invoice', 'trustquote-schedule-dispatch'
+      'exampleapp-lead', 'exampleapp-app', 'exampleapp-invoice', 'exampleapp-schedule-dispatch'
     )
   ),
   expected_class TEXT NOT NULL CHECK (expected_class IN ('verdict', 'ack', 'packet', 'answer', 'receipt')),
@@ -1402,7 +1402,7 @@ function extractCommsAuthorityCandidates(row = {}) {
   addIdentityCandidate(candidates, row.senderRole);
   addIdentityCandidate(candidates, sender.role);
   addIdentityCandidate(candidates, envelopeSender.role);
-  const heading = String(row.rawBody || '').match(/^\((ARCHITECT|JAMES|USER)\b/i);
+  const heading = String(row.rawBody || '').match(/^\((ARCHITECT|OPERATOR|USER)\b/i);
   if (heading) addIdentityCandidate(candidates, heading[1]);
   return candidates;
 }
@@ -1410,8 +1410,8 @@ function extractCommsAuthorityCandidates(row = {}) {
 function approvalAuthorityMatches(candidates, approvedBy) {
   const actor = normalizeIdentityToken(approvedBy);
   if (!actor) return false;
-  if (actor === 'james') return candidates.has('james') || candidates.has('user');
-  if (actor === 'user') return candidates.has('user') || candidates.has('james');
+  if (actor === 'operator') return candidates.has('operator') || candidates.has('user');
+  if (actor === 'user') return candidates.has('user') || candidates.has('operator');
   return candidates.has(actor);
 }
 
@@ -2536,7 +2536,7 @@ class EvidenceLedgerStore {
       [Boolean(creatorAddress), 'creator_address_invalid'],
     ].find(([valid]) => !valid);
     if (invalid) throw obligationKernelError(invalid[1]);
-    if (obligorAddress === 'james') throw obligationKernelError('james_obligor_forbidden');
+    if (obligorAddress === 'operator') throw obligationKernelError('operator_obligor_forbidden');
 
     const existingRow = this.db.prepare(`
       SELECT * FROM obligations WHERE created_from_row_id = ?
@@ -2706,8 +2706,8 @@ class EvidenceLedgerStore {
 
     const target = String(proofRow.targetRole || '').trim().toLowerCase();
     let targetMatches = target === obligation.creditorAddress;
-    if (obligation.creditorAddress === 'james') {
-      targetMatches = ['james', 'user', 'telegram'].includes(target);
+    if (obligation.creditorAddress === 'operator') {
+      targetMatches = ['operator', 'user', 'telegram'].includes(target);
     } else if (obligation.creditorAddress === 'room') {
       targetMatches = Boolean(normalizeObligationAddress(target, { creditor: true, db: this.db }));
     }
@@ -2855,13 +2855,13 @@ class EvidenceLedgerStore {
     if (!obligorAddress) return { ok: false, status: 'invalid', reason: 'obligor_address_invalid' };
     if (!creatorAddress) return { ok: false, status: 'invalid', reason: 'creator_address_invalid' };
 
-    if (creditorAddress === 'james') {
+    if (creditorAddress === 'operator') {
       const sender = String(sourceRow.senderRole || '').trim().toLowerCase();
-      if (sourceRow.direction !== 'inbound' || !['james', 'user'].includes(sender)) {
-        return { ok: false, status: 'invalid', reason: 'james_source_row_not_inbound' };
+      if (sourceRow.direction !== 'inbound' || !['operator', 'user'].includes(sender)) {
+        return { ok: false, status: 'invalid', reason: 'operator_source_row_not_inbound' };
       }
       if (creatorAddress !== obligorAddress) {
-        return { ok: false, status: 'invalid', reason: 'james_obligation_creator_must_be_obligor' };
+        return { ok: false, status: 'invalid', reason: 'operator_obligation_creator_must_be_obligor' };
       }
     } else {
       const sourceSender = normalizeObligationAddress(sourceRow.senderRole, { creditor: true, db: this.db });
@@ -3123,7 +3123,7 @@ class EvidenceLedgerStore {
       creditor: true,
       db: this.db,
     });
-    if (!address || ['james', 'room'].includes(address)) {
+    if (!address || ['operator', 'room'].includes(address)) {
       return { ok: false, status: 'invalid', reason: 'natural_beat_role_invalid' };
     }
     const nowMs = toMs(options.nowMs, Date.now());
@@ -5266,7 +5266,7 @@ class EvidenceLedgerStore {
         }
         const authorityCandidates = extractCommsAuthorityCandidates(approvalRow);
         const hasAuthority = approvalAuthorityMatches(authorityCandidates, approvedBy)
-          && (authorityCandidates.has('architect') || authorityCandidates.has('james') || authorityCandidates.has('user'));
+          && (authorityCandidates.has('architect') || authorityCandidates.has('operator') || authorityCandidates.has('user'));
         if (!hasAuthority) {
           return {
             ok: false,

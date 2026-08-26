@@ -9,7 +9,7 @@
  * the two scoped-fallback sites in squidrun-app — those resolve a DELIVERY
  * target, which is a different question from who owns the ingress journal.
  * Using them here would let a routing answer decide where the record lands, and
- * that is how main and sideprofile end up sharing a journal.
+ * that is how main and client end up sharing a journal.
  *
  * Missing base or an unsafe route key writes NOWHERE and reports a reason. The
  * caller turns that into a rejected ack, and the Telegram cursor holds.
@@ -83,7 +83,7 @@ function acceptInbound(input = {}, deps = {}) {
   // NO ANONYMOUS LEGACY APPEND, EVER AGAIN (Architect #104).
   //
   // My first draft wrote the record unstamped when the producer could not name
-  // itself, reasoning that losing James's message is worse than routing it down
+  // itself, reasoning that losing Operator's message is worse than routing it down
   // the legacy path. That reasoning is wrong under v7 and the correction is
   // worth writing down, because it is not obvious:
   //

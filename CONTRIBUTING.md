@@ -5,15 +5,15 @@ Thanks for your interest in improving SquidRun.
 ## Setup
 
 Prerequisites:
-- Node.js 18+
+- Node.js 22.12+
 - npm
 
 Install:
 
 ```bash
-git clone <repo-url>
-cd <repo-name>/ui
-npm install
+git clone https://github.com/anamnesos/SquidRun.git
+cd SquidRun/ui
+npm ci
 ```
 
 Run:
@@ -40,5 +40,6 @@ Validation commands:
 ```bash
 cd ui
 npm run lint
+npm run typecheck
 npm test
 ```

@@ -378,23 +378,23 @@ describe('registerModelSwitchHandlers', () => {
 
       const result = await executePaneModelSwitch(
         mockCtx,
-        { paneId: 'trustquote-lead', model: 'claude' },
+        { paneId: 'exampleapp-lead', model: 'claude' },
         { ...mockDeps, sendPaneModelChanged, paneRestartArbiter }
       );
 
-      expect(result).toEqual({ success: true, paneId: 'trustquote-lead', model: 'claude' });
-      expect(paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('trustquote-lead');
-      expect(paneRestartArbiter.resolveOwner).toHaveBeenCalledWith('trustquote-lead');
+      expect(result).toEqual({ success: true, paneId: 'exampleapp-lead', model: 'claude' });
+      expect(paneRestartArbiter.getActiveClaim).toHaveBeenCalledWith('exampleapp-lead');
+      expect(paneRestartArbiter.resolveOwner).toHaveBeenCalledWith('exampleapp-lead');
       expect(mockCtx.recoveryManager.markExpectedExit).not.toHaveBeenCalled();
       expect(mockCtx.daemonClient.kill).not.toHaveBeenCalled();
-      expect(mockCtx.currentSettings.paneCommands['trustquote-lead']).toBe('claude --model opus');
+      expect(mockCtx.currentSettings.paneCommands['exampleapp-lead']).toBe('claude --model opus');
       expect(mockDeps.saveSettings).toHaveBeenCalledWith({ paneCommands: mockCtx.currentSettings.paneCommands });
       expect(fs.writeFileSync).toHaveBeenCalledWith(
         expect.stringContaining('all.txt'),
-        '(SYSTEM): TrustQuote Lead switched to Claude\n'
+        '(SYSTEM): ExampleApp Lead switched to Claude\n'
       );
       expect(sendPaneModelChanged).toHaveBeenCalledWith({
-        paneId: 'trustquote-lead',
+        paneId: 'exampleapp-lead',
         model: 'claude',
         ownerWindowKey: 'squid-room',
         ownerProfileName: 'main',

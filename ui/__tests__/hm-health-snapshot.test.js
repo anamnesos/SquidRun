@@ -194,12 +194,12 @@ describe('hm-health-snapshot', () => {
       session: 300,
       session_id: 'app-session-300',
     }));
-    fs.writeFileSync(path.join(tempDir, '.squidrun', 'app-status-sideprofile.json'), JSON.stringify({
+    fs.writeFileSync(path.join(tempDir, '.squidrun', 'app-status-client.json'), JSON.stringify({
       session: 777,
-      session_id: 'app-session-777-sideprofile',
+      session_id: 'app-session-777-client',
     }));
-    fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime-sideprofile'), { recursive: true });
-    const evidenceDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime-sideprofile', 'evidence-ledger.db'));
+    fs.mkdirSync(path.join(tempDir, '.squidrun', 'runtime-client'), { recursive: true });
+    const evidenceDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime-client', 'evidence-ledger.db'));
     evidenceDb.exec(`
       CREATE TABLE comms_journal (
         id INTEGER PRIMARY KEY,
@@ -208,7 +208,7 @@ describe('hm-health-snapshot', () => {
       INSERT INTO comms_journal (message) VALUES ('side only');
     `);
     evidenceDb.close();
-    const cognitiveDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime-sideprofile', 'cognitive-memory.db'));
+    const cognitiveDb = createDatabase(path.join(tempDir, '.squidrun', 'runtime-client', 'cognitive-memory.db'));
     cognitiveDb.exec(`
       CREATE TABLE nodes (
         node_id TEXT PRIMARY KEY,
@@ -220,30 +220,30 @@ describe('hm-health-snapshot', () => {
 
     const snapshot = createHealthSnapshot({
       projectRoot: tempDir,
-      profileName: 'sideprofile',
+      profileName: 'client',
       jestTimeoutMs: 1000,
       env: {},
     });
 
-    expect(snapshot.profileName).toBe('sideprofile');
+    expect(snapshot.profileName).toBe('client');
     expect(snapshot.appStatus).toEqual(expect.objectContaining({
       sessionNumber: 777,
-      sessionId: 'app-session-777-sideprofile',
-      path: expect.stringContaining('app-status-sideprofile.json'),
+      sessionId: 'app-session-777-client',
+      path: expect.stringContaining('app-status-client.json'),
     }));
     expect(snapshot.databases.evidenceLedger).toEqual(expect.objectContaining({
-      path: expect.stringContaining(path.join('.squidrun', 'runtime-sideprofile', 'evidence-ledger.db')),
+      path: expect.stringContaining(path.join('.squidrun', 'runtime-client', 'evidence-ledger.db')),
       rowCount: 1,
     }));
     expect(snapshot.databases.cognitiveMemory).toEqual(expect.objectContaining({
-      path: expect.stringContaining(path.join('.squidrun', 'runtime-sideprofile', 'cognitive-memory.db')),
+      path: expect.stringContaining(path.join('.squidrun', 'runtime-client', 'cognitive-memory.db')),
       rowCount: 2,
     }));
     expect(currentRunMemoryConsistencyCheck).toHaveBeenCalledWith(expect.objectContaining({
       projectRoot: tempDir,
-      profileName: 'sideprofile',
+      profileName: 'client',
     }));
-    expect(renderStartupHealthMarkdown(snapshot)).toContain('Profile: sideprofile');
+    expect(renderStartupHealthMarkdown(snapshot)).toContain('Profile: client');
     expect(renderStartupHealthMarkdown(snapshot)).toContain('App Session: session 777');
   });
 
@@ -958,7 +958,7 @@ describe('hm-health-snapshot', () => {
         running: false,
         port: 9901,
         desiredPort: 9901,
-        source: 'settings:D:\\SquidRun\\sideprofile\\.squidrun\\settings\\websocket.json:port',
+        source: 'settings:D:\\SquidRun\\Client\\.squidrun\\settings\\websocket.json:port',
         status: 'bind_failed',
         warning: 'websocket_bind_failed',
         code: 'EADDRINUSE',
@@ -1290,9 +1290,9 @@ describe('hm-health-snapshot', () => {
     const stdout = { write: jest.fn() };
     const stderr = { write: jest.fn() };
 
-    const exitCode = main([tempDir, '--profile', 'sideprofile', '--json', '--write'], { stdout, stderr });
+    const exitCode = main([tempDir, '--profile', 'client', '--json', '--write'], { stdout, stderr });
     const mainPath = path.join(tempDir, '.squidrun', 'build', 'startup-health.md');
-    const sidePath = path.join(tempDir, '.squidrun', 'build', 'startup-health-sideprofile.md');
+    const sidePath = path.join(tempDir, '.squidrun', 'build', 'startup-health-client.md');
     const payload = JSON.parse(stdout.write.mock.calls.map(([chunk]) => String(chunk)).join(''));
 
     expect(exitCode).toBe(0);

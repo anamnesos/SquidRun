@@ -96,7 +96,7 @@ describe('evidence-ledger-worker-client', () => {
     Object.defineProperty(process, 'execPath', {
       configurable: true,
       writable: true,
-      value: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+      value: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
     });
     Object.defineProperty(process, 'versions', {
       configurable: true,
@@ -113,7 +113,7 @@ describe('evidence-ledger-worker-client', () => {
         expect.stringContaining('evidence-ledger-worker.js'),
         [],
         expect.objectContaining({
-          execPath: 'D:\\SquidRun\\sideprofile\\versions\\0.1.34-test\\sr-electron.exe',
+          execPath: 'D:\\SquidRun\\Client\\versions\\0.1.34-test\\sr-electron.exe',
           env: expect.objectContaining({
             SQUIDRUN_EVIDENCE_LEDGER_WORKER: '1',
             ELECTRON_RUN_AS_NODE: '1',

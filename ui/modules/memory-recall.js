@@ -34,8 +34,8 @@ const SCOPED_PROFILE_BOOST_TERMS = Object.freeze([
   'evidence',
   'boundary',
 ]);
-const JAMES_DIRECT_BOOST_TERMS = Object.freeze([
-  'james',
+const OPERATOR_DIRECT_BOOST_TERMS = Object.freeze([
+  'operator',
   'kim',
   'squidrun',
   'architecture',
@@ -351,7 +351,7 @@ function buildRecallQueryFromMessage(message, context = {}) {
     parts.push(...SCOPED_PROFILE_BOOST_TERMS);
   }
   if (shouldBoostOwnerDirectInput(context)) {
-    parts.push(...JAMES_DIRECT_BOOST_TERMS);
+    parts.push(...OPERATOR_DIRECT_BOOST_TERMS);
   }
   return dedupeTerms(parts).join(' ');
 }
@@ -365,9 +365,9 @@ function buildStartupRecallQuery(context = {}) {
     '3': 'oracle',
   }[paneId] || 'agent');
   const seed = {
-    architect: 'current session priorities recent decisions user preferences active investigations blockers scoped james telegram evidence',
-    builder: 'current session priorities recent decisions user preferences active investigations blockers runtime implementation supervisor scoped james telegram',
-    oracle: 'current session priorities recent decisions user preferences active investigations blockers research documentation evidence scoped james telegram',
+    architect: 'current session priorities recent decisions user preferences active investigations blockers scoped operator telegram evidence',
+    builder: 'current session priorities recent decisions user preferences active investigations blockers runtime implementation supervisor scoped operator telegram',
+    oracle: 'current session priorities recent decisions user preferences active investigations blockers research documentation evidence scoped operator telegram',
   };
   return seed[roleSpecific] || seed.architect;
 }
@@ -1122,7 +1122,7 @@ async function buildMessageWithRecall(message, input = {}) {
 module.exports = {
   SCOPED_PROFILE_BOOST_TERMS,
   SCOPED_PROFILE_CHAT_ID,
-  JAMES_DIRECT_BOOST_TERMS,
+  OPERATOR_DIRECT_BOOST_TERMS,
   RECALL_AUDIT_PATH,
   RECALL_BLOCK_END,
   RECALL_BLOCK_START,

@@ -25,7 +25,7 @@ describe('surface-capture-events', () => {
     try {
       const event = recordSurfaceCaptureEvent({
         windowKey: 'squid-room',
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         scope: 'pane',
         path: sourcePath,
         buffer,
@@ -40,7 +40,7 @@ describe('surface-capture-events', () => {
         screenshotPath,
         returnedPath: sourcePath,
         windowKey: 'squid-room',
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         scope: 'pane',
         runId: 'run-1',
       }, {
@@ -64,7 +64,7 @@ describe('surface-capture-events', () => {
         screenshotPath,
         returnedPath: screenshotPath,
         windowKey: 'squid-room',
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         scope: 'pane',
         runId: 'run-1',
       })).toEqual(expect.objectContaining({
@@ -87,7 +87,7 @@ describe('surface-capture-events', () => {
     try {
       const event = recordSurfaceCaptureEvent({
         windowKey: 'squid-room',
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         scope: 'pane',
         path: sourcePath,
         buffer,
@@ -101,7 +101,7 @@ describe('surface-capture-events', () => {
         screenshotPath,
         returnedPath: sourcePath,
         windowKey: 'squid-room',
-        paneId: 'trustquote-app',
+        paneId: 'exampleapp-app',
         scope: 'pane',
         runId: 'run-1',
       })).toEqual(expect.objectContaining({

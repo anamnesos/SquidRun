@@ -188,7 +188,7 @@ describe('squidrun authority dispatcher', () => {
     }));
   });
 
-  test.each(APPROVAL_REQUIRED_CAPABILITIES)('holds approval-required capability %s for James checkpoint', (capability) => {
+  test.each(APPROVAL_REQUIRED_CAPABILITIES)('holds approval-required capability %s for Operator checkpoint', (capability) => {
     const decision = dispatchAuthority(safeCandidate({
       riskClass: 'safe',
       proposedAction: {
@@ -201,8 +201,8 @@ describe('squidrun authority dispatcher', () => {
     expect(decision).toEqual(expect.objectContaining({
       bucket: BUCKETS.approvalRequired,
       riskClass: 'approval_required',
-      requiredProofs: ['james_checkpoint', 'oracle_verify'],
-      jamesCheckpoint: expect.objectContaining({
+      requiredProofs: ['operator_checkpoint', 'oracle_verify'],
+      operatorCheckpoint: expect.objectContaining({
         required: true,
         policy: 'approval_required',
       }),
@@ -227,7 +227,7 @@ describe('squidrun authority dispatcher', () => {
       bucket: BUCKETS.approvalRequired,
       riskClass: 'approval_required',
       allowedNextStep: expect.objectContaining({ grantsPermission: false }),
-      jamesCheckpoint: expect.objectContaining({
+      operatorCheckpoint: expect.objectContaining({
         capability: 'unclear_metadata_scope',
       }),
     }));
@@ -254,7 +254,7 @@ describe('squidrun authority dispatcher', () => {
     expect(missingMetadata).toEqual(expect.objectContaining({
       bucket: BUCKETS.approvalRequired,
       riskClass: 'approval_required',
-      jamesCheckpoint: expect.objectContaining({ capability: 'unclear_metadata_scope' }),
+      operatorCheckpoint: expect.objectContaining({ capability: 'unclear_metadata_scope' }),
     }));
 
     const ambiguousRisk = dispatchAuthority(safeCandidate({
@@ -264,7 +264,7 @@ describe('squidrun authority dispatcher', () => {
     expect(ambiguousRisk).toEqual(expect.objectContaining({
       bucket: BUCKETS.approvalRequired,
       riskClass: 'approval_required',
-      jamesCheckpoint: expect.objectContaining({ capability: 'unclear_metadata_scope' }),
+      operatorCheckpoint: expect.objectContaining({ capability: 'unclear_metadata_scope' }),
     }));
   });
 
@@ -281,7 +281,7 @@ describe('squidrun authority dispatcher', () => {
       requiredProofs: expect.any(Array),
       evidenceRefs: expect.any(Array),
       metadataScope: expect.any(Object),
-      jamesCheckpoint: null,
+      operatorCheckpoint: null,
       audit: expect.objectContaining({
         salienceDoesNotGrant: true,
         policyStatic: true,

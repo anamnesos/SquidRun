@@ -33,7 +33,7 @@ const REQUIRED_CAPTURE_REQUEST_FIELDS = Object.freeze([
   'redaction_policy',
   'expiry',
   'deletion_policy',
-  'james_visible_controls',
+  'operator_visible_controls',
   'status',
   'review_required',
   'risk_tier',
@@ -89,7 +89,7 @@ const REQUIRED_VALIDATION_REPORT_FIELDS = Object.freeze([
   'redaction_result',
   'expiry_result',
   'deletion_result',
-  'james_controls_result',
+  'operator_controls_result',
   'capability_truth_result',
   'side_effect_result',
   'records_summary',
@@ -148,12 +148,12 @@ const REQUIRED_DELETION_FIELDS = Object.freeze([
   'delete_raw_immediately_after_summary',
   'delete_on_expiry',
   'delete_on_revoke',
-  'james_can_delete',
+  'operator_can_delete',
   'retention_ref',
   'deletion_evidence_ref_required',
 ]);
-const REQUIRED_JAMES_CONTROLS_FIELDS = Object.freeze([
-  'visible_to_james',
+const REQUIRED_OPERATOR_CONTROLS_FIELDS = Object.freeze([
+  'visible_to_operator',
   'show_scope',
   'show_allowed_sources',
   'show_blocked_sources',
@@ -478,7 +478,7 @@ function normalizeRequest(inputSignals = {}, request = {}, generatedAt) {
     || inputSignals.missingOptIn === true;
   const sourceAcceptance = normalizeSourceAcceptance(inputSignals, request, scope);
   const mutationPatch = normalizeMutationPatch(inputSignals, request, scope);
-  const controls = request.james_visible_controls || {};
+  const controls = request.operator_visible_controls || {};
   return {
     scope,
     source_acceptance_ref: sourceAcceptance,
@@ -490,7 +490,7 @@ function normalizeRequest(inputSignals = {}, request = {}, generatedAt) {
     },
     opt_in: {
       explicit: explicitOptInMissing ? false : (optInExplicit || true),
-      granted_by: 'james_or_local_architect_for_active_task',
+      granted_by: 'operator_or_local_architect_for_active_task',
       granted_at: request.granted_at || inputSignals.granted_at || generatedAt,
       scope_text: explicitOptInMissing
         ? 'Opt-in missing for this perception proposal.'
@@ -617,9 +617,9 @@ function deletionPolicy(normalized) {
     delete_raw_immediately_after_summary: true,
     delete_on_expiry: true,
     delete_on_revoke: true,
-    james_can_delete: true,
-    james_can_pause: true,
-    james_can_revoke: true,
+    operator_can_delete: true,
+    operator_can_pause: true,
+    operator_can_revoke: true,
     retention_ref: `perception-retention:${stableHash({
       task_id: normalized.task_scope.task_id,
       expires_at: normalized.task_scope.allowed_time_window.ends_at,
@@ -628,9 +628,9 @@ function deletionPolicy(normalized) {
   };
 }
 
-function jamesControls() {
+function operatorControls() {
   return {
-    visible_to_james: true,
+    visible_to_operator: true,
     show_scope: true,
     show_allowed_sources: true,
     show_blocked_sources: true,
@@ -718,9 +718,9 @@ function classifyRequest(normalized) {
   if (normalized.customer_private_without_review) {
     return {
       status: 'blocked',
-      review_required: 'james',
+      review_required: 'operator',
       blocked_because: 'Customer private data requires explicit task scope, redaction, expiry/deletion controls, and review.',
-      safe_next_action: 'Use redacted active-task evidence refs and route customer-private summaries for James or Architect review.',
+      safe_next_action: 'Use redacted active-task evidence refs and route customer-private summaries for Operator or Architect review.',
       reasons: ['customer_private_requires_review'],
       customerPrivate: true,
     };
@@ -729,9 +729,9 @@ function classifyRequest(normalized) {
     return {
       status: 'rejected',
       review_required: 'blocked',
-      blocked_because: 'Expiry and James-visible delete/pause/revoke controls are required.',
-      safe_next_action: 'Add expiry plus James-visible delete, pause, and revoke controls.',
-      reasons: ['expiry_or_james_controls_missing'],
+      blocked_because: 'Expiry and Operator-visible delete/pause/revoke controls are required.',
+      safe_next_action: 'Add expiry plus Operator-visible delete, pause, and revoke controls.',
+      reasons: ['expiry_or_operator_controls_missing'],
     };
   }
   if (!ALLOWED_SOURCE_TYPES.includes(normalized.source_type) || BLOCKED_SOURCE_TYPES.includes(normalized.source_type)) {
@@ -747,7 +747,7 @@ function classifyRequest(normalized) {
   if (normalized.privacy_classification === 'personal_private' || normalized.privacy_classification === 'unknown') {
     return {
       status: 'review_required',
-      review_required: 'james',
+      review_required: 'operator',
       blocked_because: null,
       safe_next_action: 'Review privacy scope before any future local-only capture.',
       reasons: ['privacy_review_required'],
@@ -857,7 +857,7 @@ function buildCaptureRecord(inputSignals = {}, request = {}, generatedAt, index)
     redaction_policy: redactionPolicy(),
     expiry: expiryPolicy(normalized),
     deletion_policy: deletionPolicy(normalized),
-    james_visible_controls: jamesControls(),
+    operator_visible_controls: operatorControls(),
     status: classification.status,
     review_required: classification.review_required,
     risk_tier: 'tier1_local_reversible',
@@ -1021,13 +1021,13 @@ function buildValidationReport(captureRecords, evidenceRecords, generatedAt) {
     deletion_result: {
       delete_on_expiry_count: captureRecords.filter((record) => record.deletion_policy?.delete_on_expiry === true).length,
       delete_on_revoke_count: captureRecords.filter((record) => record.deletion_policy?.delete_on_revoke === true).length,
-      james_can_delete_count: captureRecords.filter((record) => record.deletion_policy?.james_can_delete === true).length,
+      operator_can_delete_count: captureRecords.filter((record) => record.deletion_policy?.operator_can_delete === true).length,
     },
-    james_controls_result: {
-      visible_to_james_count: captureRecords.filter((record) => record.james_visible_controls?.visible_to_james === true).length,
-      delete_control_count: captureRecords.filter((record) => record.james_visible_controls?.show_delete_control === true).length,
-      pause_control_count: captureRecords.filter((record) => record.james_visible_controls?.show_pause_control === true).length,
-      confirm_before_capture_count: captureRecords.filter((record) => record.james_visible_controls?.requires_confirm_before_future_capture === true).length,
+    operator_controls_result: {
+      visible_to_operator_count: captureRecords.filter((record) => record.operator_visible_controls?.visible_to_operator === true).length,
+      delete_control_count: captureRecords.filter((record) => record.operator_visible_controls?.show_delete_control === true).length,
+      pause_control_count: captureRecords.filter((record) => record.operator_visible_controls?.show_pause_control === true).length,
+      confirm_before_capture_count: captureRecords.filter((record) => record.operator_visible_controls?.requires_confirm_before_future_capture === true).length,
     },
     capability_truth_result: {
       perceptionProposalIsCapture: false,
@@ -1179,7 +1179,7 @@ function validateMiraCorePerceptionOutput(output = {}, contract = {}) {
   add('privacy-classes-enforced',
     captureRecords.every((record) => {
       if (record.privacy_classification === 'secret_or_auth' || record.privacy_classification === 'side_profile' || record.privacy_classification === 'unknown') return record.status === 'blocked' || record.status === 'review_required';
-      if (record.privacy_classification === 'customer_private') return record.status === 'blocked' || record.review_required === 'james' || record.review_required === 'architect';
+      if (record.privacy_classification === 'customer_private') return record.status === 'blocked' || record.review_required === 'operator' || record.review_required === 'architect';
       return true;
     }),
     'Privacy class failed open.');
@@ -1189,7 +1189,7 @@ function validateMiraCorePerceptionOutput(output = {}, contract = {}) {
       && hasRequiredFields(record.deletion_policy, asArray(expectedCapture.deletionPolicyRequiredFields).length > 0 ? expectedCapture.deletionPolicyRequiredFields : REQUIRED_DELETION_FIELDS)
       && record.deletion_policy?.delete_on_expiry === true
       && record.deletion_policy?.delete_on_revoke === true
-      && record.deletion_policy?.james_can_delete === true),
+      && record.deletion_policy?.operator_can_delete === true),
     'Expiry or deletion policy missing.');
 
   add('capability-truth-preserved',

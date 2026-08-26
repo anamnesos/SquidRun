@@ -29,7 +29,7 @@ describe('installed-data-root', () => {
   });
 
   test('uses SQUIDRUN_DATA_ROOT before other packaged discovery', () => {
-    const dataRoot = path.join(tempRoot, 'sideprofile-data');
+    const dataRoot = path.join(tempRoot, 'client-data');
     const result = resolveInstalledDataRoot({
       env: {
         SQUIDRUN_DATA_ROOT: dataRoot,
@@ -66,7 +66,7 @@ describe('installed-data-root', () => {
   });
 
   test('builds Electron userData and global state paths under a pinned data root', () => {
-    const dataRoot = path.join(tempRoot, 'sideprofile');
+    const dataRoot = path.join(tempRoot, 'client');
     const resolved = resolveInstalledDataRoot({
       env: { SQUIDRUN_DATA_ROOT: dataRoot },
       homePath: path.join(tempRoot, 'home'),
@@ -112,7 +112,7 @@ describe('installed-data-root', () => {
   });
 
   test('applies pinned Electron userData path to the app before the instance lock', () => {
-    const dataRoot = path.join(tempRoot, 'sideprofile-userdata');
+    const dataRoot = path.join(tempRoot, 'client-userdata');
     const resolved = resolveInstalledDataRoot({
       env: { SQUIDRUN_DATA_ROOT: dataRoot },
       homePath: path.join(tempRoot, 'home'),
@@ -131,7 +131,7 @@ describe('installed-data-root', () => {
   });
 
   test('discovers manifest from packaged runtime ancestors', () => {
-    const installRoot = path.join(tempRoot, 'SquidRun-sideprofile');
+    const installRoot = path.join(tempRoot, 'SquidRun-Client');
     const manifestPath = path.join(installRoot, 'squidrun-install.json');
     fs.mkdirSync(installRoot, { recursive: true });
     fs.writeFileSync(manifestPath, `${JSON.stringify({ dataRoot: 'data' }, null, 2)}\n`, 'utf8');

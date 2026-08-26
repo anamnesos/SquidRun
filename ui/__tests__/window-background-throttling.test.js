@@ -68,7 +68,7 @@ describe('main renderer hidden-window policy', () => {
       expect(result).toEqual(expect.objectContaining({
         complete: true,
         ok: true,
-        electron: '28.3.3',
+        electron: require('electron/package.json').version,
         mainProcessExited: true,
         electronProcessesExited: true,
         throttledTimer: expect.objectContaining({

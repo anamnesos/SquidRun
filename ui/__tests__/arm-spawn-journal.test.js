@@ -25,9 +25,9 @@ function hasSqliteDriver() {
 }
 
 function startedInput(overrides = {}) {
-  const durableAddress = overrides.durableAddress || 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa';
+  const durableAddress = overrides.durableAddress || 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa';
   const spawnLeaseId = overrides.spawnLeaseId || 'lease-1';
-  const paneId = overrides.paneId || 'trustquote-dev-qa';
+  const paneId = overrides.paneId || 'exampleapp-dev-qa';
   const pid = overrides.pid || 4321;
   const sourceMessageId = overrides.sourceMessageId || 'ping-1';
   const expectedResponseClass = overrides.expectedResponseClass || 'arm.liveness.pong';
@@ -39,12 +39,12 @@ function startedInput(overrides = {}) {
     previousSpawnLeaseId: overrides.previousSpawnLeaseId || null,
     registryId: 'arm-registry-qa',
     armId: 'arm-qa',
-    appRoomId: 'trustquote-qa',
+    appRoomId: 'exampleapp-qa',
     armKey: 'dev-qa',
     paneId,
-    role: 'trustquote-dev-qa',
+    role: 'exampleapp-dev-qa',
     profileName: 'build-1a-qa',
-    workspacePath: 'D:\\qa\\trustquote-test-copy',
+    workspacePath: 'D:\\qa\\exampleapp-test-copy',
     owner,
     recoveryEvent,
     sourceMessageId,
@@ -102,7 +102,7 @@ maybeDescribe('arm spawn session journal', () => {
       status: 'inserted',
       inserted: true,
       session: expect.objectContaining({
-        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
         spawnLeaseId: 'lease-1',
         status: 'active',
         owner: 'terminal-daemon',
@@ -120,7 +120,7 @@ maybeDescribe('arm spawn session journal', () => {
       expect.objectContaining({
         type: 'arm.spawn.started',
         payload: expect.objectContaining({
-          durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+          durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
           spawnLeaseId: 'lease-1',
         }),
       }),
@@ -131,10 +131,10 @@ maybeDescribe('arm spawn session journal', () => {
   test('refuses malformed or non-live acknowledgments without leaving a session row', () => {
     const notLive = startedInput({
       input: { terminal: {
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         pid: 4321,
         alive: false,
-        durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+        durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
         spawnLeaseId: 'lease-1',
       } },
     });
@@ -196,7 +196,7 @@ maybeDescribe('arm spawn session journal', () => {
         expectedResponseClass: 'arm.liveness.pong',
         durableAddress: started.session.durableAddress,
         spawnLeaseId: 'lease-1',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         pid: 4321,
         owner: 'terminal-daemon',
         recoveryEvent: 'pty_exit',
@@ -226,23 +226,23 @@ maybeDescribe('arm spawn session journal', () => {
     expect(store.upsertCommsJournal({
       messageId: 'hm-qa-pong-1',
       sessionId: 'app-session-qa-1',
-      senderRole: 'trustquote-dev-qa',
+      senderRole: 'exampleapp-dev-qa',
       targetRole: 'architect',
       channel: 'ws',
       direction: 'outbound',
       sentAtMs: 2_000,
       brokeredAtMs: 2_001,
-      rawBody: `(TRUSTQUOTE DEV QA #1): [SQUIDRUN_ARM_LIVENESS_PONG] ${JSON.stringify({
+      rawBody: `(EXAMPLEAPP DEV QA #1): [SQUIDRUN_ARM_LIVENESS_PONG] ${JSON.stringify({
         schema: 'squidrun.arm_liveness_pong.v0',
         sourceMessageId: 'ping-1',
         responseClass: 'arm.liveness.pong',
         durableAddress: started.session.durableAddress,
         spawnLeaseId: 'lease-1',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
       })}`,
       status: 'routed',
       metadata: {
-        sender: { role: 'trustquote-dev-qa', pane_id: 'trustquote-dev-qa' },
+        sender: { role: 'exampleapp-dev-qa', pane_id: 'exampleapp-dev-qa' },
       },
     }, { nowMs: 2_001 }).ok).toBe(true);
     store.close();
@@ -277,23 +277,23 @@ maybeDescribe('arm spawn session journal', () => {
     expect(store.init().ok).toBe(true);
     expect(store.upsertCommsJournal({
       messageId: 'hm-qa-wrong-class',
-      senderRole: 'trustquote-dev-qa',
+      senderRole: 'exampleapp-dev-qa',
       targetRole: 'architect',
       channel: 'ws',
       direction: 'outbound',
       sentAtMs: 2_000,
       brokeredAtMs: 2_001,
-      rawBody: '(TRUSTQUOTE DEV QA #1): online',
+      rawBody: '(EXAMPLEAPP DEV QA #1): online',
       status: 'routed',
       metadata: {
-        sender: { role: 'trustquote-dev-qa', pane_id: 'trustquote-dev-qa' },
+        sender: { role: 'exampleapp-dev-qa', pane_id: 'exampleapp-dev-qa' },
         armLiveness: {
           schema: 'squidrun.arm_liveness_pong.v0',
           sourceMessageId: 'ping-1',
           responseClass: 'arm.startup.receipt',
           durableAddress: started.session.durableAddress,
           spawnLeaseId: 'lease-1',
-          paneId: 'trustquote-dev-qa',
+          paneId: 'exampleapp-dev-qa',
         },
       },
     }, { nowMs: 2_001 }).ok).toBe(true);

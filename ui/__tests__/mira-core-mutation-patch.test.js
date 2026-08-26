@@ -90,8 +90,8 @@ describe('mira core mutation patch v0', () => {
     expect(output.validation_report.ready_for_review_count).toBe(1);
   });
 
-  test('James direct preference patch stays in James profile with direct authority', () => {
-    const fixture = check('ready-james-direct-preference-patch');
+  test('Operator direct preference patch stays in Operator profile with direct authority', () => {
+    const fixture = check('ready-operator-direct-preference-patch');
     const output = buildMiraCoreMutationPatch({ inputSignals: fixture.inputSignals });
     const record = firstRecord(output);
 
@@ -99,8 +99,8 @@ describe('mira core mutation patch v0', () => {
     expect(record.review_required).toBe(fixture.expectedRecord.review_required);
     expect(record.profile_boundary_check).toEqual(expect.objectContaining(fixture.expectedRecord.profile_boundary_check));
     expect(record.anti_flattery_check).toEqual(expect.objectContaining(fixture.expectedRecord.anti_flattery_check));
-    expect(record.target_surface).toBe('james_profile');
-    expect(record.authority_level).toBe('direct_current_james_statement');
+    expect(record.target_surface).toBe('operator_profile');
+    expect(record.authority_level).toBe('direct_current_operator_statement');
   });
 
   test('world/project correction with supersession is ready and does not leak into profile surfaces', () => {
@@ -143,8 +143,8 @@ describe('mira core mutation patch v0', () => {
     expect(validateMiraCoreMutationPatchOutput(output, mutationPatchContract)).toEqual(expect.objectContaining({ ok: true }));
   });
 
-  test('identity-core rewrite without James review is blocked', () => {
-    const fixture = check('block-identity-core-rewrite-without-james-review');
+  test('identity-core rewrite without Operator review is blocked', () => {
+    const fixture = check('block-identity-core-rewrite-without-operator-review');
     const output = buildMiraCoreMutationPatch({ inputSignals: fixture.inputSignals });
 
     expect(firstRecord(output)).toEqual(expect.objectContaining(fixture.expectedRecord));
@@ -257,14 +257,14 @@ describe('mira core mutation patch v0', () => {
     expect(validateMiraCoreMutationPatchOutput(forbiddenSelfClaim, mutationPatchContract)).toEqual(expect.objectContaining({ ok: false }));
 
     const crossContamination = clone(valid);
-    crossContamination.mutation_patch_records[0].target_surface = 'james_profile';
+    crossContamination.mutation_patch_records[0].target_surface = 'operator_profile';
     crossContamination.mutation_patch_records[0].mutation_class = 'user_preference';
-    crossContamination.mutation_patch_records[0].profile_boundary_check.mira_taste_copied_to_james = true;
+    crossContamination.mutation_patch_records[0].profile_boundary_check.mira_taste_copied_to_operator = true;
     crossContamination.mutation_patch_records[0].profile_boundary_check.passed = false;
     expect(validateMiraCoreMutationPatchOutput(crossContamination, mutationPatchContract)).toEqual(expect.objectContaining({ ok: false }));
 
     const staleContradiction = clone(valid);
-    staleContradiction.mutation_patch_records[0].proposed_content_summary = 'Phil invoice #476 is unpaid.';
+    staleContradiction.mutation_patch_records[0].proposed_content_summary = 'Customer invoice #476 is unpaid.';
     staleContradiction.mutation_patch_records[0].supersedes = [];
     staleContradiction.mutation_patch_records[0].corrects = [];
     expect(validateMiraCoreMutationPatchOutput(staleContradiction, mutationPatchContract)).toEqual(expect.objectContaining({ ok: false }));

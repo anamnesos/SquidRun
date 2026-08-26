@@ -19,7 +19,7 @@ function usage() {
   console.log('Usage: node hm-screenshot.js <command> [options]');
   console.log('Commands: capture');
   console.log('Common options:');
-  console.log('  --window-key <key>          Capture a specific app window (for example trustquote)');
+  console.log('  --window-key <key>          Capture a specific app window (for example exampleapp)');
   console.log('  --pane <id>                Capture a specific pane only');
   console.log('  --run-id <id>              Attach capture to a visible-proof run id');
   console.log('  --send-telegram [caption]  Send screenshot to Telegram after capture');

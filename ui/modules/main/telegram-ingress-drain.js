@@ -80,13 +80,13 @@ function createDrainCoordinator(deps = {}) {
   //
   // The previous design demanded consumption proof before retiring a record,
   // and that proof could not be produced, so `lastRetirementAtMs` was 0: the
-  // drain never once completed its job in the field. Six days of James's
+  // drain never once completed its job in the field. Six days of Operator's
   // messages sat in the spool behind five independent locks — consumption
   // proof, the awaiting_proof latch, the durable attempt sidecar as a gate,
   // the legacy journal gate, and the runtime capability probe. Each was
   // defensible alone. Together they could not pass a single text message.
   //
-  // The control group was in the same app the whole time: James types into the
+  // The control group was in the same app the whole time: Operator types into the
   // terminal, it appears in the pane, and that path has never failed. It has no
   // proof system. This function is now that path plus a dedupe key.
   //
@@ -170,7 +170,7 @@ function createDrainCoordinator(deps = {}) {
         log.error(
           'Telegram',
           `Update ${updateId} was NOT confirmed delivered (${receipt?.status || 'no status'}). `
-          + 'It is retired and the queue continues. If James is waiting on this one he will '
+          + 'It is retired and the queue continues. If Operator is waiting on this one he will '
           + 'text again, and that retry is the recovery path — by design.'
         );
       }

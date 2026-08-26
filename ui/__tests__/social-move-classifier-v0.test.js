@@ -359,8 +359,8 @@ describe('social-move classifier v0 — evidence_phrases sanitization (ARCH #97 
   });
 
   test('emails redacted', () => {
-    expect(sanitizeEvidencePhrase('email me at james@example.com')).toMatch(/<redacted:email>/);
-    expect(sanitizeEvidencePhrase('email me at james@example.com')).not.toContain('james@example.com');
+    expect(sanitizeEvidencePhrase('email me at operator@example.com')).toMatch(/<redacted:email>/);
+    expect(sanitizeEvidencePhrase('email me at operator@example.com')).not.toContain('operator@example.com');
   });
 
   test('SSNs redacted', () => {
@@ -442,7 +442,7 @@ describe('social-move classifier v0 — output shape contract', () => {
 
   test('compliment cue does not force an ask-back formula', () => {
     const cue = MOVE_TYPE_BEHAVIOR_CUES.compliment;
-    expect(cue).toContain('James gave you a compliment');
+    expect(cue).toContain('Operator gave you a compliment');
     expect(cue).toContain('Ask something back only if you mean it');
     expect(cue).not.toMatch(/ask him back/i);
     expect(cue).not.toMatch(/one short status word/i);
@@ -579,8 +579,8 @@ describe('emotional_discovery_residue_v0 — cue contract (ARCH #129 red lines)'
     expect(r.friction_state.level).toBe(1);
     const cue = getSocialMoveBehaviorCue(r);
     // Callout cue + level-1 friction cue stacked.
-    expect(cue).toMatch(/James called something out/);
-    expect(cue).toMatch(/James pressed back/);
+    expect(cue).toMatch(/Operator called something out/);
+    expect(cue).toMatch(/Operator pressed back/);
   });
 
   test('getSocialMoveBehaviorCue returns move-type cue alone when level === 0', () => {

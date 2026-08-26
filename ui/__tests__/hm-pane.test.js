@@ -88,11 +88,11 @@ describe('hm-pane CLI helpers', () => {
       'switch-model',
       ['switch-model', '3', 'claude'],
       new Map([
-        ['target-profile', 'sideprofile'],
-        ['target-window', 'sideprofile'],
+        ['target-profile', 'client'],
+        ['target-window', 'client'],
       ])
     );
-    expect(payload.targetInstance).toEqual({ profileName: 'sideprofile', windowKey: 'sideprofile' });
+    expect(payload.targetInstance).toEqual({ profileName: 'client', windowKey: 'client' });
   });
 
   test('buildPayload throws when model is missing for switch-model', () => {

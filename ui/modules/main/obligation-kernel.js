@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { KNOWN_ROLES } = require('../role-scope-core');
-const { getTrustQuoteDayToDayArmSpecs } = require('../trustquote-arm-specs');
+const { getExampleAppDayToDayArmSpecs } = require('../exampleapp-arm-specs');
 
 const EXPECTED_CLASSES = Object.freeze(['verdict', 'ack', 'packet', 'answer', 'receipt']);
 const STALENESS_CLASSES = Object.freeze(['turn', 'beat', 'day', 'open']);
@@ -18,7 +18,7 @@ const STATIC_ROLE_ADDRESSES = new Set([
   'builder-bg-1',
   'builder-bg-2',
   'builder-bg-3',
-  ...getTrustQuoteDayToDayArmSpecs().flatMap((spec) => [
+  ...getExampleAppDayToDayArmSpecs().flatMap((spec) => [
     spec.role,
     spec.routeTarget,
     spec.paneId,
@@ -262,8 +262,8 @@ function metadataDeclaresFulfillment(value) {
 function normalizeObligationAddress(value, options = {}) {
   const normalized = asNonEmptyString(value, '')?.toLowerCase() || '';
   if (!normalized) return null;
-  if (options.creditor === true && ['james', 'room'].includes(normalized)) return normalized;
-  if (normalized === 'james' || normalized === 'room') return null;
+  if (options.creditor === true && ['operator', 'room'].includes(normalized)) return normalized;
+  if (normalized === 'operator' || normalized === 'room') return null;
   if (STATIC_ROLE_ADDRESSES.has(normalized)) return normalized;
   return null;
 }

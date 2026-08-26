@@ -5,14 +5,15 @@ const { spawnSync } = require('node:child_process');
 
 const START_HOOK = path.join(__dirname, '..', 'scripts', 'codex-hooks', 'session-start.ps1');
 const STOP_HOOK = path.join(__dirname, '..', 'scripts', 'codex-hooks', 'stop.ps1');
-const SHARED_CWD = path.resolve('D:/projects/squidrun');
+
+let sharedCwd;
 
 function runHook(script, payload, logRoot, identity = {}) {
   const env = {
     ...process.env,
     SQUIDRUN_CODEX_HOOK_TEST_LOG_ROOT: logRoot,
     SQUIDRUN_CODEX_HOOK_TEST_DISABLE_BINDER: '1',
-    SQUIDRUN_PROJECT_ROOT: SHARED_CWD,
+    SQUIDRUN_PROJECT_ROOT: sharedCwd,
     SQUIDRUN_PROFILE: '',
     SQUIDRUN_ROLE: '',
     SQUIDRUN_PANE_ID: '',
@@ -23,7 +24,7 @@ function runHook(script, payload, logRoot, identity = {}) {
     '-ExecutionPolicy', 'Bypass',
     '-File', script,
   ], {
-    cwd: SHARED_CWD,
+    cwd: sharedCwd,
     env,
     input: JSON.stringify(payload),
     encoding: 'utf8',
@@ -33,7 +34,7 @@ function runHook(script, payload, logRoot, identity = {}) {
 function payload(overrides = {}) {
   return {
     session_id: '11111111-1111-4111-8111-111111111111',
-    cwd: SHARED_CWD,
+    cwd: sharedCwd,
     transcript_path: 'C:/fixture/rollout.jsonl',
     model: 'gpt-test',
     permission_mode: 'test',
@@ -49,7 +50,9 @@ describe('Codex hook seat-scoped state', () => {
 
   beforeEach(() => {
     logRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'squidrun-codex-hook-state-'));
+    sharedCwd = path.join(logRoot, 'workspace');
     fs.mkdirSync(path.join(logRoot, 'hook-state'), { recursive: true });
+    fs.mkdirSync(sharedCwd, { recursive: true });
   });
 
   afterEach(() => {

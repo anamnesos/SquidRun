@@ -6,7 +6,7 @@
     "oracle#17",
     "architect#53"
   ],
-  "definition_100": "Mira is a durable, evidence-bound product surface that keeps presence, restart continuity, command context, team coordination, direct reachability, voice transport, and tool/action planning current across restarts without James restating the premise or the team inventing progress.",
+  "definition_100": "Mira is a durable, evidence-bound product surface that keeps presence, restart continuity, command context, team coordination, direct reachability, voice transport, and tool/action planning current across restarts without Operator restating the premise or the team inventing progress.",
   "formula": {
     "aggregate": "weighted_sum_of_category_computed_percent",
     "weight_total": 100,
@@ -87,7 +87,7 @@
       "id": "restart_current_scope_continuity",
       "label": "Restart and Current-Scope Continuity",
       "weight": 20,
-      "acceptance_100": "After restart, current durable Presence/current-scope evidence surfaces the active lane, accepted critique, next action, stale markers, and proof accounting without James restating it.",
+      "acceptance_100": "After restart, current durable Presence/current-scope evidence surfaces the active lane, accepted critique, next action, stale markers, and proof accounting without Operator restating it.",
       "signals": [
         {
           "id": "presence_state_loaded",
@@ -191,7 +191,7 @@
       "id": "direct_channel_reachability",
       "label": "Direct Channel Reachability",
       "weight": 10,
-      "acceptance_100": "James can reach Mira through a clear current channel/device path with route ownership, first-contact orientation, duplicate/truncation protection, and no internal pane confusion.",
+      "acceptance_100": "Operator can reach Mira through a clear current channel/device path with route ownership, first-contact orientation, duplicate/truncation protection, and no internal pane confusion.",
       "signals": [
         {
           "id": "presence_telegram_contract_loaded",
@@ -240,7 +240,7 @@
       "id": "tool_app_action_planning",
       "label": "Tool and App Action Planning",
       "weight": 5,
-      "acceptance_100": "Mira can prepare evidence-bound tool/app action plans with explicit James control points before any real-world effect, and proof separates plan, preview, dispatch readiness, and execution.",
+      "acceptance_100": "Mira can prepare evidence-bound tool/app action plans with explicit Operator control points before any real-world effect, and proof separates plan, preview, dispatch readiness, and execution.",
       "signals": [
         {
           "id": "north_star_tool_action_contract_loaded",

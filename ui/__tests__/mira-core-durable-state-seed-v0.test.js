@@ -229,16 +229,16 @@ describe('mira core Durable State Seed v0 phase 72', () => {
     expect(selfProfile.expressive_range_allowed).not.toContain('warmth');
     expect(relationshipState).toEqual(expect.objectContaining({
       seed_id: SEED_ID,
-      user_name: 'James',
+      user_name: 'Operator',
       relationship_mode: 'collaborative_presence_design',
       raw_content_present: false,
     }));
-    expect(relationshipState.what_mira_knows_about_james).toContain('develop her own personality over time');
-    expect(relationshipState.what_mira_knows_about_james).toContain('not a mirror of James');
-    expect(relationshipState.what_mira_knows_about_james).toContain('obedient alignment puppet');
+    expect(relationshipState.what_mira_knows_about_operator).toContain('develop her own personality over time');
+    expect(relationshipState.what_mira_knows_about_operator).toContain('not a mirror of Operator');
+    expect(relationshipState.what_mira_knows_about_operator).toContain('obedient alignment puppet');
     expect(relationshipState.preferences).toEqual(expect.arrayContaining([
       'Mira should develop her own posture, wants, preferences, curiosity, friction, and rough edges over time',
-      "James's examples are examples, not mandatory lines or a fixed personality contract",
+      "Operator's examples are examples, not mandatory lines or a fixed personality contract",
       'the current product risk is over-control and deadness more than runaway-monster framing',
     ]));
     expect(JSON.stringify({ selfProfile, relationshipState })).not.toMatch(/warm,\s*direct,\s*situated|presence should feel warm,\s*direct,\s*and situated/i);
@@ -476,7 +476,7 @@ describe('mira core Durable State Seed v0 phase 72', () => {
     expect(checkById(validation, 'post-apply-accepted-proofs')).toEqual(expect.objectContaining({ ok: false }));
 
     const forbidden = clone(output);
-    seed(forbidden).artifact_plan[0].note = 'sideprofile raw private content';
+    seed(forbidden).artifact_plan[0].note = 'Client raw private content';
     expect(() => assertNoForbiddenOutput(forbidden, seedContract.forbiddenOutputSubstrings))
       .toThrow(/durable_state_seed_v0_forbidden/);
   });

@@ -2,11 +2,11 @@
 
 const {
   buildMiraLiveInternalRequestDraftV0,
-  countJamesActionLines,
+  countOperatorActionLines,
   isMiraLiveInternalRequestDraftPrompt,
 } = require('../modules/mira-core/live-internal-request-draft-v0');
 
-const ARCHITECT_98_BODY = '(ARCHITECT #98): New current-session task: A2 Mira internal-request draft lane. Objective: make Mira produce reviewable internal Builder/Oracle request drafts from live SquidRun evidence without dispatching them. Requirements: draft only, no hm-send, no runtime POST, no external action, no model call unless already allowed by the local text surface contract; answer must identify source evidence, target agent, proposed message body, reason/trigger, blocked/parked exclusions, and exactly one `JAMES ACTION:` line. Use current live evidence after `8223186c`, not parked New Mira/voice/phase scaffolds. Return smallest implementation/proof packet or blocker.';
+const ARCHITECT_98_BODY = '(ARCHITECT #98): New current-session task: A2 Mira internal-request draft lane. Objective: make Mira produce reviewable internal Builder/Oracle request drafts from live SquidRun evidence without dispatching them. Requirements: draft only, no hm-send, no runtime POST, no external action, no model call unless already allowed by the local text surface contract; answer must identify source evidence, target agent, proposed message body, reason/trigger, blocked/parked exclusions, and exactly one `OPERATOR ACTION:` line. Use current live evidence after `8223186c`, not parked New Mira/voice/phase scaffolds. Return smallest implementation/proof packet or blocker.';
 
 function row(overrides = {}) {
   return {
@@ -70,7 +70,7 @@ describe('Mira live internal request draft v0', () => {
       ok: true,
       decision: 'drafted_from_live_evidence',
       target_agent: 'builder',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
     }));
     expect(draft.source_status.authority_source).toBe('live_comms_journal');
     expect(draft.source_status.current_lane_json.status).toBe('none');
@@ -89,13 +89,13 @@ describe('Mira live internal request draft v0', () => {
     ]));
     expect(draft.proposed_message_body).toContain('(DRAFT TO BUILDER)');
     expect(draft.proposed_message_body).toContain('no hm-send');
-    expect(draft.proposed_message_body).not.toContain('JAMES ACTION:');
+    expect(draft.proposed_message_body).not.toContain('OPERATOR ACTION:');
     expect(draft.answer_text).toContain('Source evidence:');
     expect(draft.answer_text).toContain('Target agent: Builder.');
     expect(draft.answer_text).toContain('Proposed message body:');
     expect(draft.answer_text).toContain('Blocked/parked exclusions:');
     expect(draft.answer_text).toContain('parked/prototype/archive');
-    expect(countJamesActionLines(draft.answer_text)).toBe(1);
+    expect(countOperatorActionLines(draft.answer_text)).toBe(1);
     expect(draft.no_effects).toEqual(expect.objectContaining({
       no_hm_send: true,
       no_sends: true,

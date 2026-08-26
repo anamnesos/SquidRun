@@ -89,14 +89,14 @@ describe('hm-mira-self-direction CLI harness', () => {
     expect(all.result.proposals[0].review_status).toBe('routed');
   });
 
-  test('stdin create stages caller-provided Mira proposal JSON without James permission step', async () => {
+  test('stdin create stages caller-provided Mira proposal JSON without Operator permission step', async () => {
     const projectRoot = tempProject();
     const proposal = {
       voice_text: 'I want to catch the moment I start flattering instead of disagreeing.',
       target_areas: ['friction', 'tests'],
       desired_change: 'Add one review item when a Mira reply agrees without evidence under pressure.',
       proposed_experiment: 'Run three pressure prompts and route any agreement-without-evidence item to Architect.',
-      success_metric: 'The review item can be accepted or rejected internally without asking James.',
+      success_metric: 'The review item can be accepted or rejected internally without asking Operator.',
     };
 
     const result = await driver.run([
@@ -110,7 +110,7 @@ describe('hm-mira-self-direction CLI harness', () => {
 
     expect(result.result.decision).toBe('staged');
     expect(result.result.proposal.voice_text).toBe(proposal.voice_text);
-    expect(JSON.stringify(result.result)).not.toMatch(/ask James|permission required/i);
+    expect(JSON.stringify(result.result)).not.toMatch(/ask Operator|permission required/i);
   });
 
   test('scan-confidence stages review item from recent reply audit and notifies Architect internally', async () => {
@@ -280,7 +280,7 @@ describe('hm-mira-self-direction CLI harness', () => {
     appendJsonl(selfDirectionQueuePath(projectRoot), {
       proposal_id: 'mira-self-direction:cli-skill',
       review_status: 'routed',
-      desired_change: 'Use memory before asking James to restate active context.',
+      desired_change: 'Use memory before asking Operator to restate active context.',
       target_areas: ['memory', 'continuity'],
     });
     appendJsonl(selfDirectionOutcomePath(projectRoot), {

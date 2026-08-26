@@ -963,8 +963,8 @@
     return {
       messageId: `pending-${record.clientNonce}`,
       seq: Number.MAX_SAFE_INTEGER,
-      authorId: 'james',
-      author: { memberId: 'james', displayName: 'James' },
+      authorId: 'operator',
+      author: { memberId: 'operator', displayName: 'You' },
       body: record.body,
       attachments: outboxDisplayAttachments(record),
       clientNonce: record.clientNonce,

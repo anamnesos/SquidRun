@@ -15,7 +15,7 @@
  *   node ui/scripts/hm-model-audit.js [--dir <claude-projects-dir>] [--since YYYY-MM-DD] [--per-file]
  *   node ui/scripts/hm-model-audit.js watch [--dir D] [--expect MODEL] [--interval-s 60]
  *
- * watch mode (James, 2026-07-04 04:21: "you don't know when you silently
+ * watch mode (Operator, 2026-07-04 04:21: "you don't know when you silently
  * fall back!"): correct — no model can feel its own weights mid-answer.
  * So this shrinks the blind window to one poll interval: tail the
  * transcripts and ALERT (Telegram + stderr) the moment any new turn logs a

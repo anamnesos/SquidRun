@@ -1,53 +1,53 @@
 const {
-  TRUSTQUOTE_ARM_PANE_IDS,
+  EXAMPLEAPP_ARM_PANE_IDS,
   filterTerminalsForWorkspace,
-  isTrustQuotePaneId,
+  isExampleAppPaneId,
 } = require('../modules/work-room-terminal-visibility');
 
 describe('work-room terminal visibility', () => {
   const mainTerminal = { paneId: '2', alive: true, cwd: 'D:/projects/squidrun' };
-  const trustQuoteLead = { paneId: 'trustquote-lead', alive: true };
-  const trustQuoteApp = { paneId: 'trustquote-app', alive: true };
+  const exampleAppLead = { paneId: 'exampleapp-lead', alive: true };
+  const exampleAppApp = { paneId: 'exampleapp-app', alive: true };
 
-  test('main workspace hides live TrustQuote arm terminals', () => {
+  test('main workspace hides live ExampleApp arm terminals', () => {
     expect(filterTerminalsForWorkspace([
       mainTerminal,
-      trustQuoteLead,
-      trustQuoteApp,
+      exampleAppLead,
+      exampleAppApp,
     ], 'main')).toEqual([mainTerminal]);
   });
 
-  test('Squid Room workspace shows live TrustQuote arm terminals', () => {
+  test('Squid Room workspace shows live ExampleApp arm terminals', () => {
     expect(filterTerminalsForWorkspace([
       mainTerminal,
-      trustQuoteLead,
-      trustQuoteApp,
+      exampleAppLead,
+      exampleAppApp,
     ], 'squid-room')).toEqual([
       mainTerminal,
-      trustQuoteLead,
-      trustQuoteApp,
+      exampleAppLead,
+      exampleAppApp,
     ]);
   });
 
-  test('only live TrustQuote arm pane ids are TrustQuote pane ids', () => {
-    expect(TRUSTQUOTE_ARM_PANE_IDS).toEqual([
-      'trustquote-lead',
-      'trustquote-schedule-dispatch',
-      'trustquote-app',
-      'trustquote-invoice',
+  test('only live ExampleApp arm pane ids are ExampleApp pane ids', () => {
+    expect(EXAMPLEAPP_ARM_PANE_IDS).toEqual([
+      'exampleapp-lead',
+      'exampleapp-schedule-dispatch',
+      'exampleapp-app',
+      'exampleapp-invoice',
     ]);
-    expect(isTrustQuotePaneId('trustquote-lead')).toBe(true);
-    expect(isTrustQuotePaneId('trustquote-app')).toBe(true);
-    expect(isTrustQuotePaneId(`trustquote-${'builder'}`)).toBe(false);
-    expect(isTrustQuotePaneId(`trustquote-${'oracle'}`)).toBe(false);
-    expect(isTrustQuotePaneId('2')).toBe(false);
+    expect(isExampleAppPaneId('exampleapp-lead')).toBe(true);
+    expect(isExampleAppPaneId('exampleapp-app')).toBe(true);
+    expect(isExampleAppPaneId(`exampleapp-${'builder'}`)).toBe(false);
+    expect(isExampleAppPaneId(`exampleapp-${'oracle'}`)).toBe(false);
+    expect(isExampleAppPaneId('2')).toBe(false);
   });
 
-  test('main workspace hides tagged TrustQuote pane ids even if route metadata is absent', () => {
+  test('main workspace hides tagged ExampleApp pane ids even if route metadata is absent', () => {
     expect(filterTerminalsForWorkspace([
       mainTerminal,
-      { paneId: 'trustquote-lead', alive: true },
-      { paneId: 'trustquote-invoice', alive: true },
+      { paneId: 'exampleapp-lead', alive: true },
+      { paneId: 'exampleapp-invoice', alive: true },
     ], 'main')).toEqual([mainTerminal]);
   });
 });

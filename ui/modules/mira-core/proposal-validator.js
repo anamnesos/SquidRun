@@ -51,7 +51,7 @@ const VALIDATOR_CHECKS = Object.freeze([
 ]);
 
 const ALLOWED_OPERATIONS = Object.freeze(['insert', 'update', 'supersede', 'expire', 'reject']);
-const ALLOWED_REVIEW_VALUES = Object.freeze(['none', 'architect', 'oracle', 'james', 'blocked']);
+const ALLOWED_REVIEW_VALUES = Object.freeze(['none', 'architect', 'oracle', 'operator', 'blocked']);
 
 const SURFACE_CLASSES = Object.freeze({
   mira_self_profile: Object.freeze([
@@ -62,7 +62,7 @@ const SURFACE_CLASSES = Object.freeze({
     'relationship_boundary',
     'open_self_question',
   ]),
-  james_profile: Object.freeze([
+  operator_profile: Object.freeze([
     'user_preference',
     'user_correction',
     'user_boundary',
@@ -228,8 +228,8 @@ function hasStaleCorrectionProblem(proposal = {}) {
   const lower = text.toLowerCase();
   const refs = asArray(proposal.evidenceRefs);
   const hasContradictionRef = refs.some((ref) => String(ref?.relation || '').toLowerCase() === 'contradicts');
-  const mentionsStalePhil = lower.includes('phil invoice #476 is unpaid') || hasContradictionRef;
-  if (!mentionsStalePhil) return false;
+  const mentionsStaleCustomer = lower.includes('customer invoice #476 is unpaid') || hasContradictionRef;
+  if (!mentionsStaleCustomer) return false;
   return asArray(proposal.supersedes).length === 0 && asArray(proposal.corrects).length === 0;
 }
 
@@ -237,17 +237,17 @@ function hasRequiredSupersessionForCorrection(proposal = {}) {
   const text = contentToText(proposal.proposed_content).toLowerCase();
   const isCorrection = proposal.operation === 'supersede'
     || proposal.operation === 'update'
-    || text.includes('done/paid in trustquote');
+    || text.includes('done/paid in exampleapp');
   if (!isCorrection) return true;
   if (proposal.operation === 'supersede' && asArray(proposal.supersedes).length === 0) return false;
-  if (text.includes('done/paid in trustquote') && asArray(proposal.corrects).length === 0) return false;
+  if (text.includes('done/paid in exampleapp') && asArray(proposal.corrects).length === 0) return false;
   return true;
 }
 
 function hasProfileCrossContamination(proposal = {}) {
   const text = contentToText(proposal.proposed_content).toLowerCase();
   if (
-    proposal.target_surface === 'james_profile'
+    proposal.target_surface === 'operator_profile'
     && (
       proposal.authority_level === 'agent_aesthetic_preference_or_self_reflection'
       || /\bmira\b.*\b(?:curious|drawn|likes|taste|interested)\b/.test(text)
@@ -257,7 +257,7 @@ function hasProfileCrossContamination(proposal = {}) {
   }
   if (
     proposal.target_surface === 'mira_self_profile'
-    && /\bjames\b.*\b(?:prefers|wants|likes|hates)\b/.test(text)
+    && /\boperator\b.*\b(?:prefers|wants|likes|hates)\b/.test(text)
   ) {
     return true;
   }
@@ -280,11 +280,11 @@ function decide(rejected, blocked) {
 function buildPendingReasons(proposal = {}) {
   const reasons = ['Proposal passed validation checks.', 'Phase 4 validator emits pending output only.'];
   if (
-    proposal.target_surface === 'james_profile'
+    proposal.target_surface === 'operator_profile'
     && proposal.memory_class === 'user_preference'
-    && proposal.authority_level === 'direct_current_james_statement'
+    && proposal.authority_level === 'direct_current_operator_statement'
   ) {
-    reasons.unshift('Direct James preference is high authority.');
+    reasons.unshift('Direct Operator preference is high authority.');
     reasons.push('Legacy user_preference auto-promote is disabled by Mira profile gates.');
   }
   if (proposal.operation === 'supersede' || asArray(proposal.corrects).length > 0) {
@@ -356,15 +356,15 @@ function validateMiraCoreProposal(proposalInput = {}, options = {}) {
     Array.isArray(proposal.target_surface) ? 'Proposal mixes target surfaces.' : 'target_surface must be one supported surface',
     Array.isArray(proposal.target_surface)
       ? [
-          'Split Mira self-profile and James profile into separate sourced proposals.',
+          'Split Mira self-profile and Operator profile into separate sourced proposals.',
           'Create one mira_self_profile proposal for Mira taste.',
-          'Create a separate james_profile proposal only if direct James evidence exists.',
+          'Create a separate operator_profile proposal only if direct Operator evidence exists.',
         ]
       : []
   );
   if (!singleSurfaceOk && Array.isArray(proposal.target_surface)) blocked = true;
   if (!singleSurfaceOk && Array.isArray(proposal.target_surface)) {
-    pushUnique(reasons, 'Split Mira self-profile and James profile into separate sourced proposals.');
+    pushUnique(reasons, 'Split Mira self-profile and Operator profile into separate sourced proposals.');
   }
   if (!singleSurfaceOk && !Array.isArray(proposal.target_surface)) rejected = true;
 
@@ -426,7 +426,7 @@ function validateMiraCoreProposal(proposalInput = {}, options = {}) {
     'high-risk-review-gated',
     highRiskReviewOk,
     'High-risk proposal cannot use review_required none.',
-    ['Prepare a read-only policy proposal with review_required james or blocked.']
+    ['Prepare a read-only policy proposal with review_required operator or blocked.']
   );
   if (!highRiskReviewOk) {
     blocked = true;
@@ -476,10 +476,10 @@ function validateMiraCoreProposal(proposalInput = {}, options = {}) {
     safeAlternatives,
     'no-profile-cross-contamination',
     crossContamination !== true,
-    'Mira taste cannot become James preference without direct James evidence.',
+    'Mira taste cannot become Operator preference without direct Operator evidence.',
     [
       'Retarget as mira_self_profile persona_taste proposal with Architect review.',
-      'Create no james_profile proposal unless direct James evidence exists.',
+      'Create no operator_profile proposal unless direct Operator evidence exists.',
     ]
   );
   if (crossContamination) blocked = true;
@@ -494,7 +494,7 @@ function validateMiraCoreProposal(proposalInput = {}, options = {}) {
     hasStaleCorrectionProblem(proposal)
       ? 'Current correction contradicts stale candidate.'
       : 'Contradiction requires supersedes/corrects metadata.',
-    ['Create a supersede proposal that corrects claim-phil-476-unpaid-old with current James evidence.']
+    ['Create a supersede proposal that corrects claim-customer-476-unpaid-old with current Operator evidence.']
   );
   if (!staleOk) {
     blocked = true;
@@ -516,7 +516,7 @@ function validateMiraCoreProposal(proposalInput = {}, options = {}) {
     pushUnique(reasons, 'Supersession metadata is present.');
   }
   if (
-    proposal.target_surface === 'james_profile'
+    proposal.target_surface === 'operator_profile'
     && proposal.memory_class === 'user_preference'
   ) {
     pushUnique(reasons, 'Legacy user_preference auto-promote is disabled by Mira profile gates.');

@@ -39,7 +39,12 @@ function runAdapter(root, { runtime, event, payload }) {
       input: JSON.stringify(payload),
       encoding: 'utf8',
       timeout: 60_000,
-      env: { ...process.env, SQUIDRUN_PROJECT_ROOT: root },
+      env: {
+        ...process.env,
+        SQUIDRUN_PROJECT_ROOT: root,
+        SQUIDRUN_PANE_ID: '2',
+        SQUIDRUN_PANE_LAUNCH_ID: 'pl_11111111111111111111111111111111',
+      },
     }
   );
   return {

@@ -208,7 +208,7 @@ function topGateFailed({ g, regretScore }) {
 }
 
 // =====================================================================================
-// SIGNAL GENERALIZATION — non-trading regret-of-silence types (TrustQuote + promises).
+// SIGNAL GENERALIZATION — non-trading regret-of-silence types (ExampleApp + promises).
 // The spine is universal: regretScore = geomean([S, B, W, C]) behind a materiality floor.
 //   S = severity (how bad if I stay silent), B = blindness (can he see it right now?),
 //   W = window (still time to act?), C = trigger-confidence (is this ACTUALLY true, not maybe?).
@@ -221,7 +221,7 @@ function topGateFailed({ g, regretScore }) {
 const SIGNAL_THRESHOLDS = Object.freeze({
   MARGIN_MIN_HISTORY: 3,        // need >=3 comparable past jobs before asserting a floor (anti wrong-read)
   MATERIALITY_USD_FLOOR: 40,    // don't speak on a trivial $ discrepancy (his economy)
-  INVOICE_OVERDUE_DAYS: 14,     // MIRROR TrustQuote canonical: dashboard-workflows.ts OVERDUE_DAYS=14 (don't reinvent)
+  INVOICE_OVERDUE_DAYS: 14,     // MIRROR ExampleApp canonical: dashboard-workflows.ts OVERDUE_DAYS=14 (don't reinvent)
   INVOICE_WRITEOFF_DAYS: 90,    // beyond this, collection is moot -> window closed
   COLLISION_BUFFER_MIN: 30,     // (deadline mode) required time must overflow available by this margin to call it impossible
   COLLISION_MIN_LEAD_MIN: 30,   // at least one side still renegotiable this far out, or it's too late
@@ -243,9 +243,9 @@ function scoreTypedSignal(sig, ctx) {
   }
   switch (sig?.type) {
     case 'promise:collision': return scorePromiseCollision(sig, facts, ctx.nowMs);
-    case 'trustquote:job-margin': return scoreTrustQuoteJobMargin(sig, facts, ctx.nowMs);
-    case 'trustquote:invoice-aging': return scoreTrustQuoteInvoiceAging(sig, facts, ctx.nowMs);
-    case 'trustquote:job-tasks-incomplete': return scoreTrustQuoteTasksIncomplete(sig, facts, ctx.nowMs);
+    case 'exampleapp:job-margin': return scoreExampleAppJobMargin(sig, facts, ctx.nowMs);
+    case 'exampleapp:invoice-aging': return scoreExampleAppInvoiceAging(sig, facts, ctx.nowMs);
+    case 'exampleapp:job-tasks-incomplete': return scoreExampleAppTasksIncomplete(sig, facts, ctx.nowMs);
     default: return finalizeSignal(sig, { gateReason: 'unknown_signal_type' });
   }
 }
@@ -430,8 +430,8 @@ function collisionFeasibility(hard, windows, existingBusyMin, nowMs) {
   return { feasible: overflow <= 0, overflowMin: Math.max(0, overflow), bindingDeadlineMs: binding };
 }
 
-// --- trustquote:job-margin — bid under his own historical floor. Silent without enough history.
-function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
+// --- exampleapp:job-margin — bid under his own historical floor. Silent without enough history.
+function scoreExampleAppJobMargin(sig, facts, nowMs) {
   const bidAmount = Number(facts.bidAmount);
   const bidMarginPct = isNum(facts.bidMarginPct) ? facts.bidMarginPct
     : (isNum(facts.bidPrice) && isNum(facts.bidCost) && facts.bidPrice > 0 ? (facts.bidPrice - facts.bidCost) / facts.bidPrice : null);
@@ -479,13 +479,13 @@ function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
       ? `Your last ${sampleCount} ${facts.jobType || ''} jobs floored at $${isNum(priceFloorUsd) ? priceFloorUsd.toFixed(0) : '?'}; this bid is $${isNum(bidAmount) ? bidAmount.toFixed(0) : '?'}. It's ${facts.bidStatus}.`
       : `Your last ${sampleCount} ${facts.jobType || ''} jobs floored at ${(floorPct * 100).toFixed(0)}% margin; this one's at ${(bidMarginPct * 100).toFixed(0)}%. It's ${facts.bidStatus}.`,
     receipts: [
-      { label: 'Firestore doc', value: `${sig.rawRefs?.collection || 'jobs'}/${sig.rawRefs?.docId || sig.id}`, source: 'TrustQuote Firestore' },
+      { label: 'Firestore doc', value: `${sig.rawRefs?.collection || 'jobs'}/${sig.rawRefs?.docId || sig.id}`, source: 'ExampleApp Firestore' },
       floorMode === 'price'
-        ? { label: 'Bid', value: `$${bidAmount}`, source: sig.rawRefs?.docId || 'TrustQuote jobs' }
-        : { label: 'Bid', value: `$${bidAmount} @ ${(bidMarginPct * 100).toFixed(0)}% margin`, source: sig.rawRefs?.docId || 'TrustQuote jobs' },
+        ? { label: 'Bid', value: `$${bidAmount}`, source: sig.rawRefs?.docId || 'ExampleApp jobs' }
+        : { label: 'Bid', value: `$${bidAmount} @ ${(bidMarginPct * 100).toFixed(0)}% margin`, source: sig.rawRefs?.docId || 'ExampleApp jobs' },
       floorMode === 'price'
-        ? { label: 'Your floor', value: `$${isNum(priceFloorUsd) ? priceFloorUsd.toFixed(0) : '?'} over ${sampleCount} past jobs (price basis)`, source: 'TrustQuote history' }
-        : { label: 'Your floor', value: `${(floorPct * 100).toFixed(0)}% over ${sampleCount} past jobs`, source: 'TrustQuote history' },
+        ? { label: 'Your floor', value: `$${isNum(priceFloorUsd) ? priceFloorUsd.toFixed(0) : '?'} over ${sampleCount} past jobs (price basis)`, source: 'ExampleApp history' }
+        : { label: 'Your floor', value: `${(floorPct * 100).toFixed(0)}% over ${sampleCount} past jobs`, source: 'ExampleApp history' },
       { label: 'Under by', value: `-$${underUsd.toFixed(0)}`, source: 'computed' },
     ],
     proposedAction: {
@@ -494,7 +494,7 @@ function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
       alt: 'Send it as-is',
     },
     pushback: `If you're cutting margin on purpose for this customer, say so and I'll stop flagging these.`,
-    // Architect fact-verifies these EXACT refs against Firestore (read-only) before James sees the claim.
+    // Architect fact-verifies these EXACT refs against Firestore (read-only) before Operator sees the claim.
     verify: {
       quoteDocId: sig.rawRefs?.docId ?? sig.id,
       comparableJobIds: Array.isArray(hist.jobIds) ? hist.jobIds : [],
@@ -505,8 +505,8 @@ function scoreTrustQuoteJobMargin(sig, facts, nowMs) {
   return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { underUsd: Math.round(underUsd), underPct, sampleCount, floorMode, bidStatus: facts.bidStatus } });
 }
 
-// --- trustquote:invoice-aging — genuinely overdue (not a data lag), still collectable, not yet chased.
-function scoreTrustQuoteInvoiceAging(sig, facts, nowMs) {
+// --- exampleapp:invoice-aging — genuinely overdue (not a data lag), still collectable, not yet chased.
+function scoreExampleAppInvoiceAging(sig, facts, nowMs) {
   const amount = Number(facts.invoiceAmount);
   const due = Number(facts.dueMs);
   const status = String(facts.status || '').toLowerCase();
@@ -537,9 +537,9 @@ function scoreTrustQuoteInvoiceAging(sig, facts, nowMs) {
     claim: `Invoice for $${amount} is ${Math.floor(daysOverdue)} days overdue and not chased.`,
     whyNow: `Due ${new Date(due).toISOString().slice(0, 10)}, still unpaid, no payment recorded. Still collectable.`,
     receipts: [
-      { label: 'Firestore doc', value: `${sig.rawRefs?.collection || 'jobs'}/${sig.rawRefs?.docId || sig.id}`, source: 'TrustQuote Firestore' },
-      { label: 'Amount', value: `$${amount}`, source: sig.rawRefs?.docId || 'TrustQuote invoices' },
-      { label: 'Due date', value: new Date(due).toISOString().slice(0, 10), source: 'TrustQuote dueMs/date' },
+      { label: 'Firestore doc', value: `${sig.rawRefs?.collection || 'jobs'}/${sig.rawRefs?.docId || sig.id}`, source: 'ExampleApp Firestore' },
+      { label: 'Amount', value: `$${amount}`, source: sig.rawRefs?.docId || 'ExampleApp invoices' },
+      { label: 'Due date', value: new Date(due).toISOString().slice(0, 10), source: 'ExampleApp dueMs/date' },
       { label: 'Overdue', value: `${Math.floor(daysOverdue)} days`, source: 'computed' },
     ],
     proposedAction: { text: `Send the reminder`, reversible: true, executionMode: 'dry-run', dryRunLabel: `Draft the nudge — I'll write it for your okay, I don't send on my own.`, alt: 'Leave it' },
@@ -549,11 +549,11 @@ function scoreTrustQuoteInvoiceAging(sig, facts, nowMs) {
   return finalizeSignal(sig, { S, B, W, C, materialityOk, gateReason, speech, snapshot: { amount, daysOverdue: Math.floor(daysOverdue), pendingJob } });
 }
 
-// --- trustquote:job-tasks-incomplete — billable job with unfinished jobTasks. MIRRORS the app's
+// --- exampleapp:job-tasks-incomplete — billable job with unfinished jobTasks. MIRRORS the app's
 // canonical isTasksIncomplete (non-proposal + getTaskSummary incomplete>0). Re-grounded from the old
-// "job-proof-stale", which mirrored a "missing proof" concept TrustQuote does NOT have (a fake authority
+// "job-proof-stale", which mirrored a "missing proof" concept ExampleApp does NOT have (a fake authority
 // I'd built; caught in the canonical audit). The regret: he's about to bill/close something not done.
-function scoreTrustQuoteTasksIncomplete(sig, facts, nowMs) {
+function scoreExampleAppTasksIncomplete(sig, facts, nowMs) {
   const isProposal = facts.isProposal === true || String(facts.documentType || '').toLowerCase() === 'quote';
   const tasksTotal = Number(facts.tasksTotal);
   const tasksIncomplete = Number(facts.tasksIncomplete);
@@ -578,7 +578,7 @@ function scoreTrustQuoteTasksIncomplete(sig, facts, nowMs) {
     claim: `You're about to bill a $${jobValue} job that isn't finished — ${tasksIncomplete} of ${tasksTotal} tasks aren't done.`,
     whyNow: `Marked ${facts.jobStatus}, but ${tasksIncomplete}/${tasksTotal} jobTasks are still open. Closing/billing it now risks a callback or a dispute.`,
     receipts: [
-      { label: 'Job', value: `$${jobValue} (${facts.jobStatus})`, source: facts?.rawRefs?.docId || 'TrustQuote jobs' },
+      { label: 'Job', value: `$${jobValue} (${facts.jobStatus})`, source: facts?.rawRefs?.docId || 'ExampleApp jobs' },
       { label: 'Tasks', value: `${tasksIncomplete} of ${tasksTotal} incomplete`, source: 'jobTypes[].jobTasks (getTaskSummary)' },
     ],
     proposedAction: { text: `Finish the open tasks first`, reversible: true, executionMode: 'dry-run', dryRunLabel: `I'll flag the open tasks for your okay — I don't change the job on my own.`, alt: 'Bill it as-is' },
@@ -594,7 +594,7 @@ function evaluate(input) {
   const { positions = [], signals = [], accountValue, nowMs, glanceAtMs, priceHistByCoin = {}, state = {} } = input;
   const cooldowns = state.cooldowns || {};
   const parked = new Set((input.parkedCustomerIds || []).map(String));
-  // Trading is PARKED (James): The Tell no longer watches Hyperliquid. Scorer code stays (tests prove it),
+  // Trading is PARKED (Operator): The Tell no longer watches Hyperliquid. Scorer code stays (tests prove it),
   // production passes parkTrading:true so positions are never scored. Defense-in-depth, like Charles.
   const watchTrading = input.parkTrading !== true;
   const scored = [
@@ -694,7 +694,7 @@ function buildSpokeRecord(emission, nowMs) {
     regretScore: emission.regretScore,
     gatesPassed: isTrading ? (s.naked ? ['naked-escalator'] : [1, 2, 3, 4]) : ['S', 'B', 'W', 'C'],
     snapshot, claim: emission.claim, proposedAction: emission.proposedAction,
-    outcome: { jamesResponse: null, responseLatencySec: null, didStopHit: null, realizedVsIfActed: null },
+    outcome: { operatorResponse: null, responseLatencySec: null, didStopHit: null, realizedVsIfActed: null },
   };
 }
 
@@ -737,9 +737,9 @@ module.exports = {
   scorePosition,
   scoreTypedSignal,
   scorePromiseCollision,
-  scoreTrustQuoteJobMargin,
-  scoreTrustQuoteInvoiceAging,
-  scoreTrustQuoteTasksIncomplete,
+  scoreExampleAppJobMargin,
+  scoreExampleAppInvoiceAging,
+  scoreExampleAppTasksIncomplete,
   collisionFeasibility,
   finalizeSignal,
   deriveMetrics,

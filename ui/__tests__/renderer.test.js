@@ -18,6 +18,7 @@ const mockElement = {
     contains: jest.fn().mockReturnValue(false),
   },
   style: {},
+  dataset: {},
   innerHTML: '',
   textContent: '',
   value: '',
@@ -675,15 +676,15 @@ describe('renderer.js smoke tests', () => {
     it('detects stale dynamic pane PTYs that are attached to the wrong cwd', () => {
       expect(renderer.isSquidRoomPaneWrongWorkingDir(
         { alive: true, cwd: 'D:\\projects\\squidrun\\ui' },
-        'D:\\projects\\TrustQuote'
+        'D:\\projects\\ExampleApp'
       )).toBe(true);
       expect(renderer.isSquidRoomPaneWrongWorkingDir(
-        { alive: true, cwd: 'D:\\projects\\TrustQuote\\' },
-        'D:/projects/TrustQuote'
+        { alive: true, cwd: 'D:\\projects\\ExampleApp\\' },
+        'D:/projects/ExampleApp'
       )).toBe(false);
       expect(renderer.isSquidRoomPaneWrongWorkingDir(
         { alive: false, cwd: 'D:\\projects\\squidrun\\ui' },
-        'D:\\projects\\TrustQuote'
+        'D:\\projects\\ExampleApp'
       )).toBe(false);
     });
   });

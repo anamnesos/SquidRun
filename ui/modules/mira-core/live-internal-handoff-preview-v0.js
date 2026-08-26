@@ -4,7 +4,7 @@ const path = require('path');
 
 const {
   buildMiraLiveInternalRequestDraftV0,
-  countJamesActionLines,
+  countOperatorActionLines,
 } = require('./live-internal-request-draft-v0');
 const {
   buildMiraProgressReport,
@@ -176,7 +176,7 @@ function buildAnswerText({
     `Dispatch payload preview: ${JSON.stringify(dispatchPayloadPreview)}`,
     `Approval binding: preview ${approvalEnvelope.preview_id}; approval ${approvalEnvelope.approval_id}; action ${approvalEnvelope.channel}.`,
     `Risk/blocked exclusions: ${riskExclusions.join('; ')}.`,
-    'JAMES ACTION: REVIEW OR EDIT BEFORE ANY SEND',
+    'OPERATOR ACTION: REVIEW OR EDIT BEFORE ANY SEND',
   ].join('\n');
 }
 
@@ -332,7 +332,7 @@ function buildMiraLiveInternalHandoffPreviewV0(input = {}, options = {}) {
     answer_text: answerText,
     preview_id: approvalEnvelope.preview_id,
     preview_hash: approvalEnvelope.preview_hash,
-    james_action_line_count: countJamesActionLines(answerText),
+    operator_action_line_count: countOperatorActionLines(answerText),
     source_evidence: evidence,
     target_agent: targetAgent,
     draft_body: draftBody,

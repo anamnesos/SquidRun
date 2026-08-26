@@ -332,7 +332,7 @@ function registerSettingsHandlers(ctx, deps) {
     // Honesty audit #3 (S464): the DevTools toggle used to persist+animate
     // while an env gate made it a silent no-op in packaged builds. The
     // toggle now DOES what it says, immediately: flip on = DevTools open on
-    // the main window, flip off = closed. James owns his app.
+    // the main window, flip off = closed. Operator owns his app.
     if (normalizedKey === 'devTools') {
       const targetWindow = ctx.mainWindow && !ctx.mainWindow.isDestroyed() ? ctx.mainWindow : null;
       if (targetWindow?.webContents) {

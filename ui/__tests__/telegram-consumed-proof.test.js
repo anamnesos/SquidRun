@@ -18,19 +18,19 @@ const NOW = 1_785_780_000_000;
 const GENERATION = 'tg-gen-29180-1785780000000';
 
 const RECORD = {
-  updateId: 808499317,
-  text: 'Kristine muller approved job... change job to invoice',
+  updateId: 700100103,
+  text: 'Example customer approved job... change job to invoice',
   chatId: 6543210,
-  from: 'james',
+  from: 'operator',
   messageId: 22315,
 };
 
-const DELIVERED = '[Telegram from james]: Kristine muller approved job... change job to invoice';
+const DELIVERED = '[Telegram from operator]: Example customer approved job... change job to invoice';
 
 function expectedFor(overrides = {}) {
   return {
-    updateId: 808499317,
-    messageId: 'telegram-in-808499317',
+    updateId: 700100103,
+    messageId: 'telegram-in-700100103',
     routeKey: 'main',
     windowKey: 'main',
     profile: 'main',
@@ -73,8 +73,8 @@ function proofFor(overrides = {}, deliveredPrompt = DELIVERED) {
   return {
     ...buildAdmissionRecord({
       runtime: 'codex',
-      updateId: 808499317,
-      messageId: 'telegram-in-808499317',
+      updateId: 700100103,
+      messageId: 'telegram-in-700100103',
       routeKey: 'main',
       windowKey: 'main',
       profile: 'main',
@@ -104,8 +104,8 @@ describe('the happy path exists at all', () => {
     // If these ever diverge in shape, the schema is not runtime-neutral and
     // the gate fails by construction.
     const common = {
-      updateId: 808499317,
-      messageId: 'telegram-in-808499317',
+      updateId: 700100103,
+      messageId: 'telegram-in-700100103',
       routeKey: 'main',
       windowKey: 'main',
       profile: 'main',
@@ -194,8 +194,8 @@ describe('fabricated and weak evidence', () => {
   test('A FABRICATED PLAIN OBJECT with every right id is rejected for having no proof class', () => {
     // This exact object satisfied my previous draft completely.
     const fabricated = {
-      updateId: 808499317,
-      messageId: 'telegram-in-808499317',
+      updateId: 700100103,
+      messageId: 'telegram-in-700100103',
       routeKey: 'main',
       windowKey: 'main',
       profile: 'main',
@@ -272,7 +272,7 @@ describe('payload identity — same id, different message', () => {
     expect(canonicalQueuedPayloadDigest({ ...RECORD, text: 'other' })).not.toBe(base);
     expect(canonicalQueuedPayloadDigest({ ...RECORD, chatId: 1 })).not.toBe(base);
     expect(canonicalQueuedPayloadDigest({ ...RECORD, from: 'someone-else' })).not.toBe(base);
-    expect(canonicalQueuedPayloadDigest({ ...RECORD, updateId: 808499318 })).not.toBe(base);
+    expect(canonicalQueuedPayloadDigest({ ...RECORD, updateId: 700100104 })).not.toBe(base);
   });
 
   test('A NON-HEX OR SHORT DIGEST is malformed, not merely unequal', () => {
@@ -332,7 +332,7 @@ describe('ordering against the attempt', () => {
     expect(result.reason).toBe('proof_predates_attempt');
   });
 
-  test('AN UNDATED ATTEMPT (the 808499316 shape) can never be auto-retired', () => {
+  test('AN UNDATED ATTEMPT (the 700100102 shape) can never be auto-retired', () => {
     const result = validateAdmissionRecord({
       proof: proofFor(),
       expected: expectedFor(),
@@ -409,10 +409,10 @@ describe('canonical digest covers ALL consumer-visible payload identity', () => 
   // unchanged but whose attachment had been swapped hashed identically. For a
   // plumbing business "here is the one I meant" is defined by its photo.
   const BASE = {
-    updateId: 808499317,
+    updateId: 700100103,
     text: 'here is the one I meant',
     chatId: 6543210,
-    from: 'james',
+    from: 'operator',
     messageId: 22315,
     updateKind: 'message',
     routeKey: 'main',
@@ -432,9 +432,9 @@ describe('canonical digest covers ALL consumer-visible payload identity', () => 
     ['a document added', { document: { kind: 'document', fileId: 'DOC1' } }],
     ['a video added', { video: { kind: 'video', fileId: 'VID1' } }],
     ['a different update kind', { updateKind: 'edited_message' }],
-    ['a different route', { routeKey: 'sideprofile' }],
-    ['a different target window', { targetWindow: 'sideprofile' }],
-    ['a different target profile', { targetProfile: 'sideprofile' }],
+    ['a different route', { routeKey: 'client' }],
+    ['a different target window', { targetWindow: 'client' }],
+    ['a different target profile', { targetProfile: 'client' }],
   ])('%s changes the canonical digest', (_label, patch) => {
     expect(canonicalQueuedPayloadDigest({ ...BASE, ...patch }))
       .not.toBe(canonicalQueuedPayloadDigest(BASE));

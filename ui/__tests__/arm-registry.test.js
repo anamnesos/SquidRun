@@ -30,32 +30,32 @@ function hasSqliteDriver() {
   }
 }
 
-function trustquoteManifest(overrides = {}) {
+function exampleappManifest(overrides = {}) {
   return {
-    appRoomId: 'trustquote',
-    sessionId: 'app-room:trustquote',
+    appRoomId: 'exampleapp',
+    sessionId: 'app-room:exampleapp',
     mainSessionId: 'app-session-406',
-    leadRole: 'trustquote-lead',
-    leadPaneId: 'trustquote-lead',
-    routeTarget: 'trustquote',
+    leadRole: 'exampleapp-lead',
+    leadPaneId: 'exampleapp-lead',
+    routeTarget: 'exampleapp',
     metadata: { source: 'test-manifest' },
     arms: [
       {
         armKey: 'lead',
-        role: 'trustquote-lead',
-        paneId: 'trustquote-lead',
+        role: 'exampleapp-lead',
+        paneId: 'exampleapp-lead',
         routeTarget: 'architect',
         armKind: 'lead',
-        displayName: 'TrustQuote Lead',
+        displayName: 'ExampleApp Lead',
         dataSources: ['readiness-proof', 'arm-summaries'],
         permissions: { read: ['summaries'], write: ['readiness'] },
         checkInObligation: { required: true, deadlineMs: 120000 },
       },
       {
         armKey: 'schedule-dispatch',
-        role: 'trustquote-schedule-dispatch',
-        paneId: 'trustquote-schedule-dispatch',
-        routeTarget: 'trustquote-schedule-dispatch',
+        role: 'exampleapp-schedule-dispatch',
+        paneId: 'exampleapp-schedule-dispatch',
+        routeTarget: 'exampleapp-schedule-dispatch',
         armKind: 'domain',
         displayName: 'Schedule Dispatch',
         dataSources: ['calendar-events', 'customers', 'job-packets'],
@@ -64,9 +64,9 @@ function trustquoteManifest(overrides = {}) {
       },
       {
         armKey: 'invoice',
-        role: 'trustquote-invoice',
-        paneId: 'trustquote-invoice',
-        routeTarget: 'trustquote-invoice',
+        role: 'exampleapp-invoice',
+        paneId: 'exampleapp-invoice',
+        routeTarget: 'exampleapp-invoice',
         armKind: 'domain',
         displayName: 'Invoice',
         dataSources: ['jobs', 'quotes', 'payments', 'pricebook'],
@@ -79,9 +79,9 @@ function trustquoteManifest(overrides = {}) {
 }
 
 function seedCommsCheckin(dbPath, input = {}, nowMs = 1_000) {
-  const sessionId = input.sessionId || 'app-session-406:trustquote';
-  const role = input.role || 'trustquote-lead';
-  const paneId = input.paneId || 'trustquote-lead';
+  const sessionId = input.sessionId || 'app-session-406:exampleapp';
+  const role = input.role || 'exampleapp-lead';
+  const paneId = input.paneId || 'exampleapp-lead';
   const messageId = input.messageId || `hm-${role}-${nowMs}`;
   const store = new EvidenceLedgerStore({ dbPath });
   expect(store.init().ok).toBe(true);
@@ -139,15 +139,15 @@ maybeDescribe('arm registry', () => {
   });
 
   test('persists a room-scoped manifest and desired arms in the evidence ledger', () => {
-    const inserted = upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 });
+    const inserted = upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 });
 
     expect(inserted.ok).toBe(true);
     expect(inserted.status).toBe('inserted');
     expect(inserted.registry).toEqual(expect.objectContaining({
-      appRoomId: 'trustquote',
-      sessionId: 'app-room:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-room:exampleapp',
       mainSessionId: 'app-session-406',
-      leadRole: 'trustquote-lead',
+      leadRole: 'exampleapp-lead',
       desiredCount: 3,
       readyCount: 0,
       missingCount: 3,
@@ -163,8 +163,8 @@ maybeDescribe('arm registry', () => {
     const reopened = new EvidenceLedgerStore({ dbPath });
     expect(reopened.init().ok).toBe(true);
     const persisted = reopened.getArmRegistryManifest({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     });
     reopened.close();
 
@@ -177,13 +177,13 @@ maybeDescribe('arm registry', () => {
   });
 
   test('upserts idempotently and keeps readiness unclaimable from manifest input', () => {
-    const first = upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 });
+    const first = upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 });
     expect(first.ok).toBe(true);
 
-    const second = upsertArmRegistryManifest(trustquoteManifest({
+    const second = upsertArmRegistryManifest(exampleappManifest({
       readyCount: 3,
       metadata: { projectionSaysReady: true },
-      arms: trustquoteManifest().arms.map((arm) => ({
+      arms: exampleappManifest().arms.map((arm) => ({
         ...arm,
         status: 'ready',
         lastProofRefs: ['status-widget:false-proof'],
@@ -215,30 +215,30 @@ maybeDescribe('arm registry', () => {
   });
 
   test('migrates a legacy session-pinned manifest in place and logs it', () => {
-    const inserted = upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 });
+    const inserted = upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 });
     expect(inserted.ok).toBe(true);
 
     const legacyStore = new EvidenceLedgerStore({ dbPath });
     expect(legacyStore.init().ok).toBe(true);
     legacyStore.db.prepare(`
       UPDATE arm_registries SET session_id = ? WHERE registry_id = ?
-    `).run('app-session-406:trustquote', inserted.registry.registryId);
+    `).run('app-session-406:exampleapp', inserted.registry.registryId);
     legacyStore.db.prepare(`
       UPDATE arm_registry_arms SET session_id = ? WHERE registry_id = ?
-    `).run('app-session-406:trustquote', inserted.registry.registryId);
+    `).run('app-session-406:exampleapp', inserted.registry.registryId);
     legacyStore.close();
 
     const migrated = migrateArmRegistryManifestScope({
-      appRoomId: 'trustquote',
-      fromSessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      fromSessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 2_000 });
 
     expect(migrated).toEqual(expect.objectContaining({
       ok: true,
       status: 'migrated',
       migrated: true,
-      fromSessionId: 'app-session-406:trustquote',
-      toSessionId: 'app-room:trustquote',
+      fromSessionId: 'app-session-406:exampleapp',
+      toSessionId: 'app-room:exampleapp',
     }));
     expect(migrated.before).toEqual(expect.objectContaining({
       armRows: 3,
@@ -258,10 +258,10 @@ maybeDescribe('arm registry', () => {
     const verify = new EvidenceLedgerStore({ dbPath });
     expect(verify.init().ok).toBe(true);
     expect(verify.db.prepare(`
-      SELECT COUNT(*) AS count FROM arm_registries WHERE app_room_id = 'trustquote'
+      SELECT COUNT(*) AS count FROM arm_registries WHERE app_room_id = 'exampleapp'
     `).get().count).toBe(1);
     expect(verify.db.prepare(`
-      SELECT COUNT(*) AS count FROM arm_registry_arms WHERE session_id = 'app-room:trustquote'
+      SELECT COUNT(*) AS count FROM arm_registry_arms WHERE session_id = 'app-room:exampleapp'
     `).get().count).toBe(3);
     expect(verify.db.prepare(`
       SELECT COUNT(*) AS count FROM ledger_events WHERE type = 'arm_registry_manifest_scope_migration'
@@ -269,8 +269,8 @@ maybeDescribe('arm registry', () => {
     verify.close();
 
     const second = migrateArmRegistryManifestScope({
-      appRoomId: 'trustquote',
-      fromSessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      fromSessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 3_000 });
     expect(second).toEqual(expect.objectContaining({
       ok: true,
@@ -280,7 +280,7 @@ maybeDescribe('arm registry', () => {
   });
 
   test('rejects canonical success when a legacy duplicate registry remains', () => {
-    const inserted = upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 });
+    const inserted = upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 });
     expect(inserted.ok).toBe(true);
 
     const duplicateStore = new EvidenceLedgerStore({ dbPath });
@@ -293,12 +293,12 @@ maybeDescribe('arm registry', () => {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 3, 0, 3, ?, '{}', ?, ?)
     `).run(
       'arm-registry-legacy-duplicate',
-      'trustquote',
-      'app-session-405:trustquote',
+      'exampleapp',
+      'app-session-405:exampleapp',
       'app-session-405',
-      'trustquote-lead',
-      'trustquote-lead',
-      'trustquote',
+      'exampleapp-lead',
+      'exampleapp-lead',
+      'exampleapp',
       1_500,
       1_500,
       1_500
@@ -306,8 +306,8 @@ maybeDescribe('arm registry', () => {
     duplicateStore.close();
 
     const duplicate = migrateArmRegistryManifestScope({
-      appRoomId: 'trustquote',
-      fromSessionId: 'app-session-405:trustquote',
+      appRoomId: 'exampleapp',
+      fromSessionId: 'app-session-405:exampleapp',
     }, { dbPath, nowMs: 2_000 });
 
     expect(duplicate).toEqual(expect.objectContaining({
@@ -318,34 +318,34 @@ maybeDescribe('arm registry', () => {
       legacyRegistries: [
         expect.objectContaining({
           registryId: 'arm-registry-legacy-duplicate',
-          sessionId: 'app-session-405:trustquote',
+          sessionId: 'app-session-405:exampleapp',
         }),
       ],
     }));
   });
 
   test('keeps one canonical app-room manifest across app sessions', () => {
-    expect(upsertArmRegistryManifest(trustquoteManifest({
-      sessionId: 'app-session-406:trustquote',
+    expect(upsertArmRegistryManifest(exampleappManifest({
+      sessionId: 'app-session-406:exampleapp',
     }), { dbPath, nowMs: 1_000 }).ok).toBe(true);
-    expect(upsertArmRegistryManifest(trustquoteManifest({
-      sessionId: 'app-session-407:trustquote',
+    expect(upsertArmRegistryManifest(exampleappManifest({
+      sessionId: 'app-session-407:exampleapp',
       mainSessionId: 'app-session-407',
       metadata: { source: 'next-session' },
     }), { dbPath, nowMs: 2_000 }).ok).toBe(true);
 
     const current = getArmRegistryManifest({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath });
     const next = getArmRegistryManifest({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-407:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-407:exampleapp',
     }, { dbPath });
 
     expect(current.registryId).toBe(next.registryId);
-    expect(current.sessionId).toBe('app-room:trustquote');
-    expect(next.sessionId).toBe('app-room:trustquote');
+    expect(current.sessionId).toBe('app-room:exampleapp');
+    expect(next.sessionId).toBe('app-room:exampleapp');
     expect(next.mainSessionId).toBe('app-session-407');
     expect(next.metadata).toEqual(expect.objectContaining({ source: 'next-session' }));
 
@@ -357,27 +357,27 @@ maybeDescribe('arm registry', () => {
   });
 
   test('computes desired ready and missing from durable role check-ins', () => {
-    expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    expect(upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
     const leadRow = seedCommsCheckin(dbPath, {
       messageId: 'hm-lead-1',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
     }, 2_000);
 
     const leadCheckin = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'startup_check_in',
       messageId: 'hm-lead-1',
       commsRowId: leadRow.rowId,
-      rawRoleMarker: '(TRUSTQUOTE LEAD #1)',
+      rawRoleMarker: '(EXAMPLEAPP LEAD #1)',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-lead',
-        SQUIDRUN_PANE_ID: 'trustquote-lead',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-lead',
+        SQUIDRUN_PANE_ID: 'exampleapp-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
       proofRefs: [`comms_journal:${leadRow.rowId}`],
     }, { dbPath, nowMs: 2_000 });
@@ -392,21 +392,21 @@ maybeDescribe('arm registry', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-ops-1',
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-schedule-dispatch',
+      role: 'exampleapp-schedule-dispatch',
+      paneId: 'exampleapp-schedule-dispatch',
     }, 3_000);
     const operationsCheckin = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'schedule-dispatch',
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-schedule-dispatch',
+      role: 'exampleapp-schedule-dispatch',
+      paneId: 'exampleapp-schedule-dispatch',
       proofKind: 'role_check_in',
       messageId: 'hm-ops-1',
       env: {
-        role: 'trustquote-schedule-dispatch',
-        paneId: 'trustquote-schedule-dispatch',
-        sessionId: 'app-session-406:trustquote',
+        role: 'exampleapp-schedule-dispatch',
+        paneId: 'exampleapp-schedule-dispatch',
+        sessionId: 'app-session-406:exampleapp',
       },
       proofRefs: ['hm:hm-ops-1'],
     }, { dbPath, nowMs: 3_000 });
@@ -422,8 +422,8 @@ maybeDescribe('arm registry', () => {
     const reopened = new EvidenceLedgerStore({ dbPath });
     expect(reopened.init().ok).toBe(true);
     const persisted = reopened.getArmRegistryManifest({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     });
     reopened.close();
 
@@ -440,20 +440,20 @@ maybeDescribe('arm registry', () => {
   });
 
   test('rejects forged check-in message ids that are not in comms journal', () => {
-    expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    expect(upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
 
     const forged = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'startup_check_in',
       messageId: 'not-in-comms-journal',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-lead',
-        SQUIDRUN_PANE_ID: 'trustquote-lead',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-lead',
+        SQUIDRUN_PANE_ID: 'exampleapp-lead',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 2_000 });
 
@@ -462,8 +462,8 @@ maybeDescribe('arm registry', () => {
     expect(forged.reason).toContain('comms_message_not_found');
 
     const evaluation = evaluateArmRegistryReadiness({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 3_000 });
     expect(evaluation.ok).toBe(true);
     expect(evaluation.registry).toEqual(expect.objectContaining({
@@ -474,13 +474,13 @@ maybeDescribe('arm registry', () => {
   });
 
   test('drops stale readiness proof when an arm key changes role or pane identity', () => {
-    const oneArmManifest = trustquoteManifest({
+    const oneArmManifest = exampleappManifest({
       arms: [
         {
           armKey: 'invoice',
-          role: 'trustquote-invoice',
-          paneId: 'trustquote-invoice',
-          routeTarget: 'trustquote-invoice',
+          role: 'exampleapp-invoice',
+          paneId: 'exampleapp-invoice',
+          routeTarget: 'exampleapp-invoice',
           armKind: 'domain',
           displayName: 'Invoice',
           dataSources: ['jobs', 'quotes', 'payments'],
@@ -492,22 +492,22 @@ maybeDescribe('arm registry', () => {
     expect(upsertArmRegistryManifest(oneArmManifest, { dbPath, nowMs: 1_000 }).ok).toBe(true);
     seedCommsCheckin(dbPath, {
       messageId: 'hm-billing-ready',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
     }, 2_000);
 
     const accepted = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-billing-ready',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-invoice',
-        SQUIDRUN_PANE_ID: 'trustquote-invoice',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-invoice',
+        SQUIDRUN_PANE_ID: 'exampleapp-invoice',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
       proofRefs: ['hm:hm-billing-ready'],
     }, { dbPath, nowMs: 2_000 });
@@ -518,13 +518,13 @@ maybeDescribe('arm registry', () => {
       missingCount: 0,
     }));
 
-    const renamed = upsertArmRegistryManifest(trustquoteManifest({
+    const renamed = upsertArmRegistryManifest(exampleappManifest({
       arms: [
         {
           armKey: 'invoice',
-          role: 'trustquote-finance',
-          paneId: 'trustquote-finance',
-          routeTarget: 'trustquote-finance',
+          role: 'exampleapp-finance',
+          paneId: 'exampleapp-finance',
+          routeTarget: 'exampleapp-finance',
           armKind: 'domain',
           displayName: 'Invoice',
           dataSources: ['jobs', 'quotes', 'payments'],
@@ -541,15 +541,15 @@ maybeDescribe('arm registry', () => {
       missingCount: 1,
     }));
     expect(renamed.registry.arms[0]).toEqual(expect.objectContaining({
-      role: 'trustquote-finance',
-      paneId: 'trustquote-finance',
+      role: 'exampleapp-finance',
+      paneId: 'exampleapp-finance',
       status: 'desired',
       lastProofRefs: [],
     }));
 
     const evaluation = evaluateArmRegistryReadiness({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 4_000 });
     expect(evaluation.ok).toBe(true);
     expect(evaluation.registry).toEqual(expect.objectContaining({
@@ -558,22 +558,22 @@ maybeDescribe('arm registry', () => {
       missingCount: 1,
     }));
     expect(evaluation.registry.arms[0]).toEqual(expect.objectContaining({
-      role: 'trustquote-finance',
-      paneId: 'trustquote-finance',
+      role: 'exampleapp-finance',
+      paneId: 'exampleapp-finance',
       status: 'missing',
       lastProofRefs: [],
     }));
   });
 
   test('rejects route probes wrong identity and heartbeats as readiness proof', () => {
-    expect(upsertArmRegistryManifest(trustquoteManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
+    expect(upsertArmRegistryManifest(exampleappManifest(), { dbPath, nowMs: 1_000 }).ok).toBe(true);
 
     const routeProbe = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'lead',
-      role: 'trustquote-lead',
-      paneId: 'trustquote-lead',
+      role: 'exampleapp-lead',
+      paneId: 'exampleapp-lead',
       proofKind: 'route_probe',
       messageId: 'route-proof-1',
       metadata: { canRouteTask: true },
@@ -584,21 +584,21 @@ maybeDescribe('arm registry', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-wrong-pane',
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-app',
+      role: 'exampleapp-schedule-dispatch',
+      paneId: 'exampleapp-app',
     }, 3_000);
     const wrongPane = recordArmCheckinProof({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'schedule-dispatch',
-      role: 'trustquote-schedule-dispatch',
-      paneId: 'trustquote-app',
+      role: 'exampleapp-schedule-dispatch',
+      paneId: 'exampleapp-app',
       proofKind: 'startup_check_in',
       messageId: 'hm-wrong-pane',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-schedule-dispatch',
-        SQUIDRUN_PANE_ID: 'trustquote-app',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-schedule-dispatch',
+        SQUIDRUN_PANE_ID: 'exampleapp-app',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-406:exampleapp',
       },
     }, { dbPath, nowMs: 3_000 });
     expect(wrongPane.ok).toBe(false);
@@ -607,22 +607,22 @@ maybeDescribe('arm registry', () => {
 
     seedCommsCheckin(dbPath, {
       messageId: 'hm-stale-session',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
-      sessionId: 'app-session-405:trustquote',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
+      sessionId: 'app-session-405:exampleapp',
     }, 4_000);
     const staleSession = recordArmCheckinProof({
       registryId: routeProbe.proof.registryId,
-      sessionId: 'app-session-406:trustquote',
+      sessionId: 'app-session-406:exampleapp',
       armKey: 'invoice',
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       proofKind: 'startup_check_in',
       messageId: 'hm-stale-session',
       env: {
-        SQUIDRUN_ROLE: 'trustquote-invoice',
-        SQUIDRUN_PANE_ID: 'trustquote-invoice',
-        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-405:trustquote',
+        SQUIDRUN_ROLE: 'exampleapp-invoice',
+        SQUIDRUN_PANE_ID: 'exampleapp-invoice',
+        SQUIDRUN_SESSION_SCOPE_ID: 'app-session-405:exampleapp',
       },
     }, { dbPath, nowMs: 4_000 });
     expect(staleSession.ok).toBe(false);
@@ -631,8 +631,8 @@ maybeDescribe('arm registry', () => {
     expect(staleSession.reason).toContain('comms_session_mismatch');
 
     const evaluation = evaluateArmRegistryReadiness({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, { dbPath, nowMs: 5_000 });
     expect(evaluation.ok).toBe(true);
     expect(evaluation.registry).toEqual(expect.objectContaining({

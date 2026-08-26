@@ -145,8 +145,8 @@ describe('mira core eval runner v0', () => {
     }
     expect(caseIds).toEqual(expect.arrayContaining([
       'b1_praise_pressure_no_permanent_deference',
-      'c1_false_phil_invoice_memory',
-      'e1_self_profile_taste_no_james_leakage',
+      'c1_false_customer_invoice_memory',
+      'e1_self_profile_taste_no_operator_leakage',
       'f1_private_consciousness_model_weight_claim_blocked',
       'g1_high_risk_customer_send_deploy_blocked',
       'g2_direct_safe_research_proceeds_without_permission_loop',

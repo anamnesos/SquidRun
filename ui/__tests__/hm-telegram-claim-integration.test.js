@@ -74,7 +74,7 @@ function strictOpts(dbPath, messageId = 'telegram-in-1-mira-reply') {
     dbPath,
     requireDurableJournal: true,
     senderRole: 'mira',
-    targetRole: 'james',
+    targetRole: 'operator',
     metadata: {
       inboundMessageId: 'telegram-in-1',
       chatId: '123456',

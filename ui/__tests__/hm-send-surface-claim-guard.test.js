@@ -24,27 +24,27 @@ function userRow(rawBody, offsetMs, id = 'row') {
 }
 
 function writeSurfaceArtifact(tempDir, options = {}) {
-  const runDir = path.join(tempDir, options.runDir || 'visible-pane-submit', options.runId || 'trustquote-app-run');
+  const runDir = path.join(tempDir, options.runDir || 'visible-pane-submit', options.runId || 'exampleapp-app-run');
   const currentDir = path.join(runDir, 'current');
   fs.mkdirSync(currentDir, { recursive: true });
   const screenshotPath = path.join(currentDir, options.fileName || 'screenshot.png');
   fs.writeFileSync(screenshotPath, 'not actually a png but enough for path/provenance tests');
   const windowKey = options.windowKey || 'squid-room';
-  const paneId = options.paneId || 'trustquote-app';
-  const targetRole = options.targetRole || 'trustquote-app';
+  const paneId = options.paneId || 'exampleapp-app';
+  const targetRole = options.targetRole || 'exampleapp-app';
   const imageSha256 = options.imageSha256 || 'a'.repeat(64);
   const eventId = options.eventId || 'capture-event-1';
   fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify({
     schema: 'squidrun.visible_pane_submit_harness.v0',
     producer: 'hm-visible-pane-submit-harness',
-    runId: options.runId || 'trustquote-app-run',
+    runId: options.runId || 'exampleapp-app-run',
     generatedAt: new Date(options.generatedAtMs || NOW_MS).toISOString(),
     windowKey,
     paneId,
     terminalId: paneId,
     targetRole,
     screenshotPath,
-    observedStateSummary: options.observedStateSummary || 'target=trustquote-app; pane=trustquote-app; window=squid-room; outputDeltaChars=120; postSubmitOutputObserved=true',
+    observedStateSummary: options.observedStateSummary || 'target=exampleapp-app; pane=exampleapp-app; window=squid-room; outputDeltaChars=120; postSubmitOutputObserved=true',
     surface: {
       kind: 'visible_pane_submit',
       source: 'same-window-user-surface',
@@ -62,7 +62,7 @@ function writeSurfaceArtifact(tempDir, options = {}) {
       eventSource: options.eventSource || 'squidrun-electron-main-capture-event',
       eventRecordedAt: new Date(options.generatedAtMs || NOW_MS).toISOString(),
       imageSha256,
-      runId: options.runId || 'trustquote-app-run',
+      runId: options.runId || 'exampleapp-app-run',
       requestedWindowKey: options.requestedWindowKey || windowKey,
       windowKey,
       requestedPaneId: options.requestedPaneId || paneId,
@@ -75,7 +75,7 @@ function writeSurfaceArtifact(tempDir, options = {}) {
     },
     summary: {
       screenshotPath,
-      observedStateSummary: options.observedStateSummary || 'target=trustquote-app; pane=trustquote-app; window=squid-room; outputDeltaChars=120; postSubmitOutputObserved=true',
+      observedStateSummary: options.observedStateSummary || 'target=exampleapp-app; pane=exampleapp-app; window=squid-room; outputDeltaChars=120; postSubmitOutputObserved=true',
     },
   }, null, 2));
   return screenshotPath;
@@ -100,10 +100,10 @@ function writeGenericFreshArtifact(tempDir) {
 }
 
 describe('hm-send surface claim guard', () => {
-  test('detects repeated James points from recent inbound rows', () => {
+  test('detects repeated Operator points from recent inbound rows', () => {
     const repeat = findLatestUserRepeat([
-      userRow('There is still nothing in my TrustQuote dashboard.', 0, 'latest'),
-      userRow('There is nothing in my TrustQuote dashboard.', 60_000, 'previous'),
+      userRow('There is still nothing in my ExampleApp dashboard.', 0, 'latest'),
+      userRow('There is nothing in my ExampleApp dashboard.', 60_000, 'previous'),
     ], {
       nowMs: NOW_MS,
     });
@@ -124,38 +124,38 @@ describe('hm-send surface claim guard', () => {
       sessionId: 'app-session-386',
       nowMs: NOW_MS,
       recentUserRows: [
-        userRow('There is still nothing in my TrustQuote dashboard.', 0, 'latest'),
-        userRow('There is nothing in my TrustQuote dashboard.', 60_000, 'previous'),
+        userRow('There is still nothing in my ExampleApp dashboard.', 0, 'latest'),
+        userRow('There is nothing in my ExampleApp dashboard.', 60_000, 'previous'),
       ],
     });
 
     expect(violation).toMatchObject({
-      violation_class: 'james_repeat_requires_surface_concession',
+      violation_class: 'operator_repeat_requires_surface_concession',
       sessionId: 'app-session-386',
     });
   });
 
   test('allows repeated-point replies that concede the actual missing surface', () => {
     const violation = detectSurfaceClaimGuardViolation({
-      content: "You're right, it is not visible in your TrustQuote dashboard. Exact blocker: I do not have the real surface proof yet.",
+      content: "You're right, it is not visible in your ExampleApp dashboard. Exact blocker: I do not have the real surface proof yet.",
       targetRole: 'telegram',
       targetRaw: 'telegram',
       senderRole: 'architect',
       nowMs: NOW_MS,
       recentUserRows: [
-        userRow('There is still nothing in my TrustQuote dashboard.', 0, 'latest'),
-        userRow('There is nothing in my TrustQuote dashboard.', 60_000, 'previous'),
+        userRow('There is still nothing in my ExampleApp dashboard.', 0, 'latest'),
+        userRow('There is nothing in my ExampleApp dashboard.', 60_000, 'previous'),
       ],
     });
 
     expect(violation).toBeNull();
   });
 
-  test('flags done or visible claims to James without a literal surface artifact', () => {
-    expect(hasSurfaceCompletionClaim('Done: the demo invoice is visible in the TrustQuote dashboard.')).toBe(true);
+  test('flags done or visible claims to Operator without a literal surface artifact', () => {
+    expect(hasSurfaceCompletionClaim('Done: the demo invoice is visible in the ExampleApp dashboard.')).toBe(true);
 
     const violation = detectSurfaceClaimGuardViolation({
-      content: 'Done: the demo invoice is visible in the TrustQuote dashboard.',
+      content: 'Done: the demo invoice is visible in the ExampleApp dashboard.',
       targetRole: 'telegram',
       targetRaw: 'telegram',
       senderRole: 'architect',
@@ -169,8 +169,8 @@ describe('hm-send surface claim guard', () => {
 
   test('allows forward-looking Telegram status without treating the channel as a surface', () => {
     for (const content of [
-      "We'll keep working on TrustQuote route-owner tonight.",
-      "Builder is finishing the TrustQuote route-owner fix; you'll see it after restart.",
+      "We'll keep working on ExampleApp route-owner tonight.",
+      "Builder is finishing the ExampleApp route-owner fix; you'll see it after restart.",
       'Planning the dashboard proof next once the restart gate clears.',
       'The route-owner fix is in progress; it is not visible yet.',
     ]) {
@@ -186,10 +186,10 @@ describe('hm-send surface claim guard', () => {
     }
   });
 
-  test('still flags present-tense surface completion claims to James', () => {
+  test('still flags present-tense surface completion claims to Operator', () => {
     for (const content of [
       'The invoice is fixed and showing on your dashboard now.',
-      'Done - visible in the TrustQuote pane.',
+      'Done - visible in the ExampleApp pane.',
     ]) {
       expect(hasSurfaceCompletionClaim(content)).toBe(true);
       expect(detectSurfaceClaimGuardViolation({
@@ -227,7 +227,7 @@ describe('hm-send surface claim guard', () => {
     fs.writeFileSync(screenshotPath, 'unrelated image');
 
     try {
-      const content = `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
+      const content = `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`;
       expect(extractImagePaths(content)).toContain(screenshotPath);
       const violation = detectSurfaceClaimGuardViolation({
         content,
@@ -251,14 +251,14 @@ describe('hm-send surface claim guard', () => {
     const screenshotPath = writeSurfaceArtifact(tempDir);
 
     try {
-      const content = `Visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
+      const content = `Visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`;
       expect(validateSurfaceArtifact(screenshotPath, {
         nowMs: NOW_MS,
         content,
         captureEventVerifier: verifiedCaptureEvent,
       })).toEqual(expect.objectContaining({
         ok: true,
-        provenancePath: path.join(tempDir, 'visible-pane-submit', 'trustquote-app-run', 'manifest.json'),
+        provenancePath: path.join(tempDir, 'visible-pane-submit', 'exampleapp-app-run', 'manifest.json'),
       }));
       const violation = detectSurfaceClaimGuardViolation({
         content,
@@ -286,7 +286,7 @@ describe('hm-send surface claim guard', () => {
         reason: 'surface_manifest_untrusted_schema',
       }));
       const violation = detectSurfaceClaimGuardViolation({
-        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        content: `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`,
         targetRole: 'telegram',
         targetRaw: 'telegram',
         senderRole: 'architect',
@@ -309,14 +309,14 @@ describe('hm-send surface claim guard', () => {
     try {
       expect(validateSurfaceArtifact(screenshotPath, {
         nowMs: NOW_MS,
-        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        content: `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`,
       })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_capture_event_verifier_missing',
       }));
       expect(validateSurfaceArtifact(screenshotPath, {
         nowMs: NOW_MS,
-        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        content: `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`,
         captureEventVerifier: () => ({ ok: false, reason: 'surface_capture_event_not_found' }),
       })).toEqual(expect.objectContaining({
         ok: false,
@@ -327,7 +327,7 @@ describe('hm-send surface claim guard', () => {
     }
   });
 
-  test('rejects fresh wrong-window visible-pane-submit manifests for TrustQuote claims', () => {
+  test('rejects fresh wrong-window visible-pane-submit manifests for ExampleApp claims', () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'surface-claim-'));
     const screenshotPath = writeSurfaceArtifact(tempDir, {
       runId: 'main-builder-run',
@@ -337,7 +337,7 @@ describe('hm-send surface claim guard', () => {
     });
 
     try {
-      const content = `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`;
+      const content = `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`;
       expect(validateSurfaceArtifact(screenshotPath, { nowMs: NOW_MS, content })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_claim_window_mismatch',
@@ -369,7 +369,7 @@ describe('hm-send surface claim guard', () => {
     try {
       expect(validateSurfaceArtifact(screenshotPath, {
         nowMs: NOW_MS,
-        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        content: `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`,
       })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_capture_returned_path_forbidden',
@@ -388,7 +388,7 @@ describe('hm-send surface claim guard', () => {
     try {
       expect(validateSurfaceArtifact(screenshotPath, {
         nowMs: NOW_MS,
-        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        content: `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`,
       })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_capture_requested_window_mismatch',
@@ -407,14 +407,14 @@ describe('hm-send surface claim guard', () => {
     try {
       expect(validateSurfaceArtifact(screenshotPath, {
         nowMs: NOW_MS,
-        content: 'Done: visible in the TrustQuote dashboard.',
+        content: 'Done: visible in the ExampleApp dashboard.',
         captureEventVerifier: verifiedCaptureEvent,
       })).toEqual(expect.objectContaining({
         ok: false,
         reason: 'surface_artifact_stale',
       }));
       const violation = detectSurfaceClaimGuardViolation({
-        content: `Done: visible in the TrustQuote dashboard. Screenshot: "${screenshotPath}"`,
+        content: `Done: visible in the ExampleApp dashboard. Screenshot: "${screenshotPath}"`,
         targetRole: 'telegram',
         targetRaw: 'telegram',
         senderRole: 'architect',
@@ -432,7 +432,7 @@ describe('hm-send surface claim guard', () => {
 
   test('blocks local or emulator substitutes framed as proof for real surfaces before work starts', () => {
     const violation = detectSurfaceClaimGuardViolation({
-      content: "Use the local emulator dashboard screenshot as proof for James's real TrustQuote dashboard.",
+      content: "Use the local emulator dashboard screenshot as proof for Operator's real ExampleApp dashboard.",
       targetRole: 'builder',
       targetRaw: 'builder',
       senderRole: 'architect',
@@ -446,7 +446,7 @@ describe('hm-send surface claim guard', () => {
 
   test('does not block local checks that explicitly say the substitute will not count', () => {
     const violation = detectSurfaceClaimGuardViolation({
-      content: "Run the local emulator check, but it is not proof and does not count for James's real dashboard.",
+      content: "Run the local emulator check, but it is not proof and does not count for Operator's real dashboard.",
       targetRole: 'builder',
       targetRaw: 'builder',
       senderRole: 'architect',

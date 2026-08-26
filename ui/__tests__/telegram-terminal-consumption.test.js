@@ -56,7 +56,7 @@ const RUNTIME = 'codex';
 const ROLE = 'architect';
 const PANE_ID = '1';
 const CHAT_ID = 6543210;
-const BODY = 'Kristine muller approved job. change job to invoice';
+const BODY = 'Example customer approved job. change job to invoice';
 
 const tempRoots = [];
 const writers = [];
@@ -96,7 +96,7 @@ function freshWriter() {
 function seedAdmittedDelivery(db, {
   updateId,
   nowMs = 1_700_000_000_000,
-  deliveredPrompt = `[Telegram from james]: ${BODY}`,
+  deliveredPrompt = `[Telegram from operator]: ${BODY}`,
   consumerSessionId = 'cs-492-1',
   submissionId = 'turn-492-1',
   hookProcessId = '4242',
@@ -236,7 +236,7 @@ function countConsumed(db) {
 describe('telegram_consumed.v1 — the record that may retire a message', () => {
   test('a completed turn produces a stored terminal receipt the drain can find', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499401 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100201 });
 
     const result = recordConsumedReceipt(writer.db, {
       record: terminalFor(seed),
@@ -266,7 +266,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('an admission alone leaves NO terminal receipt — the aborted-turn case', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499402 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100202 });
 
     // The turn admitted the bytes and then aborted: no Stop hook, no terminal
     // write. The database must be able to express that difference.
@@ -281,7 +281,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('the admission record itself is refused as terminal proof', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499403 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100203 });
 
     const result = recordConsumedReceipt(writer.db, {
       record: seed.admissionRecord,
@@ -295,7 +295,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('a terminal record whose identity drifts from its admission is refused', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499404 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100204 });
 
     // The one field a forger would most want to move: the bytes digest.
     const drifted = { ...terminalFor(seed), deliveredPromptSha256: sha256('something else') };
@@ -312,7 +312,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('a terminal write from a different runtime process is refused', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499405 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100205 });
 
     const result = recordConsumedReceipt(writer.db, {
       record: terminalFor(seed),
@@ -328,7 +328,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('a turn that ends before it was admitted is refused at build AND at store', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499406 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100206 });
 
     const built = buildConsumedRecord({
       admissionRecord: seed.admissionRecord,
@@ -354,7 +354,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('DUPLICATE SUPPRESSION: a byte-identical re-fire replays, it does not double-write', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499407 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100207 });
     const record = terminalFor(seed);
     const args = {
       record,
@@ -373,7 +373,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('DUPLICATE SUPPRESSION: a conflicting second account quarantines instead of overwriting', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499408 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100208 });
 
     expect(recordConsumedReceipt(writer.db, {
       record: terminalFor(seed),
@@ -399,7 +399,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('an admission already terminated under another id is refused by QUERY, not by error text', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499412 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100212 });
     const record = terminalFor(seed);
 
     // Hand-insert a terminal row for this admission under a DIFFERENT
@@ -440,7 +440,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('the terminal receipt cannot be edited or deleted, even by raw SQL', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499409 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100209 });
     expect(recordConsumedReceipt(writer.db, {
       record: terminalFor(seed),
       terminalHookProcessId: '5151',
@@ -458,7 +458,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('two turns that each admitted the same bytes read as AMBIGUOUS, never as proof', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499410 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100210 });
     expect(recordConsumedReceipt(writer.db, {
       record: terminalFor(seed),
       terminalHookProcessId: '5151',
@@ -521,7 +521,7 @@ describe('telegram_consumed.v1 — the record that may retire a message', () => 
 
   test('a stored terminal receipt satisfies the terminal validator end to end', () => {
     const writer = freshWriter();
-    const seed = seedAdmittedDelivery(writer.db, { updateId: 808499411 });
+    const seed = seedAdmittedDelivery(writer.db, { updateId: 700100211 });
     expect(recordConsumedReceipt(writer.db, {
       record: terminalFor(seed),
       terminalHookProcessId: '5151',

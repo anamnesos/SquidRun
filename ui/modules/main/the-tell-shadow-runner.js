@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { evaluate } = require('../the-tell/scorer');
-const { fetchTrustQuoteReadOnlySignals } = require('./trustquote-tell-feed');
+const { fetchExampleAppReadOnlySignals } = require('./exampleapp-tell-feed');
 const { supportedScorerSignals } = require('./spine-overlay-snapshot');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -313,7 +313,7 @@ function firestoreRefs(rawRefs = {}) {
   const refs = [];
   if (rawRefs.collection && rawRefs.docId) {
     refs.push({
-      system: rawRefs.system || 'trustquote',
+      system: rawRefs.system || 'exampleapp',
       collection: rawRefs.collection,
       docId: rawRefs.docId,
       path: `${rawRefs.collection}/${rawRefs.docId}`,
@@ -325,7 +325,7 @@ function firestoreRefs(rawRefs = {}) {
   if (Array.isArray(rawRefs.eventIds)) {
     for (const eventId of rawRefs.eventIds) {
       refs.push({
-        system: rawRefs.system || 'trustquote',
+        system: rawRefs.system || 'exampleapp',
         collection: rawRefs.collection || 'calendar-events',
         docId: eventId,
         path: `${rawRefs.collection || 'calendar-events'}/${eventId}`,
@@ -383,7 +383,7 @@ function numericFacts(facts = {}) {
 function verifyRefsForSignal(signal = {}, speech = {}) {
   const facts = signal.facts || {};
   return {
-    system: signal.rawRefs?.system || 'trustquote',
+    system: signal.rawRefs?.system || 'exampleapp',
     firestore: firestoreRefs(signal.rawRefs),
     numbers: numericFacts(facts),
     scorerVerify: speech.verify || null,
@@ -444,7 +444,7 @@ function buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }) {
       context: entry.context || signal?.context || signal?.type || entry.signal || null,
       rawRefs: signal?.rawRefs || {},
       verify: signal ? verifyRefsForSignal(signal, {}) : {
-        system: 'trustquote',
+        system: 'exampleapp',
         firestore: [],
         numbers: entry.snapshot || {},
         scorerVerify: null,
@@ -459,7 +459,7 @@ function buildSwallowedRows({ runId, tickId, nowMs, emission, signalById }) {
   });
 }
 
-function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, rows, emission, intervalMs = null }) {
+function buildTickRow({ runId, tickId, nowMs, exampleAppRead, supportedCount, rows, emission, intervalMs = null }) {
   return {
     schema: 'squidrun.the_tell.shadow.status.v1',
     type: 'tick',
@@ -467,21 +467,21 @@ function buildTickRow({ runId, tickId, nowMs, trustQuoteRead, supportedCount, ro
     tickId,
     ts: nowMs,
     checkedAt: nowIso(nowMs),
-    source: trustQuoteRead?.source || emission?.source || 'unverified',
-    ok: trustQuoteRead?.ok === true,
+    source: exampleAppRead?.source || emission?.source || 'unverified',
+    ok: exampleAppRead?.ok === true,
     readOnly: true,
     dryRun: true,
     intervalMs,
     counts: {
-      jobs: trustQuoteRead?.data?.counts?.jobs || 0,
-      quotes: trustQuoteRead?.data?.counts?.quotes || 0,
-      events: trustQuoteRead?.data?.eventCount || 0,
-      parked: trustQuoteRead?.data?.parkedCount || 0,
+      jobs: exampleAppRead?.data?.counts?.jobs || 0,
+      quotes: exampleAppRead?.data?.counts?.quotes || 0,
+      events: exampleAppRead?.data?.eventCount || 0,
+      parked: exampleAppRead?.data?.parkedCount || 0,
       supportedSignals: supportedCount,
       spokeRows: rows.filter((row) => row.type === 'spoke').length,
       swallowedRows: rows.filter((row) => row.type === 'swallowed').length,
     },
-    reason: trustQuoteRead?.reason || null,
+    reason: exampleAppRead?.reason || null,
   };
 }
 
@@ -577,11 +577,11 @@ async function runShadowTick(options = {}) {
   const tickId = options.tickId || `${runId}:tick:${nowMs}`;
   const ledgerPath = options.ledgerPath || DEFAULT_LEDGER_PATH;
   const statusPath = options.statusPath || DEFAULT_STATUS_PATH;
-  const fetchSignals = options.fetchTrustQuoteReadOnlySignals || fetchTrustQuoteReadOnlySignals;
+  const fetchSignals = options.fetchExampleAppReadOnlySignals || fetchExampleAppReadOnlySignals;
   const evaluateImpl = options.evaluate || evaluate;
 
-  const trustQuoteRead = await fetchSignals({ ...options, nowMs, source: 'live' });
-  const signals = Array.isArray(trustQuoteRead?.data?.signals) ? trustQuoteRead.data.signals : [];
+  const exampleAppRead = await fetchSignals({ ...options, nowMs, source: 'live' });
+  const signals = Array.isArray(exampleAppRead?.data?.signals) ? exampleAppRead.data.signals : [];
   const supportedSignals = supportedScorerSignals(signals);
   const emission = supportedSignals.length > 0
     ? evaluateImpl({
@@ -591,11 +591,11 @@ async function runShadowTick(options = {}) {
       nowMs,
       glanceAtMs: nowMs,
       state: options.scorerState || {},
-      source: trustQuoteRead?.ok === true ? 'live' : 'unverified',
+      source: exampleAppRead?.ok === true ? 'live' : 'unverified',
       parkTrading: true,
     })
     : {
-      source: trustQuoteRead?.ok === true ? 'live' : 'unverified',
+      source: exampleAppRead?.ok === true ? 'live' : 'unverified',
       regretScore: 0,
       context: 'work-life:none',
       speak: false,
@@ -612,7 +612,7 @@ async function runShadowTick(options = {}) {
     runId,
     tickId,
     nowMs,
-    trustQuoteRead,
+    exampleAppRead,
     supportedCount: supportedSignals.length,
     rows,
     emission,
@@ -634,7 +634,7 @@ async function runShadowTick(options = {}) {
     lastError: null,
   };
   writeJson(statusPath, status);
-  return { ok: true, runId, tickId, ledgerPath, statusPath, rows: [tickRow, ...rows], ledger, emission, trustQuoteRead };
+  return { ok: true, runId, tickId, ledgerPath, statusPath, rows: [tickRow, ...rows], ledger, emission, exampleAppRead };
 }
 
 async function runShadowLoop(options = {}) {

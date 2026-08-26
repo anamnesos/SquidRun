@@ -124,7 +124,7 @@ function acceptedResultWithTentativeUnderstanding() {
     mode: 'integrated_conversation_memory_self_relationship_desire_growth_loop',
     visible_label: "Mira's tentative understandings",
     visible_as_memory_settings_panel: false,
-    james_clickthrough_required: false,
+    operator_clickthrough_required: false,
     integrated_lived_loop: true,
     tentative_understandings: [{
       text: 'I prefer direct pushback when my premise is wrong.',
@@ -590,7 +590,7 @@ legacyTabDescribe('Mira local text tab controller', () => {
     expect(elements.coordinatorStatus.textContent).toBe('Ready');
     expect(elements.coordinatorFocus.textContent).toContain('live typed conversation');
     expect(elements.coordinatorLanes.textContent).toContain('Mira Local Text UI Surface v0: active');
-    expect(elements.coordinatorLanes.textContent).not.toContain('TrustQuote/Tony Li invoice');
+    expect(elements.coordinatorLanes.textContent).not.toContain('ExampleApp/Customer B invoice');
     expect(elements.coordinatorLanes.textContent).not.toContain('Telegram replay restart safety');
     expect(elements.coordinatorModelAttachment.textContent).toBe('Mira text model disabled: set SQUIDRUN_MIRA_TEXT_MODEL_ENABLED=1 before app start to attach');
     expect(elements.coordinatorNext.textContent).toContain('live typed conversation');

@@ -6,17 +6,17 @@
  * proven downstream ownership. That is right. What went wrong is that the proof
  * bar was, for one pane runtime, STRUCTURALLY UNREACHABLE — and nothing in the
  * system could tell the difference between "proof has not arrived yet" and
- * "proof can never arrive here". Update 808499316 latched `attempted`, waited
+ * "proof can never arrive here". Update 700100102 latched `attempted`, waited
  * for a receipt that no component was capable of writing, and silently held six
- * of James's messages — including live plumbing job instructions — for 8.6
+ * of Operator's messages — including live plumbing job instructions — for 8.6
  * hours while poller health read 100/100.
  *
  * THE FIX IS NOT A LOWER BAR. An earlier attempt (40ff94f7, reverted at
  * 152e1a46) let an unprovable record be bypassed so later messages could pass.
  * That was wrong on the merits: inbound messages are NOT independent. Live
- * update 808499318 is "Not the tankless job the other one" — a correction whose
- * entire meaning lives in 808499317. Delivering it alone does not degrade the
- * message, it INVERTS it, and points James's business at the wrong job. Order
+ * update 700100104 is "Not the tankless job the other one" — a correction whose
+ * entire meaning lives in 700100103. Delivering it alone does not degrade the
+ * message, it INVERTS it, and points Operator's business at the wrong job. Order
  * is load-bearing here, so holding stays holding.
  *
  * What changes is that a hold now knows WHY it is holding, and says so loudly
@@ -164,7 +164,7 @@ function isUnattainableReason(reason) {
  * delivery no older than the attempt it claims to prove?
  *
  * Fail-closed at every branch. The failure mode being defended against is not
- * "we hold too long" — it is "we retire a message James never saw", which is
+ * "we hold too long" — it is "we retire a message Operator never saw", which is
  * unrecoverable and invisible.
  *
  * @param {object} input
@@ -207,7 +207,7 @@ function evaluateConsumptionProof(input = {}) {
     if (!Number.isFinite(attemptedAtMs) || attemptedAtMs <= 0) {
       // A v0 latch entry, written before attempts carried a timestamp. We
       // cannot order proof against it, so the automatic path must not retire
-      // it. This is exactly update 808499316's situation, and it is resolved by
+      // it. This is exactly update 700100102's situation, and it is resolved by
       // the explicit one-shot recovery, never by a timer.
       return { proven: false, reason: 'attempt_time_unknown' };
     }

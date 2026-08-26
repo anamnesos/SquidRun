@@ -1,7 +1,7 @@
 'use strict';
 
 const SQUID_ROOM_WINDOW_KEY = 'squid-room';
-const TRUSTQUOTE_APP_ROOM_ID = 'trustquote';
+const EXAMPLEAPP_APP_ROOM_ID = 'exampleapp';
 const ARM_STATE_PROJECTION_CHANNEL = 'arm-state:projection';
 
 function toText(value, fallback = '') {
@@ -24,13 +24,13 @@ function getMainSessionId(windowContext = {}) {
   return sessionScopeId.split(':')[0] || '';
 }
 
-function getAppRoomSessionId(windowContext = {}, appRoomId = TRUSTQUOTE_APP_ROOM_ID) {
+function getAppRoomSessionId(windowContext = {}, appRoomId = EXAMPLEAPP_APP_ROOM_ID) {
   const mainSessionId = getMainSessionId(windowContext);
   if (!mainSessionId) return '';
   return `${mainSessionId}:${appRoomId}`;
 }
 
-function buildProjectionRequest(windowContext = {}, appRoomId = TRUSTQUOTE_APP_ROOM_ID) {
+function buildProjectionRequest(windowContext = {}, appRoomId = EXAMPLEAPP_APP_ROOM_ID) {
   const sessionId = getAppRoomSessionId(windowContext, appRoomId);
   return {
     appRoomId,
@@ -69,7 +69,7 @@ function buildSquidRoomModel(rawProjection = {}) {
   return {
     ok: projection.ok === true,
     status,
-    appRoomId: registry.appRoomId || TRUSTQUOTE_APP_ROOM_ID,
+    appRoomId: registry.appRoomId || EXAMPLEAPP_APP_ROOM_ID,
     counts: {
       desired: desiredCount,
       ready: readyCount,
@@ -113,8 +113,8 @@ function getSurfaceElements(doc) {
   if (!doc || typeof doc.getElementById !== 'function') return null;
   return {
     root: doc.getElementById('squidRoomSurface'),
-    status: doc.getElementById('squidRoomTrustQuoteStatus'),
-    counts: doc.getElementById('squidRoomTrustQuoteCounts'),
+    status: doc.getElementById('squidRoomExampleAppStatus'),
+    counts: doc.getElementById('squidRoomExampleAppCounts'),
     refreshButton: doc.getElementById('squidRoomRefreshBtn'),
   };
 }
@@ -212,7 +212,7 @@ async function refreshSquidRoomSurface(options = {}) {
     return { ok: false, skipped: true, reason: 'not_squid_room' };
   }
 
-  const payload = buildProjectionRequest(windowContext, TRUSTQUOTE_APP_ROOM_ID);
+  const payload = buildProjectionRequest(windowContext, EXAMPLEAPP_APP_ROOM_ID);
   let projection = null;
   try {
     projection = await invoke(ARM_STATE_PROJECTION_CHANNEL, payload);
@@ -269,7 +269,7 @@ function initSquidRoomSurface(options = {}) {
 module.exports = {
   ARM_STATE_PROJECTION_CHANNEL,
   SQUID_ROOM_WINDOW_KEY,
-  TRUSTQUOTE_APP_ROOM_ID,
+  EXAMPLEAPP_APP_ROOM_ID,
   buildProjectionRequest,
   buildSquidRoomModel,
   getAppRoomSessionId,

@@ -85,8 +85,8 @@ const SIGNAL_DEFAULTS = Object.freeze({
   approval_required_change: {
     riskClass: 'approval_required',
     ownerRoles: ['architect'],
-    requiredProofs: ['james_checkpoint', 'oracle_verify'],
-    suggestedNextCommand: 'Hold work and ask James for the approval-required decision.',
+    requiredProofs: ['operator_checkpoint', 'oracle_verify'],
+    suggestedNextCommand: 'Hold work and ask Operator for the approval-required decision.',
   },
 });
 
@@ -238,13 +238,13 @@ function buildObjective(signal = {}) {
   return `Convert observed signal to proof-bound work: ${title}`;
 }
 
-function buildJamesCheckpoint(signal = {}) {
+function buildOperatorCheckpoint(signal = {}) {
   if (signal.riskClass !== 'approval_required') return null;
   return {
     required: true,
     reason: toOptionalString(
       signal.checkpointReason,
-      'Approval-required signal would materially alter live risk; hold for James checkpoint.'
+      'Approval-required signal would materially alter live risk; hold for Operator checkpoint.'
     ),
     policy: 'approval_required',
   };
@@ -263,8 +263,8 @@ function sourceMessageIdsForSignal(signal = {}) {
 
 function mapObservedSignalToWorkItemInput(input = {}, options = {}) {
   const signal = normalizeObservedSignal(input, options);
-  signal.checkpointReason = toOptionalString(input.checkpointReason || input.jamesCheckpoint?.reason, null);
-  const jamesCheckpoint = buildJamesCheckpoint(signal);
+  signal.checkpointReason = toOptionalString(input.checkpointReason || input.operatorCheckpoint?.reason, null);
+  const operatorCheckpoint = buildOperatorCheckpoint(signal);
   const artifactSummary = [
     `Observed signal ${signal.type}`,
     signal.source.id ? `id=${signal.source.id}` : null,
@@ -293,10 +293,10 @@ function mapObservedSignalToWorkItemInput(input = {}, options = {}) {
     riskClass: signal.riskClass,
     routeHealthRequirement: { required: false },
     requiredProof,
-    state: jamesCheckpoint ? 'blocked' : 'active',
+    state: operatorCheckpoint ? 'blocked' : 'active',
     observedSignal: signal,
     suggestedNextCommand: signal.suggestedNextCommand,
-    jamesCheckpoint,
+    operatorCheckpoint,
     artifactRefs: [{
       ref: `observed-signal:${signal.key}`,
       kind: 'observed_signal',
@@ -308,7 +308,7 @@ function mapObservedSignalToWorkItemInput(input = {}, options = {}) {
     signal,
     signalKey: signal.key,
     workItemInput,
-    jamesCheckpoint,
+    operatorCheckpoint,
   };
 }
 
@@ -336,7 +336,7 @@ function openWorkItemFromObservedSignal(input = {}, options = {}) {
   const opened = openWorkItem(mapped.workItemInput, options);
   return {
     ...opened,
-    status: mapped.jamesCheckpoint ? 'held_for_james_checkpoint' : 'created',
+    status: mapped.operatorCheckpoint ? 'held_for_operator_checkpoint' : 'created',
     signal: mapped.signal,
     dedupeKey: mapped.signalKey,
   };

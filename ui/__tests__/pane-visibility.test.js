@@ -228,9 +228,9 @@ describe('pane-visibility', () => {
     const storage = createStorage();
 
     expect(normalizePaneIds(['1', '2', '3', '2', 'x'])).toEqual(['2', '3']);
-    expect(writeHiddenPaneIds(['1', '2'], { storage, profileName: 'sideprofile' })).toBe(true);
-    expect(getStorageKey({ profileName: 'sideprofile' })).toBe('squidrun:pane-visibility:sideprofile');
-    expect(readHiddenPaneIds({ storage, profileName: 'sideprofile' })).toEqual(['2', '3']);
+    expect(writeHiddenPaneIds(['1', '2'], { storage, profileName: 'client' })).toBe(true);
+    expect(getStorageKey({ profileName: 'client' })).toBe('squidrun:pane-visibility:client');
+    expect(readHiddenPaneIds({ storage, profileName: 'client' })).toEqual(['2', '3']);
     expect(readHiddenPaneIds({ storage, profileName: 'main' })).toEqual([]);
   });
 

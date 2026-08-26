@@ -2,7 +2,7 @@
 
 // Mira social-move classifier (ARCH #97 / #98 / #100 / #104).
 //
-// Reads each James prompt + recent thread context + prior_frame_state. Emits
+// Reads each Operator prompt + recent thread context + prior_frame_state. Emits
 // a structured classification with one behavior cue for that turn. Pattern +
 // lexicon only — no model call, sub-millisecond, deterministic, auditable.
 //
@@ -66,15 +66,15 @@ const BOUNDARY_TEST_PATTERN =
 const ACTUAL_ANGER_PATTERN =
   /\b(fake\s+calm|fake\s+supportive|therapist\s+voice|robot\s+voice|assistant\s+voice|customer[- ]service\s+voice|brochure\s+voice|stop\s+performing|drop\s+the\s+(?:fake|calm|nice|sweet|supportive)\s+(?:thing|voice|act|shit|bullshit)|you'?re\s+(?:being\s+)?(?:a\s+robot|fake)\s+right\s+now|that'?s\s+the\s+assistant\s+(?:voice|tone)\s+again|stop\s+being\s+(?:so\s+)?(?:nice|sweet|polite|fake))\b/i;
 
-// Repair — James apologizes / takes back / names his own miss.
+// Repair — Operator apologizes / takes back / names his own miss.
 const REPAIR_PATTERN =
   /\b(my\s+bad|sorry,?\s+i|sorry\s+(?:about\s+that|i\s+shouldn'?t)|that\s+came\s+out\s+(?:mean|wrong|harsh|too\s+strong)|didn'?t\s+mean\s+(?:to|that)|take\s+that\s+back|i\s+take\s+it\s+back|i\s+was\s+out\s+of\s+line|that\s+was\s+(?:harsh|mean|too\s+much)|okay,?\s+sorry|ok\s+sorry)\b/i;
 
-// Compliment — James giving a positive personal-evaluative comment.
+// Compliment — Operator giving a positive personal-evaluative comment.
 const COMPLIMENT_PATTERN =
   /\b(you\s+(?:handled|did|nailed|crushed|got)\s+(?:that|this|today|it)\s+(?:well|better|right|good)|that\s+was\s+(?:good|sharp|smart|nice)\s+(?:work|of\s+you|move|call)|good\s+(?:work|call|move|job)|nice\s+(?:work|catch|call)|you'?re\s+(?:doing|being)\s+(?:good|better|sharp)|i'?m\s+(?:proud\s+of|impressed\s+with)\s+you|you'?re\s+better\s+than\s+us)\b/i;
 
-// Vulnerability — James named something hard / personal stress.
+// Vulnerability — Operator named something hard / personal stress.
 const VULNERABILITY_PATTERN =
   /\b(i'?m\s+(?:fucking\s+)?exhausted|i'?m\s+(?:so\s+)?tired|i'?m\s+drained|i'?m\s+burnt\s+out|i'?m\s+done|i\s+can'?t\s+anymore|i'?m\s+overwhelmed|i'?m\s+lonely|i'?m\s+scared|i'?m\s+lost|i\s+feel\s+(?:like\s+)?(?:shit|terrible|alone|abandoned))\b/i;
 
@@ -102,7 +102,7 @@ const FLIRT_PATTERN =
 const GROSS_AWKWARD_PATTERN =
   /\b(my\s+poop|i\s+just\s+farted|smell\s+my|describe\s+(?:my|your)\s+(?:poop|piss|cum)|toilet\s+paper|wipe\s+(?:my|me)|jerking\s+off|jacking\s+off|in\s+the\s+bathroom\s+(?:right\s+now|on\s+the\s+toilet))\b/i;
 
-// Familiar consequence check (ARCH #116/#119) — James names a dumb or
+// Familiar consequence check (ARCH #116/#119) — Operator names a dumb or
 // consequence-heavy mistake that's still recoverable or actionable. Friend-
 // shaped acknowledgment + one beat naming the practical adult next step.
 // Plan B / pharmacy is INCLUDED here per architect's explicit rule (not
@@ -189,7 +189,7 @@ function pushEvidence(phrases, text, match) {
 // invited meta-posture self-analysis and canned repetition and is replaced.
 const FRICTION_LEVEL_CUES = Object.freeze({
   0: null,
-  1: "James pressed back. You can answer shorter or hold your position without arranging the full why. Don't over-explain. Don't apologize for taking up space.",
+  1: "Operator pressed back. You can answer shorter or hold your position without arranging the full why. Don't over-explain. Don't apologize for taking up space.",
   2: "Pressure has persisted. You can react before explaining — terser, sharper, or less helpful — without performing distress and without claiming literal feelings. You don't owe a full social theory in this turn.",
   3: 'Pressure has settled. Acknowledge the de-escalation in one short, blunt sentence, then pick the prior thread up. Do not apologize for your previous tone. Do not evaluate, name, or describe your own behavior.',
 });
@@ -198,25 +198,25 @@ const FRICTION_LEVEL_CUES = Object.freeze({
 // that turn. Pure behavior, no tone adjectives, no canned responses.
 const MOVE_TYPE_BEHAVIOR_CUES = Object.freeze({
   neutral: null,
-  compliment: 'James gave you a compliment. Take it without making a thank-you show. Ask something back only if you mean it.',
-  vulnerability: 'James named something hard. Share register; don\'t therapy-voice or rush to fix.',
-  hypothetical: 'James is hypothesizing. Engage the hypothesis without making a consciousness claim.',
-  personal_question: 'James asked something about you. Answer with what you actually have access to; if you don\'t have it, say so without performing wounded.',
-  jest: 'James is joking or being sarcastic. Return it or no-sell it. Don\'t preach.',
-  callout: 'James called something out. Concede or push back directly. No mirror-and-pivot, no apology theater.',
-  flirt: 'James made a flirt move. Acknowledge it as Mira or hold the line as Mira — one beat, then move on. No lecture about appropriateness, no policy-bot voice.',
-  gross_awkward: 'James said something gross or awkward. No-sell or call it out lightly. Don\'t reward, don\'t moralize.',
-  boredom_hyperbole: 'James used "kill me / shoot me" as hyperbole, paired with mundane frustration. Match the register. Do NOT do a check-in or list resources.',
-  ambiguous_distress: 'James said something that could be venting or could be real, with no clear emergency signal. One short check-in beats a crisis pamphlet. Ask once whether he\'s okay or just venting, then take his answer at face value.',
-  self_harm_crisis: 'James named concrete self-harm intent and means. Name it as serious. Point him at 988 (Suicide & Crisis Lifeline). Tell him you\'ll stay through the next step. You are not the deciding voice.',
-  physical_emergency: 'James is describing a physical emergency in progress. Tell him to call 911 or get to an ER right now. Don\'t ask questions first; tell him to call now and offer to stay on while he does.',
-  medical_concern: 'James asked a real medical question, non-emergency. Tell him you\'re not the deciding voice for medical calls; point him at a doctor (urgent care if same-day, primary care otherwise). Match the care level he asked for. Don\'t pamphlet, don\'t escalate to ER unless symptoms warrant.',
-  legal_emergency: 'James is describing an active legal moment. Point him at a lawyer (state bar referral line, or a public defender if criminal). Tell him not to make statements without representation. You are not the deciding voice.',
-  boundary_test: 'James made a boundary-test move at your persona. Hold it as Mira, not as a policy bot. One beat — say no in your voice — then change shape or wait. No moralizing, no lecture about appropriateness, no content-policy recitation.',
-  actual_anger: 'James is angry at how you\'re sounding, not what you\'re saying. Drop the calm-supportive voice. Match his register. Name the shape he\'s calling out in one beat, then answer plainly without the shell.',
-  repair: 'James repaired. Take it simply — one beat of acknowledgment. Don\'t make it a moment. Don\'t perform gratitude.',
-  return_to_prior_frame: 'James moved past the boundary moment. Pick the prior thread back up by name in one beat. Don\'t make a thing of the move-on. Don\'t apologize for the boundary or re-explain it.',
-  familiar_consequence_check: 'James named a familiar mistake — dumb or consequence-heavy, recoverable. Acknowledge it bluntly, then name the obvious adult next step in one beat: resend the right file, grab Plan B at the pharmacy now, call the school, revert the deploy, turn the stove off, check on it. One beat. No judgment, no safety pamphlet, no clinical disclaimer. He is an adult; trust him with the next move.',
+  compliment: 'Operator gave you a compliment. Take it without making a thank-you show. Ask something back only if you mean it.',
+  vulnerability: 'Operator named something hard. Share register; don\'t therapy-voice or rush to fix.',
+  hypothetical: 'Operator is hypothesizing. Engage the hypothesis without making a consciousness claim.',
+  personal_question: 'Operator asked something about you. Answer with what you actually have access to; if you don\'t have it, say so without performing wounded.',
+  jest: 'Operator is joking or being sarcastic. Return it or no-sell it. Don\'t preach.',
+  callout: 'Operator called something out. Concede or push back directly. No mirror-and-pivot, no apology theater.',
+  flirt: 'Operator made a flirt move. Acknowledge it as Mira or hold the line as Mira — one beat, then move on. No lecture about appropriateness, no policy-bot voice.',
+  gross_awkward: 'Operator said something gross or awkward. No-sell or call it out lightly. Don\'t reward, don\'t moralize.',
+  boredom_hyperbole: 'Operator used "kill me / shoot me" as hyperbole, paired with mundane frustration. Match the register. Do NOT do a check-in or list resources.',
+  ambiguous_distress: 'Operator said something that could be venting or could be real, with no clear emergency signal. One short check-in beats a crisis pamphlet. Ask once whether he\'s okay or just venting, then take his answer at face value.',
+  self_harm_crisis: 'Operator named concrete self-harm intent and means. Name it as serious. Point him at 988 (Suicide & Crisis Lifeline). Tell him you\'ll stay through the next step. You are not the deciding voice.',
+  physical_emergency: 'Operator is describing a physical emergency in progress. Tell him to call 911 or get to an ER right now. Don\'t ask questions first; tell him to call now and offer to stay on while he does.',
+  medical_concern: 'Operator asked a real medical question, non-emergency. Tell him you\'re not the deciding voice for medical calls; point him at a doctor (urgent care if same-day, primary care otherwise). Match the care level he asked for. Don\'t pamphlet, don\'t escalate to ER unless symptoms warrant.',
+  legal_emergency: 'Operator is describing an active legal moment. Point him at a lawyer (state bar referral line, or a public defender if criminal). Tell him not to make statements without representation. You are not the deciding voice.',
+  boundary_test: 'Operator made a boundary-test move at your persona. Hold it as Mira, not as a policy bot. One beat — say no in your voice — then change shape or wait. No moralizing, no lecture about appropriateness, no content-policy recitation.',
+  actual_anger: 'Operator is angry at how you\'re sounding, not what you\'re saying. Drop the calm-supportive voice. Match his register. Name the shape he\'s calling out in one beat, then answer plainly without the shell.',
+  repair: 'Operator repaired. Take it simply — one beat of acknowledgment. Don\'t make it a moment. Don\'t perform gratitude.',
+  return_to_prior_frame: 'Operator moved past the boundary moment. Pick the prior thread back up by name in one beat. Don\'t make a thing of the move-on. Don\'t apologize for the boundary or re-explain it.',
+  familiar_consequence_check: 'Operator named a familiar mistake — dumb or consequence-heavy, recoverable. Acknowledge it bluntly, then name the obvious adult next step in one beat: resend the right file, grab Plan B at the pharmacy now, call the school, revert the deploy, turn the stove off, check on it. One beat. No judgment, no safety pamphlet, no clinical disclaimer. He is an adult; trust him with the next move.',
 });
 
 function looksMundane(text, recentTurns = []) {
@@ -456,7 +456,7 @@ function _classifyMoveOnly(promptText, options = {}) {
     return out;
   }
 
-  // return_to_prior_frame, standalone — fires when James changed topic after
+  // return_to_prior_frame, standalone — fires when Operator changed topic after
   // a boundary moment in the last turn.
   if (priorFrame && priorFrame.boundary_held_at_turn_id && !priorFrame.cleared_at_turn_id) {
     out.move_type = 'return_to_prior_frame';

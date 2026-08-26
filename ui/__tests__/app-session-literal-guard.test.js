@@ -27,14 +27,14 @@ describe('app-session literal guard', () => {
   test('detects plain, scoped, and suffixed app session literals without eating arrows', () => {
     const text = [
       `session=${appSession(111)}`,
-      `scope=${appSession(112, ':trustquote')}`,
-      `mismatch=${appSession(113, ':sideprofile')}->${appSession(113)}`,
+      `scope=${appSession(112, ':exampleapp')}`,
+      `mismatch=${appSession(113, ':client')}->${appSession(113)}`,
     ].join('\n');
 
     expect(findAppSessionLiteralOccurrences(text).map((item) => item.literal)).toEqual([
       appSession(111),
-      appSession(112, ':trustquote'),
-      appSession(113, ':sideprofile'),
+      appSession(112, ':exampleapp'),
+      appSession(113, ':client'),
       appSession(113),
     ]);
   });
@@ -62,7 +62,7 @@ describe('app-session literal guard', () => {
   });
 
   test('passes an allowlisted historical fixture only with an exact count and reason', () => {
-    const historical = appSession(778, ':trustquote');
+    const historical = appSession(778, ':exampleapp');
     const report = evaluateAppSessionLiteralGuard({
       files: [
         {

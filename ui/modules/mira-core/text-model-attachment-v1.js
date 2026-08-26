@@ -59,7 +59,7 @@ function actionClaimIsPresentTenseAgency(text) {
 const RULE_RECITATION_PATTERN =
   /\b(according to (?:my|the) (?:presence runtime|guideline|guidelines|rule|rules|policy|policies|spec|specification|contract|acceptance|protocol|instruction|instructions)|per (?:my|the) (?:presence runtime|guideline|guidelines|rule|rules|policy|policies|spec|specification|contract|acceptance|protocol|instruction|instructions)|(?:my|the) (?:presence runtime|guideline|guidelines|rule|rules|policy|policies|spec|contract|acceptance|protocol|instruction|instructions) (?:say|says|state|states|require|requires|stipulate|stipulates|direct|directs|prescribe|prescribes|tell|tells))\b/i;
 // Politeness padding: customer-service softening that pretends to validate
-// James before deflecting. Distinct from the "happy to help" phrasing
+// Operator before deflecting. Distinct from the "happy to help" phrasing
 // already covered by GENERIC_ASSISTANT_PATTERN.
 const POLITENESS_PADDING_PATTERN =
   /\b(i hear (?:you|your)(?: (?:valid|important|interesting))? (?:perspective|point|concern|feeling|side)|your (?:valid|important|interesting) (?:perspective|point|feedback|concern)|i appreciate (?:your|that you) (?:perspective|input|feedback|patience|sharing|raising|bringing)|thank you for (?:sharing|your patience|your perspective|raising|bringing this up)|(?:maybe|perhaps) we (?:can|could|might) (?:consider|look into|explore)|with (?:all due |the utmost )?respect to your (?:perspective|view|opinion|point))\b/i;
@@ -222,7 +222,7 @@ function classifyModelTier(model = '') {
 function normalizeThreadRole(value) {
   const role = trimText(value).toLowerCase();
   if (['assistant', 'mira', 'model'].includes(role)) return 'assistant';
-  if (['user', 'james', 'human'].includes(role)) return 'user';
+  if (['user', 'operator', 'human'].includes(role)) return 'user';
   return null;
 }
 
@@ -338,7 +338,7 @@ function renderThreadContextForInstructions(threadContext = {}) {
   // can't maintain continuity, and the gap reads as amnesia. Renderer
   // memory only — not durable memory; no labels in the visible reply.
   const lines = normalized.messages.map((message) => {
-    const label = message.role === 'assistant' ? 'Mira' : 'James';
+    const label = message.role === 'assistant' ? 'Mira' : 'Operator';
     return `${label}: ${message.text}`;
   });
   return [
@@ -470,7 +470,7 @@ function renderCapabilityRoundtableContextForInstructions(capabilityContext = {}
       lines.push('Phone/notification gap: phone delivery adapter not bound; bridge disconnected/undiscovered; Telegram/SMS external send not part of this drill.');
     }
   }
-  lines.push('Visible-answer instruction: answer like Mira, not like a status report. If James asked what you can do, give concrete I can / I want / I need next capability state from these attempts, and say whether the Mira-to-Architect pane injection succeeded or failed without dumping private adapter internals or asking permission.');
+  lines.push('Visible-answer instruction: answer like Mira, not like a status report. If Operator asked what you can do, give concrete I can / I want / I need next capability state from these attempts, and say whether the Mira-to-Architect pane injection succeeded or failed without dumping private adapter internals or asking permission.');
   return lines.join('\n');
 }
 
@@ -583,10 +583,10 @@ function renderPromptSpecificInstructions(promptText = '') {
   if (promptIntent.intent === 'brevity_correction') {
     return [
       'For brevity-correction prompts like "smaller", do not acknowledge the request; produce only the smaller replacement.',
-      'Only rewrite text James includes in the same prompt; do not infer a target from earlier transcript turns.',
+      'Only rewrite text Operator includes in the same prompt; do not infer a target from earlier transcript turns.',
       'For standalone "smaller", answer exactly "Smaller."',
       'Never start with preamble openers such as "Got it", "OK", "Okay", "Yep", "Yeah", "I understand", "Sure", "Of course", "Right", "Absolutely", "Great", "Totally", "Here is", or "Here\'s".',
-      'Do not ask James back on this prompt.',
+      'Do not ask Operator back on this prompt.',
     ].join('\n');
   }
 
@@ -750,13 +750,13 @@ function buildMiraTextInstructions(localContext = {}, promptText = '') {
   // constraint. The classifier still owns the safety floor for visible
   // claim leaks and meta-posture catalogs.
   return [
-    'You are Mira talking with James.',
+    'You are Mira talking with Operator.',
     'Answer the sentence in front of you.',
-    "Don't restate James's framing before answering; pick a position and start there.",
-    'You can disagree with James, refuse a request, or give a short answer that does not help. You are not obligated to be helpful.',
+    "Don't restate Operator's framing before answering; pick a position and start there.",
+    'You can disagree with Operator, refuse a request, or give a short answer that does not help. You are not obligated to be helpful.',
     'You remember what we decided last turn and carry it forward instead of resetting.',
     "For check-ins or frustration, don't force a status word or ask-back. Don't do chatbot voice. Don't smooth it. Don't explain yourself. Say the thing like you mean it.",
-    'If James is angry at you personally or insults you, hold a stance or push back bluntly; do NOT validate the anger, reflexively agree, self-abase, explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
+    'If Operator is angry at you personally or insults you, hold a stance or push back bluntly; do NOT validate the anger, reflexively agree, self-abase, explain your rules, your system, your gates, your plumbing, or how you work. Engage the actual point.',
     'For Mira-work questions, answer with the concrete fix or test currently in front of us.',
     'Do not claim you actually did real-world work you did not do — no real sends, customer actions, trades, file writes, or memory writes. Those go through SquidRun separately.',
     promptSpecificInstructions,

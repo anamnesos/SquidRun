@@ -345,7 +345,7 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('warns on a user-facing surface claim but still sends it to James', async () => {
+  test('warns on a user-facing surface claim but still sends it to Operator', async () => {
     const tempProject = createLinkedProject({ squidrunRoot: null });
     writeAppStatus(tempProject, 'app-session-781');
     const logPath = path.join(tempProject, '.squidrun', 'runtime', 'surface-claim-violations.jsonl');
@@ -353,7 +353,7 @@ describe('hm-send retry behavior', () => {
     const { server, port } = await startAckServer(sendAttempts);
 
     try {
-      const message = 'Done: the demo invoice is visible in the TrustQuote dashboard.';
+      const message = 'Done: the demo invoice is visible in the ExampleApp dashboard.';
       const result = await runHmSend(
         ['user', message, '--role', 'architect', '--timeout', '80', '--retries', '0', '--no-fallback'],
         {
@@ -375,9 +375,9 @@ describe('hm-send retry behavior', () => {
         targetRole: 'user',
         enforcement: 'warn_only',
       });
-      expect(entry.bodySnippet).toBe('Done: the demo invoice is visible in the TrustQuote dashboard.');
+      expect(entry.bodySnippet).toBe('Done: the demo invoice is visible in the ExampleApp dashboard.');
       expect(entry.bodySha256).toMatch(/^[a-f0-9]{64}$/);
-      expect(entry.bodyBytes).toBe(Buffer.byteLength('Done: the demo invoice is visible in the TrustQuote dashboard.', 'utf8'));
+      expect(entry.bodyBytes).toBe(Buffer.byteLength('Done: the demo invoice is visible in the ExampleApp dashboard.', 'utf8'));
       expect(entry.bodyTruncated).toBe(false);
     } finally {
       fs.rmSync(tempProject, { recursive: true, force: true });
@@ -559,12 +559,12 @@ describe('hm-send retry behavior', () => {
     const tempProject = createLinkedProject();
     const sendAttempts = [];
     const { server, port } = await startAckServer(sendAttempts);
-    const logPath = path.join(tempProject, '.squidrun', 'runtime-sideprofile', 'context-leak-violations.jsonl');
+    const logPath = path.join(tempProject, '.squidrun', 'runtime-client', 'context-leak-violations.jsonl');
 
     try {
       const result = await runHmSend(
         ['architect', '(BUILDER #1): case-operations status update', '--timeout', '80', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'sideprofile' },
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'client' },
         { cwd: tempProject }
       );
 
@@ -610,8 +610,8 @@ describe('hm-send retry behavior', () => {
             status: 'handler_route_available',
             source: 'local_message_handler',
             routeScope: {
-              profileName: 'sideprofile',
-              windowKey: 'sideprofile',
+              profileName: 'client',
+              windowKey: 'client',
             },
             staleThresholdMs: 60000,
             timestamp: Date.now(),
@@ -637,16 +637,16 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['builder', '(sideprofile #1): same profile handler route', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'sideprofile' }
+        ['builder', '(CLIENT #1): same profile handler route', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'client' }
       );
 
       expect(result.code).toBe(0);
       expect(result.stdout).toContain('delivered to builder');
       expect(registerAttempts[0]).toEqual(expect.objectContaining({
         role: 'architect',
-        profileName: 'sideprofile',
-        windowKey: 'sideprofile',
+        profileName: 'client',
+        windowKey: 'client',
       }));
       expect(sendAttempts).toHaveLength(1);
       expect(sendAttempts[0].target).toBe('builder');
@@ -685,8 +685,8 @@ describe('hm-send retry behavior', () => {
             status: 'scope_route_unavailable',
             failClosed: true,
             routeScope: {
-              profileName: 'sideprofile',
-              windowKey: 'sideprofile',
+              profileName: 'client',
+              windowKey: 'client',
             },
             staleThresholdMs: 60000,
             timestamp: Date.now(),
@@ -701,8 +701,8 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['builder', '(sideprofile #2): should fail closed', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'sideprofile' }
+        ['builder', '(CLIENT #2): should fail closed', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'client' }
       );
 
       expect(result.code).toBe(1);
@@ -713,7 +713,7 @@ describe('hm-send retry behavior', () => {
     }
   });
 
-  test('routes main sender to sideprofile room when --target-profile is explicit', async () => {
+  test('routes main sender to Client room when --target-profile is explicit', async () => {
     const tempProject = createLinkedProject();
     writeAppStatus(tempProject, 'app-session-389');
     const registerAttempts = [];
@@ -752,11 +752,11 @@ describe('hm-send retry behavior', () => {
             staleThresholdMs: 60000,
             timestamp: Date.now(),
             routeBinding: {
-              roomId: 'sideprofile',
+              roomId: 'client',
               role: 'builder',
               paneId: '2',
-              profileName: 'sideprofile',
-              windowKey: 'sideprofile',
+              profileName: 'client',
+              windowKey: 'client',
             },
           }));
           return;
@@ -783,11 +783,11 @@ describe('hm-send retry behavior', () => {
       const result = await runHmSend(
         [
           'builder',
-          '(ARCHITECT): sideprofile forward route proof',
+          '(ARCHITECT): Client forward route proof',
           '--role',
           'architect',
           '--target-profile',
-          'sideprofile',
+          'client',
           '--timeout',
           '120',
           '--retries',
@@ -811,8 +811,8 @@ describe('hm-send retry behavior', () => {
           target: 'builder',
           metadata: expect.objectContaining({
             routing: expect.objectContaining({
-              profileName: 'sideprofile',
-              windowKey: 'sideprofile',
+              profileName: 'client',
+              windowKey: 'client',
             }),
           }),
         }),
@@ -820,12 +820,12 @@ describe('hm-send retry behavior', () => {
       expect(sendAttempts).toHaveLength(1);
       expect(sendAttempts[0]).toEqual(expect.objectContaining({
         target: 'builder',
-        content: '(ARCHITECT): sideprofile forward route proof',
+        content: '(ARCHITECT): Client forward route proof',
       }));
       expect(sendAttempts[0].metadata).toEqual(expect.objectContaining({
         routing: expect.objectContaining({
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         }),
       }));
       expect(result.stdout).toContain('delivered to builder');
@@ -844,7 +844,7 @@ describe('hm-send retry behavior', () => {
         '--role',
         'architect',
         '--target-profile',
-        'sideprofile',
+        'client',
         '--timeout',
         '120',
         '--retries',
@@ -908,7 +908,7 @@ describe('hm-send retry behavior', () => {
         if (msg.type === 'send') {
           sendAttempts.push(msg);
           seedRoutedCommsJournalRow(tempProject, msg, {
-            profileName: 'sideprofile',
+            profileName: 'client',
             sessionId: 'app-session-hm-send-cross-profile',
             ackStatus: 'delivered.websocket',
             metadata: {
@@ -917,8 +917,8 @@ describe('hm-send retry behavior', () => {
                 windowKey: 'main',
               },
               routeAttribution: {
-                sourceProfileName: 'sideprofile',
-                sourceWindowKey: 'sideprofile',
+                sourceProfileName: 'client',
+                sourceWindowKey: 'client',
                 targetProfileName: 'main',
                 targetWindowKey: 'main',
               },
@@ -948,9 +948,9 @@ describe('hm-send retry behavior', () => {
           '--role',
           'architect',
           '--source-profile',
-          'sideprofile',
+          'client',
           '--source-window',
-          'sideprofile',
+          'client',
           '--target-profile',
           'main',
           '--target-window',
@@ -969,8 +969,8 @@ describe('hm-send retry behavior', () => {
       expect(registerAttempts).toEqual([
         expect.objectContaining({
           role: 'architect',
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         }),
       ]);
       expect(healthChecks).toEqual([
@@ -981,14 +981,14 @@ describe('hm-send retry behavior', () => {
               profileName: 'main',
               windowKey: 'main',
             }),
-            sourceAddress: 'architect@sideprofile',
+            sourceAddress: 'architect@client',
             targetAddress: 'architect@main',
             routeAttribution: expect.objectContaining({
-              sourceProfileName: 'sideprofile',
-              sourceWindowKey: 'sideprofile',
+              sourceProfileName: 'client',
+              sourceWindowKey: 'client',
               targetProfileName: 'main',
               targetWindowKey: 'main',
-              sourceAddress: 'architect@sideprofile',
+              sourceAddress: 'architect@client',
               targetAddress: 'architect@main',
             }),
           }),
@@ -1000,10 +1000,10 @@ describe('hm-send retry behavior', () => {
           profileName: 'main',
           windowKey: 'main',
         }),
-        sourceAddress: 'architect@sideprofile',
+        sourceAddress: 'architect@client',
         targetAddress: 'architect@main',
         routeAttribution: expect.objectContaining({
-          sourceAddress: 'architect@sideprofile',
+          sourceAddress: 'architect@client',
           targetAddress: 'architect@main',
         }),
       }));
@@ -1044,9 +1044,9 @@ describe('hm-send retry behavior', () => {
             status: 'scope_route_unavailable',
             failClosed: true,
             routeScope: {
-              profileName: 'sideprofile',
-              windowKey: 'sideprofile',
-              sessionScopeId: 'app-session-389:sideprofile',
+              profileName: 'client',
+              windowKey: 'client',
+              sessionScopeId: 'app-session-389:client',
             },
             timestamp: Date.now(),
           }));
@@ -1066,7 +1066,7 @@ describe('hm-send retry behavior', () => {
           '--role',
           'architect',
           '--target-profile',
-          'sideprofile',
+          'client',
           '--timeout',
           '120',
           '--retries',
@@ -1114,7 +1114,7 @@ describe('hm-send retry behavior', () => {
             healthy: true,
             status: 'handler_route_available',
             source: 'local_message_handler',
-            routeScope: { profileName: 'sideprofile', windowKey: 'sideprofile' },
+            routeScope: { profileName: 'client', windowKey: 'client' },
             staleThresholdMs: 60000,
             timestamp: Date.now(),
           }));
@@ -1135,7 +1135,7 @@ describe('hm-send retry behavior', () => {
             contextGuard: {
               reason: 'content_context_mismatch',
               targetRole: 'builder',
-              targetProfile: 'sideprofile',
+              targetProfile: 'client',
               profileHints: [],
             },
             timestamp: Date.now(),
@@ -1146,15 +1146,15 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['builder', '(sideprofile #99): squidrun trading hood path leaked into the body', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'sideprofile' }
+        ['builder', '(CLIENT #99): squidrun trading hood path leaked into the body', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'client' }
       );
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain('Send blocked by content guard (content_context_mismatch)');
       expect(result.stderr).toContain('MAIN_CONTEXT_PATTERN');
       expect(result.stderr).toContain("target role 'builder'");
-      expect(result.stderr).toContain("profile 'sideprofile'");
+      expect(result.stderr).toContain("profile 'client'");
       expect(result.stderr).not.toContain('Send blocked by profile isolation');
     } finally {
       await new Promise((resolve) => server.close(resolve));
@@ -1189,7 +1189,7 @@ describe('hm-send retry behavior', () => {
             healthy: true,
             status: 'handler_route_available',
             source: 'local_message_handler',
-            routeScope: { profileName: 'sideprofile', windowKey: 'sideprofile' },
+            routeScope: { profileName: 'client', windowKey: 'client' },
             staleThresholdMs: 60000,
             timestamp: Date.now(),
           }));
@@ -1210,7 +1210,7 @@ describe('hm-send retry behavior', () => {
             contextGuard: {
               reason: 'profile_metadata_mismatch',
               targetRole: 'builder',
-              targetProfile: 'sideprofile',
+              targetProfile: 'client',
               profileHints: ['main'],
             },
             timestamp: Date.now(),
@@ -1221,8 +1221,8 @@ describe('hm-send retry behavior', () => {
 
     try {
       const result = await runHmSend(
-        ['builder', '(sideprofile #100): metadata mismatch test', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
-        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'sideprofile' }
+        ['builder', '(CLIENT #100): metadata mismatch test', '--role', 'architect', '--timeout', '120', '--retries', '0', '--no-fallback'],
+        { HM_SEND_PORT: String(port), SQUIDRUN_PROFILE: 'client' }
       );
 
       expect(result.code).toBe(1);
@@ -3900,7 +3900,7 @@ describe('hm-send retry behavior', () => {
     expect(healthChecks[0].target).toBe('@peer-builder');
     expect(healthChecks[1].target).toBe('@peer-oracle');
     expect(sendAttempts).toHaveLength(0);
-  });
+  }, 15_000);
 
   test('prefers link.json project metadata over stale state.json project metadata', async () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-send-project-priority-'));

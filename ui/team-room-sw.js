@@ -47,13 +47,13 @@ function safePushPayload(event) {
     const value = event.data?.json();
     if (value?.schema !== 'squidrun.team_room_push.v1') return null;
     const sender = ['Mira', 'Rook', 'Vera'].includes(value.sender) ? value.sender : 'Team Room';
-    const notificationClass = ['failure', 'needs_james', 'question'].includes(value.notificationClass)
+    const notificationClass = ['failure', 'needs_operator', 'question'].includes(value.notificationClass)
       ? value.notificationClass
       : '';
     if (!notificationClass) return null;
     const body = ({
       failure: 'A failure needs your attention.',
-      needs_james: 'A decision needs you.',
+      needs_operator: 'A decision needs you.',
       question: 'There is a real question for you.',
     })[notificationClass];
     return {

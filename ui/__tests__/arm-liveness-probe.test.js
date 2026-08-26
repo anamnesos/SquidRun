@@ -12,12 +12,12 @@ const {
 function activeSession(overrides = {}) {
   return {
     spawnSessionId: 'arm-spawn-session-1',
-    durableAddress: 'arm://build-1a-qa/0123456789abcdef/trustquote-qa/dev-qa',
+    durableAddress: 'arm://build-1a-qa/0123456789abcdef/exampleapp-qa/dev-qa',
     spawnLeaseId: 'lease-1',
-    appRoomId: 'trustquote-qa',
+    appRoomId: 'exampleapp-qa',
     armKey: 'dev-qa',
-    paneId: 'trustquote-dev-qa',
-    role: 'trustquote-dev-qa',
+    paneId: 'exampleapp-dev-qa',
+    role: 'exampleapp-dev-qa',
     sourceMessageId: 'ping-1',
     expectedResponseClass: 'arm.liveness.pong',
     status: 'active',
@@ -46,7 +46,7 @@ describe('arm journal round-trip liveness probe', () => {
         expectedResponseClass: 'arm.liveness.pong',
         durableAddress: activeSession().durableAddress,
         spawnLeaseId: 'lease-1',
-        paneId: 'trustquote-dev-qa',
+        paneId: 'exampleapp-dev-qa',
         replyMarker: ARM_LIVENESS_PONG_MARKER,
         replyReceipt: {
           schema: ARM_LIVENESS_PONG_SCHEMA,
@@ -54,7 +54,7 @@ describe('arm journal round-trip liveness probe', () => {
           responseClass: 'arm.liveness.pong',
           durableAddress: activeSession().durableAddress,
           spawnLeaseId: 'lease-1',
-          paneId: 'trustquote-dev-qa',
+          paneId: 'exampleapp-dev-qa',
         },
       }),
       replyBody: expect.stringContaining(ARM_LIVENESS_PONG_MARKER),
@@ -111,13 +111,13 @@ describe('arm journal round-trip liveness probe', () => {
     const noise = {
       rowId: 10,
       messageId: 'hm-noise',
-      senderRole: 'trustquote-dev-qa',
+      senderRole: 'exampleapp-dev-qa',
       direction: 'outbound',
     };
     const pong = {
       rowId: 11,
       messageId: 'hm-pong',
-      senderRole: 'trustquote-dev-qa',
+      senderRole: 'exampleapp-dev-qa',
       direction: 'outbound',
     };
     const queryJournal = jest.fn().mockImplementation(() => {
@@ -154,7 +154,7 @@ describe('arm journal round-trip liveness probe', () => {
       proof: expect.objectContaining({ ok: true, status: 'proved' }),
     }));
     expect(daemonClient.writeAndWaitAck).toHaveBeenCalledWith(
-      'trustquote-dev-qa',
+      'exampleapp-dev-qa',
       expect.stringContaining(ARM_LIVENESS_PONG_MARKER),
       expect.objectContaining({
         correlationId: 'ping-1',
@@ -163,7 +163,7 @@ describe('arm journal round-trip liveness probe', () => {
       { timeoutMs: 2000 }
     );
     expect(queryJournal).toHaveBeenCalledWith(expect.objectContaining({
-      senderRole: 'trustquote-dev-qa',
+      senderRole: 'exampleapp-dev-qa',
       direction: 'outbound',
       sinceMs: 1_000,
     }));

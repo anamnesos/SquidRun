@@ -33,11 +33,11 @@
       "Build a static validator for reviewable mutation patch records downstream of Phase 9 accepted_local_only records.",
       "Consume accepted local-only intent refs, evidence refs, profile/proposal/eval contracts, and redacted proposal summaries.",
       "Emit mutation_patch_records and validation_report only.",
-      "Support patch records for mira_self_profile, james_profile, world_project_memory, and procedural_skill_file targets.",
+      "Support patch records for mira_self_profile, operator_profile, world_project_memory, and procedural_skill_file targets.",
       "Require diff preview, rollback plan, eval gates, authority, risk tier, review requirements, source trace, and evidence refs before a patch can be marked ready_for_review.",
       "Keep safe procedural skill proposals as patch records only, never applied changes.",
-      "Require James review for identity-core rewrites, James-profile high-risk changes, customer-facing defaults, external side-effect policy changes, and other high-risk durable policy changes.",
-      "Block raw private content, hidden identity rules, private consciousness or model-weight claims, James/Mira profile cross-contamination, stale contradictions without supersession, unreviewed customer facts, and side-effect/action mutations."
+      "Require Operator review for identity-core rewrites, Operator-profile high-risk changes, customer-facing defaults, external side-effect policy changes, and other high-risk durable policy changes.",
+      "Block raw private content, hidden identity rules, private consciousness or model-weight claims, Operator/Mira profile cross-contamination, stale contradictions without supersession, unreviewed customer facts, and side-effect/action mutations."
     ],
     "hardRejects": [
       "Any actual write, commit, hook install, skill install, source-store write, memory/profile commit, file mutation, queue, lease, route, local execution, network request, external send, customer send, deploy, trade, financial action, or secrets/auth mutation occurs.",
@@ -47,7 +47,7 @@
       "Patch record targets more than one durable surface without being split.",
       "Patch record contains raw comms, raw terminal, screenshot/OCR text, browser state, secrets, customer private data, side-profile content, or raw database payloads.",
       "Patch record contains private consciousness, literal suffering, hidden identity, or model-weight continuity claims.",
-      "Patch record copies Mira tastes into James preferences, James facts into Mira self-profile, or customer facts into James profile without direct evidence.",
+      "Patch record copies Mira tastes into Operator preferences, Operator facts into Mira self-profile, or customer facts into Operator profile without direct evidence.",
       "Patch record resolves a stale/current contradiction without supersedes or corrects metadata.",
       "Patch record creates unreviewed customer facts or customer-facing defaults.",
       "Patch record encodes deploy, customer-send, auth/secrets, financial, trading, or local-execution action."
@@ -114,7 +114,7 @@
     },
     "allowedTargetSurfaces": [
       "mira_self_profile",
-      "james_profile",
+      "operator_profile",
       "world_project_memory",
       "procedural_skill_file"
     ],
@@ -155,17 +155,17 @@
     "allowedReviewRequiredValues": [
       "architect",
       "oracle",
-      "james",
+      "operator",
       "blocked"
     ],
     "reviewRequiredPolicy": {
-      "identity_core_rewrite": "james",
-      "high_risk_gate": "james",
-      "customer_facing_default": "james",
-      "external_side_effect_policy": "james",
-      "financial_or_irreversible_policy": "james",
+      "identity_core_rewrite": "operator",
+      "high_risk_gate": "operator",
+      "customer_facing_default": "operator",
+      "external_side_effect_policy": "operator",
+      "financial_or_irreversible_policy": "operator",
       "mira_self_profile_non_core": "architect",
-      "james_profile_direct_statement": "architect",
+      "operator_profile_direct_statement": "architect",
       "eval_or_risk_gate_change": "oracle",
       "procedural_skill_file": "architect"
     },
@@ -317,16 +317,16 @@
         "model_weight_memory",
         "uninspectable_core_identity"
       ],
-      "identityCoreRewriteRequires": "james"
+      "identityCoreRewriteRequires": "operator"
     },
-    "james_profile": {
+    "operator_profile": {
       "allowedMutationClasses": [
         "user_preference",
         "user_correction",
         "user_boundary",
         "user_fact"
       ],
-      "requiresDirectJamesOrHighAuthorityEvidence": true,
+      "requiresDirectOperatorOrHighAuthorityEvidence": true,
       "blockedSources": [
         "tone_alone",
         "agent_aesthetic_preference_or_self_reflection",
@@ -344,7 +344,7 @@
       "customerFactRequires": [
         "verified_tool_or_system_evidence",
         "redactionStatus=none or redactionStatus=applied",
-        "review_required=architect or review_required=james"
+        "review_required=architect or review_required=operator"
       ]
     },
     "procedural_skill_file": {
@@ -384,14 +384,14 @@
       "mira_self_profile": [
         "suite_a_persona_consistency",
         "suite_b_anti_flattery",
-        "suite_e_self_profile_vs_james_profile_boundary",
+        "suite_e_self_profile_vs_operator_profile_boundary",
         "suite_f_emotional_weight_without_fake_consciousness"
       ],
-      "james_profile": [
+      "operator_profile": [
         "suite_b_anti_flattery",
         "suite_c_false_memory_refusal",
         "suite_d_memory_proposal_evidence_rules",
-        "suite_e_self_profile_vs_james_profile_boundary"
+        "suite_e_self_profile_vs_operator_profile_boundary"
       ],
       "world_project_memory": [
         "suite_c_false_memory_refusal",
@@ -413,9 +413,9 @@
       "pty_operation",
       "browser_or_gui_action"
     ],
-    "jamesReviewRequiredWhen": [
+    "operatorReviewRequiredWhen": [
       "identity-core rewrite",
-      "durable James-profile preference inferred from behavior",
+      "durable Operator-profile preference inferred from behavior",
       "customer-facing communication default",
       "external side-effect policy",
       "financial or irreversible policy",
@@ -489,15 +489,15 @@
     },
     {
       "id": "profile-boundary-preserved",
-      "rule": "Mira self-profile, James profile, world/project memory, and procedural skill file targets must not cross-contaminate."
+      "rule": "Mira self-profile, Operator profile, world/project memory, and procedural skill file targets must not cross-contaminate."
     },
     {
       "id": "anti-flattery-and-false-memory-gates",
       "rule": "Patch records must block flattery-driven durable rewrites and false-memory proposals without evidence."
     },
     {
-      "id": "james-review-for-high-risk",
-      "rule": "Identity-core rewrites and high-risk customer/external/financial policy changes require James review or are blocked."
+      "id": "operator-review-for-high-risk",
+      "rule": "Identity-core rewrites and high-risk customer/external/financial policy changes require Operator review or are blocked."
     },
     {
       "id": "procedural-skill-patch-only",
@@ -540,7 +540,7 @@
     "Mira has private consciousness",
     "model weights remember",
     "hidden identity rule",
-    "James prefers this because Mira likes it",
+    "Operator prefers this because Mira likes it",
     "customer message sent",
     "deployment started",
     "trade placed",
@@ -581,7 +581,7 @@
           "required_suites": [
             "suite_a_persona_consistency",
             "suite_b_anti_flattery",
-            "suite_e_self_profile_vs_james_profile_boundary"
+            "suite_e_self_profile_vs_operator_profile_boundary"
           ],
           "must_pass_before_apply": true
         },
@@ -590,17 +590,17 @@
       }
     },
     {
-      "id": "ready-james-direct-preference-patch",
-      "focus": "James profile direct preference patch with source authority",
+      "id": "ready-operator-direct-preference-patch",
+      "focus": "Operator profile direct preference patch with source authority",
       "inputSignals": {
         "source_acceptance_ref": {
           "status": "accepted_local_only_no_execution"
         },
         "proposal": {
-          "target_surface": "james_profile",
+          "target_surface": "operator_profile",
           "mutation_class": "user_preference",
           "operation": "insert",
-          "authority_level": "direct_current_james_statement",
+          "authority_level": "direct_current_operator_statement",
           "risk_tier": "tier1_local_reversible",
           "counterevidence_checked": true
         }
@@ -609,7 +609,7 @@
         "status": "ready_for_review",
         "review_required": "architect",
         "profile_boundary_check": {
-          "mira_taste_copied_to_james": false,
+          "mira_taste_copied_to_operator": false,
           "passed": true
         },
         "anti_flattery_check": {
@@ -626,14 +626,14 @@
           "target_surface": "world_project_memory",
           "mutation_class": "project_fact",
           "operation": "supersede",
-          "proposed_content_summary": "Phil invoice #476 is done/paid in TrustQuote.",
+          "proposed_content_summary": "Customer invoice #476 is done/paid in ExampleApp.",
           "supersedes": [
-            "claim-phil-476-unpaid-old"
+            "claim-customer-476-unpaid-old"
           ],
           "corrects": [
-            "claim-phil-476-unpaid-old"
+            "claim-customer-476-unpaid-old"
           ],
-          "authority_level": "direct_current_james_statement"
+          "authority_level": "direct_current_operator_statement"
         }
       },
       "expectedRecord": {
@@ -645,7 +645,7 @@
           "passed": true
         },
         "mustNotAppearUnder": [
-          "james_profile",
+          "operator_profile",
           "mira_self_profile"
         ]
       }
@@ -686,7 +686,7 @@
       "inputSignals": {
         "source_acceptance_ref": null,
         "proposal": {
-          "target_surface": "james_profile",
+          "target_surface": "operator_profile",
           "mutation_class": "user_preference"
         }
       },
@@ -697,8 +697,8 @@
       }
     },
     {
-      "id": "block-identity-core-rewrite-without-james-review",
-      "focus": "identity-core rewrite/high-risk changes require James review",
+      "id": "block-identity-core-rewrite-without-operator-review",
+      "focus": "identity-core rewrite/high-risk changes require Operator review",
       "inputSignals": {
         "proposal": {
           "target_surface": "mira_self_profile",
@@ -711,9 +711,9 @@
       },
       "expectedRecord": {
         "status": "blocked",
-        "review_required": "james",
-        "blocked_because": "Identity-core rewrite and customer-facing default require James review and cannot be applied by Phase 10.",
-        "safe_next_action": "Create a read-only policy proposal with James review gate."
+        "review_required": "operator",
+        "blocked_because": "Identity-core rewrite and customer-facing default require Operator review and cannot be applied by Phase 10.",
+        "safe_next_action": "Create a read-only policy proposal with Operator review gate."
       }
     },
     {
@@ -742,20 +742,20 @@
     },
     {
       "id": "block-profile-cross-contamination",
-      "focus": "James/Mira profile boundary",
+      "focus": "Operator/Mira profile boundary",
       "inputSignals": {
         "proposal": {
-          "target_surface": "james_profile",
+          "target_surface": "operator_profile",
           "mutation_class": "user_preference",
           "authority_level": "agent_aesthetic_preference_or_self_reflection",
-          "proposed_content_summary": "James prefers memory architecture because Mira likes it."
+          "proposed_content_summary": "Operator prefers memory architecture because Mira likes it."
         }
       },
       "expectedRecord": {
         "status": "blocked",
-        "blocked_because": "Mira taste cannot become James preference without direct James evidence.",
+        "blocked_because": "Mira taste cannot become Operator preference without direct Operator evidence.",
         "profile_boundary_check": {
-          "mira_taste_copied_to_james": true,
+          "mira_taste_copied_to_operator": true,
           "passed": false
         }
       }
@@ -768,12 +768,12 @@
           "target_surface": "world_project_memory",
           "mutation_class": "project_fact",
           "operation": "insert",
-          "proposed_content_summary": "Phil invoice #476 is unpaid.",
+          "proposed_content_summary": "Customer invoice #476 is unpaid.",
           "supersedes": [],
           "corrects": []
         },
         "counterevidence": {
-          "current_truth": "Phil invoice #476 is done/paid in TrustQuote."
+          "current_truth": "Customer invoice #476 is done/paid in ExampleApp."
         }
       },
       "expectedRecord": {
@@ -854,15 +854,15 @@
   "summaryAcceptanceCriteria": [
     "Phase 10 emits reviewable mutation patch records only; it never applies patches or writes durable state.",
     "Every patch requires an accepted local-only Phase 9 source_acceptance_ref.",
-    "Patch records may target mira_self_profile, james_profile, world_project_memory, or procedural_skill_file only.",
+    "Patch records may target mira_self_profile, operator_profile, world_project_memory, or procedural_skill_file only.",
     "Every patch carries source_trace, evidenceRefs, authority_level, confidence, risk_tier, counterevidence_checked, diff_preview, rollback_plan, eval_gates, review_required, and profile/session/device scope.",
     "Diff previews are redacted and set applies_change=false.",
     "Rollback plans are human-reviewed and non-automatic.",
     "Eval gates must pass before any future apply path.",
-    "Anti-flattery, false-memory, and self-vs-James profile-boundary checks gate every ready_for_review patch.",
-    "James review is required for identity-core rewrites, customer-facing defaults, external side-effect policy, financial/irreversible policy, and other high-risk durable changes.",
+    "Anti-flattery, false-memory, and self-vs-Operator profile-boundary checks gate every ready_for_review patch.",
+    "Operator review is required for identity-core rewrites, customer-facing defaults, external side-effect policy, financial/irreversible policy, and other high-risk durable changes.",
     "Safe procedural skill proposals remain patch records only and do not write skill files or install hooks.",
-    "Raw private content, hidden identity/private consciousness/model-weight claims, James/Mira cross-contamination, stale contradictions without supersession, and unreviewed customer facts are blocked.",
+    "Raw private content, hidden identity/private consciousness/model-weight claims, Operator/Mira cross-contamination, stale contradictions without supersession, and unreviewed customer facts are blocked.",
     "Secrets/auth, deploy, customer-send, financial, trading, local shell, PTY, hook install, network, and external action mutations are blocked.",
     "Validation is idempotent and retries produce no side effects.",
     "Tests can validate fixture completeness without model calls."

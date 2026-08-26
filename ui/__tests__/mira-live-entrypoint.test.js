@@ -22,7 +22,7 @@ describe('Mira live entrypoint', () => {
     })).toEqual({
       sessionId: 'app-session-369',
       prompt: 'what are we doing with Mira?',
-      speakerRole: 'james',
+      speakerRole: 'operator',
       requesterPane: null,
       source: 'telegram-mira-live',
     });
@@ -45,7 +45,7 @@ describe('Mira live entrypoint', () => {
     expect(invoke).toHaveBeenCalledWith(MIRA_LIVE_PROMPT_REPLY_CHANNEL, {
       sessionId: 'app-session-369',
       prompt: 'status',
-      speakerRole: 'james',
+      speakerRole: 'operator',
       requesterPane: null,
       source: 'main-command-bar-mira-live',
     });

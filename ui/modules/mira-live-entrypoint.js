@@ -2,7 +2,7 @@
 
 const MIRA_LIVE_PROMPT_REPLY_CHANNEL = 'mira:conversation-reply';
 const DEFAULT_MIRA_LIVE_SESSION_ID = 'app-session-mira-live';
-const USER_SPEAKER_ROLE = 'james';
+const USER_SPEAKER_ROLE = 'operator';
 
 function trimText(value) {
   return String(value === undefined || value === null ? '' : value).trim();

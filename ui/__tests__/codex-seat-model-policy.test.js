@@ -25,7 +25,7 @@ describe('MAIN Oracle Codex model policy', () => {
     })).toBeNull();
     expect(resolveMainOracleCodexPolicy({
       paneId: '3', role: 'Oracle', profile: 'main',
-      installRoot: 'D:\\SquidRun\\sideprofile', cwd: 'D:\\SquidRun\\sideprofile',
+      installRoot: 'D:\\SquidRun\\Client', cwd: 'D:\\SquidRun\\Client',
     })).toBeNull();
   });
 

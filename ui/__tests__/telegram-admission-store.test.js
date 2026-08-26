@@ -303,9 +303,9 @@ describe('immutable source row', () => {
     ['a changed canonical digest', { canonicalPayloadSha256: sha256('different') }],
     ['a changed media identity', { mediaIdentitySha256: sha256('other-photo') }],
     ['a changed chat', { chatId: 999 }],
-    ['a changed route', { routeKey: 'sideprofile' }],
-    ['a changed profile', { profile: 'sideprofile' }],
-    ['a changed window', { windowKey: 'sideprofile' }],
+    ['a changed route', { routeKey: 'client' }],
+    ['a changed profile', { profile: 'client' }],
+    ['a changed window', { windowKey: 'client' }],
     ['a changed update id', { updateId: 900000002 }],
     ['a changed cutover', { cutoverId: 'cutover-other' }],
   ])('SAME MESSAGE ID WITH %s is a HARD CONFLICT, never a merge', (_label, patch) => {
@@ -755,7 +755,7 @@ describe('admitted_owned promotion', () => {
   test('A CLAIM ON A DIFFERENT ROUTE THAN ITS SOURCE is refused', () => {
     const db = freshDb();
     const src = recordImmutableSource(db, sourceInput());
-    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId, { routeKey: 'sideprofile' }));
+    const claim = claimTransportAttempt(db, claimInput(src.sourceRowId, { routeKey: 'client' }));
     expect(claim.ok).toBe(false);
     expect(claim.reason).toBe('claim_source_correlation_mismatch');
   });
@@ -846,7 +846,7 @@ describe('the obligation id is the kernel\'s, with the fixed null lease', () => 
 
     expect(result.obligationId).toBe(buildObligationId({
       createdFromRowId: result.sourceRowId,
-      creditorAddress: 'james',
+      creditorAddress: 'operator',
       obligorAddress: 'architect',
       expectedClass: 'answer',
       stalenessClass: 'turn',
@@ -857,7 +857,7 @@ describe('the obligation id is the kernel\'s, with the fixed null lease', () => 
     const { buildObligationId } = require('../modules/main/obligation-kernel');
     const base = {
       createdFromRowId: 1,
-      creditorAddress: 'james',
+      creditorAddress: 'operator',
       obligorAddress: 'architect',
       expectedClass: 'answer',
       stalenessClass: 'turn',
@@ -921,7 +921,7 @@ describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
       .get(owned.obligationId);
     expect(obligation).toBeDefined();
     expect(obligation.created_from_row_id).toBe(src.sourceRowId);
-    expect(obligation.creditor_address).toBe('james');
+    expect(obligation.creditor_address).toBe('operator');
     expect(obligation.obligor_address).toBe('architect');
     expect(obligation.expected_class).toBe('answer');
     expect(obligation.staleness_class).toBe('turn');
@@ -953,7 +953,7 @@ describe('THE GENERAL KERNEL ACTUALLY HOLDS THE DEBT (blocker 1)', () => {
 
     expect(src.obligationId).toBe(buildObligationId({
       createdFromRowId: src.sourceRowId,
-      creditorAddress: 'james',
+      creditorAddress: 'operator',
       obligorAddress: 'architect',
       expectedClass: 'answer',
       stalenessClass: 'turn',

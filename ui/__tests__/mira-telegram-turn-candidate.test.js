@@ -11,14 +11,14 @@ const {
 } = require('../modules/mira-telegram-turn-candidate');
 const {
   buildMiraDirectChannelStatusAnswerV0,
-  countJamesActionLines,
+  countOperatorActionLines,
   isMiraDirectChannelStatusPrompt,
 } = require('../modules/mira-core/live-direct-channel-status-v0');
 
 function ownerRoute(overrides = {}) {
   return {
     ok: true,
-    chatId: 'REDACTED',
+    chatId: '7000000001',
     windowKey: 'main',
     profile: 'main',
     reason: 'owner_chat',
@@ -63,9 +63,9 @@ describe('New Mira Telegram turn candidate dry-run', () => {
   test('builds a deterministic non-model turn candidate for main owner text only', () => {
     const result = buildNewMiraTelegramTurnCandidate({
       body: 'what are we doing next?',
-      sender: 'james',
+      sender: 'operator',
       metadata: {
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         updateId: 150,
         messageId: 77,
       },
@@ -82,7 +82,7 @@ describe('New Mira Telegram turn candidate dry-run', () => {
     expect(result.route).toEqual(expect.objectContaining({
       currentOwner: 'squidrun-telegram-guard-stack',
       reason: 'owner_chat',
-      chatId: 'REDACTED',
+      chatId: '7000000001',
       windowKey: 'main',
       profile: 'main',
       routeOwnerChange: false,
@@ -129,7 +129,7 @@ describe('New Mira Telegram turn candidate dry-run', () => {
       promptText: 'status',
       metadata: {
         channel: 'telegram',
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         sessionId: 'app-session-382',
       },
       inboundRoute: ownerRoute(),
@@ -159,7 +159,7 @@ describe('New Mira Telegram turn candidate dry-run', () => {
         row({
           messageId: 'architect-161',
           brokeredAtMs: Date.parse('2026-05-27T09:10:00.000Z'),
-          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: move the Direct Channel Reachability category from UNKNOWN toward proven by making the current James-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker. No broad refactors.',
+          rawBody: '(ARCHITECT #161): New current-session task: Direct Channel Reachability checkpoint. Objective: move the Direct Channel Reachability category from UNKNOWN toward proven by making the current Operator-facing channel path evidence-bound and understandable. Return a small patch/proof packet or blocker. No broad refactors.',
         }),
       ],
     });
@@ -167,7 +167,7 @@ describe('New Mira Telegram turn candidate dry-run', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       decision: 'answered_direct_channel_status_from_live_evidence',
-      james_action_line_count: 1,
+      operator_action_line_count: 1,
     }));
     expect(result.route).toEqual(expect.objectContaining({
       currentOwner: 'squidrun-telegram-guard-stack',
@@ -191,9 +191,9 @@ describe('New Mira Telegram turn candidate dry-run', () => {
     expect(result.answer_text).toContain('official progress 73% BLOCKED at HEAD 84d70b21');
     expect(result.answer_text).toContain('Current lane: Direct Channel Reachability checkpoint');
     expect(result.answer_text).toContain('parked, prototype, archive');
-    expect(result.answer_text).toContain('JAMES ACTION: NONE');
+    expect(result.answer_text).toContain('OPERATOR ACTION: NONE');
     expect(result.answer_text).not.toMatch(/\[(?:AGENT MSG|CURRENT PROJECT)\]|\((?:ARCHITECT|BUILDER|ORACLE)\s+#\d+\):/);
-    expect(countJamesActionLines(result.answer_text)).toBe(1);
+    expect(countOperatorActionLines(result.answer_text)).toBe(1);
     expect(result.egress_integrity).toEqual(expect.objectContaining({
       telegram_chunk_count: 1,
       would_truncate_silently: false,
@@ -254,7 +254,7 @@ describe('New Mira Telegram turn candidate dry-run', () => {
   ])('preserves command and agent-op exclusions for %s', (body, reason) => {
     const result = buildNewMiraTelegramTurnCandidate({
       body,
-      metadata: { chatId: 'REDACTED', updateId: 151 },
+      metadata: { chatId: '7000000001', updateId: 151 },
       inboundRoute: ownerRoute(),
       inboundSessionScopeId: 'app-session-377:main',
     });
@@ -271,7 +271,7 @@ describe('New Mira Telegram turn candidate dry-run', () => {
     const result = buildNewMiraTelegramTurnCandidate({
       body: 'caption on this',
       metadata: {
-        chatId: 'REDACTED',
+        chatId: '7000000001',
         updateId: 152,
         media: { kind: 'photo' },
       },

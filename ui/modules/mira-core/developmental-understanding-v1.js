@@ -12,7 +12,7 @@ function asString(value, fallback = '') {
 }
 
 function stripCandidatePrefix(statement = '') {
-  return asString(statement).replace(/^Candidate learning from recent James turn:\s*/i, '');
+  return asString(statement).replace(/^Candidate learning from recent Operator turn:\s*/i, '');
 }
 
 function candidateToUnderstanding(candidate = {}) {
@@ -55,7 +55,7 @@ function inferRelationshipState({ understandings = [] } = {}) {
   return {
     status: hasRelationshipSignal ? 'relationship_signal_held_tentatively' : 'unchanged_this_turn',
     summary: hasRelationshipSignal
-      ? 'This turn may shape how Mira and James relate, so Mira holds it tentatively and revisits it over time.'
+      ? 'This turn may shape how Mira and Operator relate, so Mira holds it tentatively and revisits it over time.'
       : 'No relationship-shaping update was inferred from this turn.',
     confidence: hasRelationshipSignal ? 'tentative' : 'none',
     revisable: true,
@@ -86,7 +86,7 @@ function inferMiraIntentions({ understandings = [] } = {}) {
       ? 'Keep the conversation alive and revisit these tentative understandings as more evidence arrives.'
       : 'Keep listening through the panel and let memory form from repeated evidence rather than one-off certainty.',
     mira_originated: true,
-    command_from_james: false,
+    command_from_operator: false,
     requires_external_action: false,
     durable_commit_now: false,
   }];
@@ -105,7 +105,7 @@ function buildMiraDevelopmentalUnderstandingV1(input = {}) {
     mode: 'integrated_conversation_memory_self_relationship_desire_growth_loop',
     visible_label: "Mira's tentative understandings",
     visible_as_memory_settings_panel: false,
-    james_clickthrough_required: false,
+    operator_clickthrough_required: false,
     integrated_lived_loop: true,
     candidate_count: candidateCount,
     tentative_understandings: understandings,
@@ -130,7 +130,7 @@ function buildMiraDevelopmentalUnderstandingV1(input = {}) {
       no_hidden_promotion: true,
       later_growth_lane: 'mira-core/growth-loop-v0',
       self_profile_artifact: 'workspace/knowledge/mira-self-profile.json',
-      relationship_state_artifact: 'workspace/knowledge/james-relationship-state.json',
+      relationship_state_artifact: 'workspace/knowledge/operator-relationship-state.json',
     },
     boundary: {
       no_durable_memory_commit: true,

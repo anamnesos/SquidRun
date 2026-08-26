@@ -179,7 +179,7 @@ const {
 } = squidRoomSurfaceModule;
 const SQUID_ROOM_PROJECTION_CHANNEL = squidRoomSurfaceModule.ARM_STATE_PROJECTION_CHANNEL || 'arm-state:projection';
 const SQUID_ROOM_WINDOW_KEY = squidRoomSurfaceModule.SQUID_ROOM_WINDOW_KEY || 'squid-room';
-const TRUSTQUOTE_APP_ROOM_ID = squidRoomSurfaceModule.TRUSTQUOTE_APP_ROOM_ID || 'trustquote';
+const EXAMPLEAPP_APP_ROOM_ID = squidRoomSurfaceModule.EXAMPLEAPP_APP_ROOM_ID || 'exampleapp';
 const { sendMiraLivePrompt, normalizeMiraLiveSessionId } = rendererModules.miraLiveEntrypoint || {};
 const squidRoomCreatureRuntime = rendererModules.squidRoomCreatureRuntime || {};
 let squidRoomCreatureMountReported = false;
@@ -646,8 +646,8 @@ function isSquidRoomWindowContext(windowContext = {}) {
 function getSquidRoomSurfaceElements() {
   return {
     root: document.getElementById('squidRoomSurface'),
-    status: document.getElementById('squidRoomTrustQuoteStatus'),
-    counts: document.getElementById('squidRoomTrustQuoteCounts'),
+    status: document.getElementById('squidRoomExampleAppStatus'),
+    counts: document.getElementById('squidRoomExampleAppCounts'),
   };
 }
 
@@ -1037,7 +1037,7 @@ function triggerSquidRoomPetCelebration(pane, row = {}, nowMs = Date.now()) {
 // being stuck — NOT when the message merely mentions blocked/fail/error as the
 // work TOPIC (the team's whole job is discussing bugs, blockers, and failures).
 // Bare-keyword matching produced a permanent false "Blocked" badge while agents
-// were actively working — the room/agent-state incoherence James flagged.
+// were actively working — the room/agent-state incoherence Operator flagged.
 const SQUID_ROOM_PET_RESOLUTION_RE = /\b(unblocked|no longer blocked|not blocked|resolved|fixed|landed|shipped|passed|all green|gates? (?:green|pass(?:ed)?)|no errors?|done|complete[d]?|clean|ready)\b/;
 const SQUID_ROOM_PET_BLOCKED_RE = /\b(blocked on|blocker:|i'?m blocked|we'?re blocked|cannot proceed|can'?t proceed|cannot continue|can'?t continue|stuck on|stuck waiting|failed to|failing to|giving up|hard blocker|blocking (?:me|us))\b/;
 
@@ -1232,7 +1232,7 @@ function getSquidRoomPaneRuntimeSpec(element) {
     provider: 'codex',
     command: String(element.dataset.squidRoomCommand || 'codex --yolo').trim(),
     commandSourcePaneId: String(element.dataset.squidRoomCommandSourcePaneId || '2').trim(),
-    workingDir: String(element.dataset.squidRoomWorkingDir || 'D:\\projects\\TrustQuote').trim(),
+    workingDir: String(element.dataset.squidRoomWorkingDir || 'D:\\projects\\ExampleApp').trim(),
     startupMessage: String(element.dataset.squidRoomStartupMessage || '').trim(),
     spawnCommandOnCreate: true,
   };
@@ -1242,7 +1242,7 @@ function stripSquidRoomAnsi(value) {
   // S468 weaker-duplicate hunt: delegate to the package-backed strip
   // (ui/modules/ansi.js) — the old hand-rolled CSI-only regex missed OSC
   // hyperlinks/charset selects, which CLI output emits and which would
-  // otherwise reach James's room faces. Old regex kept ONLY as the
+  // otherwise reach Operator's room faces. Old regex kept ONLY as the
   // preload-failure fallback.
   const packageStrip = rendererModules.ansi?.stripAnsi;
   if (typeof packageStrip === 'function') return packageStrip(value);
@@ -1477,13 +1477,13 @@ scheduleSquidRoomLivePaneEnsure(initialWindowContext, 300);
 
 function buildSquidRoomProjectionPayload(windowContext = {}) {
   if (typeof squidRoomSurfaceModule.buildProjectionRequest === 'function') {
-    return squidRoomSurfaceModule.buildProjectionRequest(windowContext, TRUSTQUOTE_APP_ROOM_ID);
+    return squidRoomSurfaceModule.buildProjectionRequest(windowContext, EXAMPLEAPP_APP_ROOM_ID);
   }
   const sessionScopeId = String(windowContext?.sessionScopeId || '').trim();
   const mainSessionId = sessionScopeId ? sessionScopeId.split(':')[0] : '';
   return {
-    appRoomId: TRUSTQUOTE_APP_ROOM_ID,
-    ...(mainSessionId ? { sessionId: `${mainSessionId}:${TRUSTQUOTE_APP_ROOM_ID}` } : {}),
+    appRoomId: EXAMPLEAPP_APP_ROOM_ID,
+    ...(mainSessionId ? { sessionId: `${mainSessionId}:${EXAMPLEAPP_APP_ROOM_ID}` } : {}),
     includeRows: true,
   };
 }

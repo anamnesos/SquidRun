@@ -29,10 +29,10 @@ describe('scoped-context-firewall', () => {
 
   test('rejects stale side-profile context before pane routing', () => {
     const result = validateScopedContext({
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
       sessionId: '186',
-      projectPath: 'D:\\projects\\squidrun\\.squidrun\\profiles\\sideprofile\\workspace',
+      projectPath: 'D:\\projects\\squidrun\\.squidrun\\profiles\\client\\workspace',
       generatedAtMs: 1_000,
     }, {
       profileName: 'main',

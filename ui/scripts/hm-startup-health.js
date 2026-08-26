@@ -186,7 +186,7 @@ function runBidirectionalWakeWatchdogAutoStart(argv = []) {
 /**
  * TELEGRAM BACKLOG, read into the surface that actually reports health.
  *
- * THE GAP THIS CLOSES. On 2026-08-03 six of James's messages sat undelivered
+ * THE GAP THIS CLOSES. On 2026-08-03 six of Operator's messages sat undelivered
  * for up to 8.6 hours behind a wedged head while this script reported 100/100.
  * It was not wrong about what it measured — the poller genuinely was fresh, so
  * "are we still receiving" was answered correctly. Nothing asked "is anything

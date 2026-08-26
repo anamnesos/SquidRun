@@ -178,9 +178,9 @@ function titleRole(role) {
   return role === 'oracle' ? 'Oracle' : 'Builder';
 }
 
-function countJamesActionLines(text = '') {
+function countOperatorActionLines(text = '') {
   return String(text || '').split(/\r?\n/)
-    .filter((line) => /^\s*JAMES ACTION:/i.test(line))
+    .filter((line) => /^\s*OPERATOR ACTION:/i.test(line))
     .length;
 }
 
@@ -230,7 +230,7 @@ function buildProposedMessageBody({ targetAgent, activeLane }) {
   return [
     `(DRAFT TO ${target}) Review/continue from ${sourceRef}: ${objective}`,
     'Keep this as draft-only review work: no hm-send, runtime POST, external action, live route change, credential use, or dispatch.',
-    'Return proof that source evidence, target agent, proposed body, reason/trigger, blocked/parked exclusions, and one James-action line are present before any real send is considered.',
+    'Return proof that source evidence, target agent, proposed body, reason/trigger, blocked/parked exclusions, and one Operator-action line are present before any real send is considered.',
   ].join('\n');
 }
 
@@ -253,7 +253,7 @@ function buildAnswerText({
     'Proposed message body:',
     proposedMessageBody,
     `Blocked/parked exclusions: ${blockedExclusions.join('; ')}.`,
-    'JAMES ACTION: NONE',
+    'OPERATOR ACTION: NONE',
   ].join('\n');
 }
 
@@ -331,7 +331,7 @@ function buildMiraLiveInternalRequestDraftV0(input = {}, options = {}) {
     read_only: true,
     generated_at: new Date(nowMs).toISOString(),
     answer_text: answerText,
-    james_action_line_count: countJamesActionLines(answerText),
+    operator_action_line_count: countOperatorActionLines(answerText),
     source_evidence: sourceEvidence,
     target_agent: targetAgent,
     proposed_message_body: proposedMessageBody,
@@ -369,6 +369,6 @@ module.exports = {
   SCHEMA,
   VERSION,
   buildMiraLiveInternalRequestDraftV0,
-  countJamesActionLines,
+  countOperatorActionLines,
   isMiraLiveInternalRequestDraftPrompt,
 };

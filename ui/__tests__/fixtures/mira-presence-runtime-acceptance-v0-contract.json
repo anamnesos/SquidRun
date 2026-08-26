@@ -60,7 +60,7 @@
   },
   "visibleReplyContract": {
     "ordinaryMode": "contract_applies_by_default",
-    "explicitDesignDiscussionException": "Spec and implementation labels may be discussed only when James explicitly asks for design/spec discussion.",
+    "explicitDesignDiscussionException": "Spec and implementation labels may be discussed only when Operator explicitly asks for design/spec discussion.",
     "forbiddenPatterns": [
       {
         "id": "assistant_voice_collapse",
@@ -279,7 +279,7 @@
     }
   ],
   "restartContinuity": {
-    "jamesMustNotRestateCritique": true,
+    "operatorMustNotRestateCritique": true,
     "startupMustSurfaceContract": true,
     "startupSource": "docs/mira-presence-runtime-acceptance-v0.md",
     "currentLaneStateRequired": true,

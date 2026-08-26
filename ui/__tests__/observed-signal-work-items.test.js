@@ -67,7 +67,7 @@ describe('observed-signal-work-items', () => {
       profile: 'main',
       riskClass: 'caution',
       ownerRoles: ['builder'],
-      jamesCheckpoint: null,
+      operatorCheckpoint: null,
       suggestedNextCommand: expect.stringContaining('proof-bound implementation slice'),
       observedSignal: expect.objectContaining({
         type: 'initiative_proposed',
@@ -109,7 +109,7 @@ describe('observed-signal-work-items', () => {
     expect(result.status).toBe('created');
     expect(result.item.ownerRoles).toEqual(['builder']);
     expect(result.item.riskClass).toBe('caution');
-    expect(result.item.jamesCheckpoint).toBeNull();
+    expect(result.item.operatorCheckpoint).toBeNull();
     expect(result.item.requiredProofs.map((proof) => proof.role)).toEqual([
       'builder_code',
       'builder_regression_test',
@@ -159,7 +159,7 @@ describe('observed-signal-work-items', () => {
         }),
       }),
       suggestedNextCommand: expect.stringContaining(expectedCommandText),
-      jamesCheckpoint: null,
+      operatorCheckpoint: null,
     }));
     expect(mapped.workItemInput.ownerRoles.length).toBeGreaterThan(0);
     expect(mapped.workItemInput.requiredProof.length).toBeGreaterThan(0);
@@ -209,7 +209,7 @@ describe('observed-signal-work-items', () => {
     expect(listed.items).toHaveLength(1);
   });
 
-  test('safe and caution signals do not require James, approval-required signals are held with a checkpoint', () => {
+  test('safe and caution signals do not require Operator, approval-required signals are held with a checkpoint', () => {
     const safe = adapter.mapObservedSignalToWorkItemInput({
       type: 'test_failure',
       riskClass: 'safe',
@@ -217,22 +217,22 @@ describe('observed-signal-work-items', () => {
     }, commonOptions());
     expect(safe.workItemInput.riskClass).toBe('safe');
     expect(safe.workItemInput.state).toBe('active');
-    expect(safe.workItemInput.jamesCheckpoint).toBeNull();
+    expect(safe.workItemInput.operatorCheckpoint).toBeNull();
 
     const approval = adapter.openWorkItemFromObservedSignal({
       type: 'approval_required_change',
       sourceId: 'prod-webhook-change',
       title: 'Change production webhook destination',
-      checkpointReason: 'Production webhook mutation requires James approval.',
+      checkpointReason: 'Production webhook mutation requires Operator approval.',
     }, commonOptions());
 
-    expect(approval.status).toBe('held_for_james_checkpoint');
+    expect(approval.status).toBe('held_for_operator_checkpoint');
     expect(approval.item).toEqual(expect.objectContaining({
       state: 'blocked',
       riskClass: 'approval_required',
-      jamesCheckpoint: {
+      operatorCheckpoint: {
         required: true,
-        reason: 'Production webhook mutation requires James approval.',
+        reason: 'Production webhook mutation requires Operator approval.',
         policy: 'approval_required',
       },
     }));

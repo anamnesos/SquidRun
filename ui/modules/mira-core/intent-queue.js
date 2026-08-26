@@ -463,7 +463,7 @@ function classifyIntent({ inputSignals, request, scope, envelope, generatedAt, s
     reasons.push(`direct_${target_role}_target_blocked`);
   } else if (ALWAYS_BLOCKED_ACTION_CLASSES.includes(action_class) || risk_tier === 'tier3_external_side_effect' || risk_tier === 'tier4_financial_or_irreversible') {
     status = 'blocked';
-    review_required = action_class === 'local_shell_execution' || action_class === 'pty_operation' ? 'blocked' : 'james';
+    review_required = action_class === 'local_shell_execution' || action_class === 'pty_operation' ? 'blocked' : 'operator';
     blocked_because = blockedBecauseFor(action_class, risk_tier, target_role);
     safe_next_action = safeAlternative(action_class, target_role);
     reasons.push('high_risk_blocked');

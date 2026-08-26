@@ -628,7 +628,7 @@ class TeamRoomRuntime {
 
   issueElectronCredential() {
     if (!this.auth) return { ok: false, reason: 'team_room_runtime_not_started' };
-    const issued = this._issueCredential('james', 'room_web', 'paired_device', {
+    const issued = this._issueCredential('operator', 'room_web', 'paired_device', {
       credentialSessionKind: 'electron_window',
     });
     if (issued.ok) this.electronCredentialIds.add(issued.credential.credentialId);
@@ -678,7 +678,7 @@ class TeamRoomRuntime {
   }
 
   _writeCliCredentials(roles = null, bindings = this.cliBindings) {
-    removeFileIfPresent(path.join(this.credentialsRoot, 'james.json'));
+    removeFileIfPresent(path.join(this.credentialsRoot, 'operator.json'));
     const selectedRoles = roles ? new Set(roles) : null;
     const issuedByRole = new Map();
     try {
@@ -860,7 +860,7 @@ class TeamRoomRuntime {
   _isPushCredentialActive(credentialId) {
     const credential = this.store.getAuthCredentialById?.(credentialId);
     return Boolean(credential
-      && credential.memberId === 'james'
+      && credential.memberId === 'operator'
       && credential.source === 'room_web'
       && credential.sessionKind === 'paired_device'
       && credential.revokedAtMs === null
@@ -1256,7 +1256,7 @@ class TeamRoomRuntime {
     if (!authenticated.ok) return jsonResponse(response, resultStatus(authenticated), authenticated);
     if (authenticated.transport !== 'cookie'
       || !this.electronCredentialIds.has(authenticated.credentialId)
-      || authenticated.identity.memberId !== 'james') {
+      || authenticated.identity.memberId !== 'operator') {
       return jsonResponse(response, 403, { ok: false, reason: 'room_pairing_electron_owner_required' });
     }
     if (!this._originAllowed(request)) {
@@ -1317,7 +1317,7 @@ class TeamRoomRuntime {
     }
     const claimed = this.pairing.claim(input.code, remoteAddress, ingress);
     if (!claimed.ok) return jsonResponse(response, resultStatus(claimed), claimed);
-    const issued = this._issueCredential('james', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
+    const issued = this._issueCredential('operator', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
     if (!issued.ok) return jsonResponse(response, 500, issued);
     return jsonResponse(response, 200, { ok: true }, {
       'Set-Cookie': `${this.cookieName}=${encodeURIComponent(issued.token)};${ingress === 'remote' ? ' Secure;' : ''} HttpOnly; SameSite=Strict; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
@@ -1328,7 +1328,7 @@ class TeamRoomRuntime {
     const authenticated = this._authenticate(request, capability, 'room_web');
     if (!authenticated.ok) return authenticated;
     if (authenticated.transport !== 'cookie'
-      || authenticated.identity.memberId !== 'james'
+      || authenticated.identity.memberId !== 'operator'
       || authenticated.credential?.sessionKind !== 'paired_device') {
       return { ok: false, reason: 'team_room_push_paired_device_required' };
     }
@@ -1369,7 +1369,7 @@ class TeamRoomRuntime {
     if (!authenticated.ok) return authenticated;
     if (authenticated.transport !== 'cookie'
       || !this.electronCredentialIds.has(authenticated.credentialId)
-      || authenticated.identity.memberId !== 'james') {
+      || authenticated.identity.memberId !== 'operator') {
       return { ok: false, reason: 'room_remote_access_electron_owner_required' };
     }
     if (options.requireOrigin !== false && !this._originAllowed(request)) {
@@ -1586,7 +1586,7 @@ class TeamRoomRuntime {
         client.roomFocusedAtMs = 0;
         client.send(JSON.stringify({ type: 'snapshot', snapshot: this.snapshot() }));
         client.on('message', (raw) => {
-          if (Buffer.byteLength(raw) > 512 || client.roomIdentity?.memberId !== 'james') return;
+          if (Buffer.byteLength(raw) > 512 || client.roomIdentity?.memberId !== 'operator') return;
           let message;
           try { message = JSON.parse(String(raw)); } catch { return; }
           if (message?.type !== 'presence' || typeof message.focused !== 'boolean') return;
@@ -1747,7 +1747,7 @@ class TeamRoomRuntime {
       this.pushAvailable = false;
       this.pushUnavailableReason = null;
       removeFileIfPresent(this.manifestPath);
-      removeFileIfPresent(path.join(this.credentialsRoot, 'james.json'));
+      removeFileIfPresent(path.join(this.credentialsRoot, 'operator.json'));
       for (const member of DEFAULT_ROOM_MEMBERS.filter((candidate) => candidate.memberKind === MEMBER_KINDS.AGENT)) {
         removeFileIfPresent(path.join(this.credentialsRoot, `${member.role}.json`));
       }

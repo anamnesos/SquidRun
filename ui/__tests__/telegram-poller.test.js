@@ -411,7 +411,7 @@ describe('telegram-poller', () => {
         update_id: 10,
         message: {
           chat: { id: 123456 },
-          from: { username: 'james' },
+          from: { username: 'operator' },
           text: 'hello from telegram',
         },
       },
@@ -423,7 +423,7 @@ describe('telegram-poller', () => {
     expect(onMessage).toHaveBeenCalledTimes(1);
     expect(onMessage).toHaveBeenCalledWith(
       'hello from telegram',
-      '@james',
+      '@operator',
       expect.objectContaining({
         updateId: 10,
         messageId: null,
@@ -453,7 +453,7 @@ describe('telegram-poller', () => {
           message: {
             message_id: 5,
             chat: { id: 123456 },
-            from: { username: 'james' },
+            from: { username: 'operator' },
             text: 'first run',
           },
         },
@@ -487,7 +487,7 @@ describe('telegram-poller', () => {
                 message: {
                   message_id: 5,
                   chat: { id: 123456 },
-                  from: { username: 'james' },
+                  from: { username: 'operator' },
                   photo: [{ file_id: 'old-photo' }],
                 },
               },
@@ -496,7 +496,7 @@ describe('telegram-poller', () => {
                 message: {
                   message_id: 7,
                   chat: { id: 123456 },
-                  from: { username: 'james' },
+                  from: { username: 'operator' },
                   text: 'fresh after restart',
                 },
               },
@@ -510,7 +510,7 @@ describe('telegram-poller', () => {
       expect(secondOnMessage).toHaveBeenCalledTimes(1);
       expect(secondOnMessage).toHaveBeenCalledWith(
         'fresh after restart',
-        '@james',
+        '@operator',
         expect.objectContaining({
           updateId: 52,
           messageId: 7,
@@ -573,7 +573,7 @@ describe('telegram-poller', () => {
           message: {
             message_id: 77,
             chat: { id: 123456 },
-            from: { username: 'james' },
+            from: { username: 'operator' },
             text: 'must not replay',
           },
         },
@@ -656,7 +656,7 @@ describe('telegram-poller', () => {
               message: {
                 message_id: 77,
                 chat: { id: 123456 },
-                from: { username: 'james' },
+                from: { username: 'operator' },
                 text: 'must not replay after inverse handoff',
               },
             }],
@@ -724,7 +724,7 @@ describe('telegram-poller', () => {
               message: {
                 message_id: 88,
                 chat: { id: 123456 },
-                from: { username: 'james' },
+                from: { username: 'operator' },
                 text: 'single fenced dispatch',
               },
             }],
@@ -869,7 +869,7 @@ describe('telegram-poller', () => {
               message: {
                 message_id: 9,
                 chat: { id: 123456 },
-                from: { username: 'james' },
+                from: { username: 'operator' },
                 text: 'after timeout',
               },
             }],
@@ -894,7 +894,7 @@ describe('telegram-poller', () => {
       expect(requests).toHaveLength(2);
       expect(onMessage).toHaveBeenCalledWith(
         'after timeout',
-        '@james',
+        '@operator',
         expect.objectContaining({
           updateId: 77,
           messageId: 9,
@@ -939,7 +939,7 @@ describe('telegram-poller', () => {
           message_id: 8,
           date: Math.floor(Date.parse('2026-05-08T03:00:00.000Z') / 1000),
           chat: { id: 123456 },
-          from: { username: 'james' },
+          from: { username: 'operator' },
           photo: [{ file_id: 'stale-photo' }],
         },
       },
@@ -949,7 +949,7 @@ describe('telegram-poller', () => {
           message_id: 9,
           date: Math.floor(Date.parse('2026-05-08T04:00:05.000Z') / 1000),
           chat: { id: 123456 },
-          from: { username: 'james' },
+          from: { username: 'operator' },
           text: 'fresh after startup',
         },
       },
@@ -961,7 +961,7 @@ describe('telegram-poller', () => {
     expect(onMessage).toHaveBeenNthCalledWith(
       1,
       '[delayed: 60m old] [Photo received]',
-      '@james',
+      '@operator',
       expect.objectContaining({
         updateId: 60,
         messageId: 8,
@@ -970,7 +970,7 @@ describe('telegram-poller', () => {
     expect(onMessage).toHaveBeenNthCalledWith(
       2,
       'fresh after startup',
-      '@james',
+      '@operator',
       expect.objectContaining({
         updateId: 61,
         messageId: 9,
@@ -1005,7 +1005,7 @@ describe('telegram-poller', () => {
           message_id: 18,
           date: Math.floor(Date.parse('2026-05-08T02:00:00.000Z') / 1000),
           chat: { id: 123456 },
-          from: { username: 'james' },
+          from: { username: 'operator' },
           text: 'old enough for backstop',
         },
       },
@@ -1088,10 +1088,10 @@ describe('telegram-poller', () => {
   test('getTelegramConfig accepts TELEGRAM_CHAT_ALLOWLIST as an authorization alias', () => {
     expect(telegramPoller._internals.getTelegramConfig({
       TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-      TELEGRAM_CHAT_ID: 'REDACTED',
+      TELEGRAM_CHAT_ID: '7000000001',
       TELEGRAM_CHAT_ALLOWLIST: '2222222222',
     })).toEqual(expect.objectContaining({
-      chatId: REDACTED,
+      chatId: 7000000001,
       authorizedChatIds: [2222222222],
     }));
   });
@@ -1191,7 +1191,7 @@ describe('telegram-poller', () => {
     telegramPoller.start({
       env: {
         TELEGRAM_BOT_TOKEN: '123456789:fake_telegram_bot_token_do_not_use',
-        TELEGRAM_CHAT_ID: 'REDACTED',
+        TELEGRAM_CHAT_ID: '7000000001',
         TELEGRAM_CHAT_ALLOWLIST: '2222222222',
       },
       onMessage,
@@ -1362,15 +1362,15 @@ describe('telegram-poller', () => {
   });
 
   describe('profile-scoped chat routing', () => {
-    const JAMES_CHAT_ID = 111111111;
+    const OPERATOR_CHAT_ID = 111111111;
     const SCOPED_PROFILE_CHAT_ID = 2222222222;
     const STRAY_CHAT_ID = 222222222;
 
     function buildConfig(envOverrides) {
       return telegramPoller._internals.getTelegramConfig({
         TELEGRAM_BOT_TOKEN: 'test-token',
-        TELEGRAM_CHAT_ID: String(JAMES_CHAT_ID),
-        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${SCOPED_PROFILE_CHAT_ID}`,
+        TELEGRAM_CHAT_ID: String(OPERATOR_CHAT_ID),
+        TELEGRAM_AUTHORIZED_CHAT_IDS: `${OPERATOR_CHAT_ID},${SCOPED_PROFILE_CHAT_ID}`,
         TELEGRAM_SCOPED_CHAT_IDS: String(SCOPED_PROFILE_CHAT_ID),
         ...envOverrides,
       });
@@ -1395,7 +1395,7 @@ describe('telegram-poller', () => {
 
     test('main profile accepts owner chat', () => {
       const config = buildConfig({ SQUIDRUN_PROFILE: '' });
-      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(OPERATOR_CHAT_ID), config)).toBe(true);
     });
 
     test('scoped profile accepts Scoped chat', () => {
@@ -1405,7 +1405,7 @@ describe('telegram-poller', () => {
 
     test('scoped profile rejects owner chat so main-lane talk does not leak in', () => {
       const config = buildConfig({ SQUIDRUN_PROFILE: 'scoped' });
-      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(false);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(OPERATOR_CHAT_ID), config)).toBe(false);
     });
 
     test('scoped profile rejects any chat not in the scoped allowlist', () => {
@@ -1414,22 +1414,22 @@ describe('telegram-poller', () => {
     });
 
     test('named side profile accepts only scoped chat ids', () => {
-      const config = buildConfig({ SQUIDRUN_PROFILE: 'sideprofile' });
+      const config = buildConfig({ SQUIDRUN_PROFILE: 'client' });
       expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
-      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(false);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(OPERATOR_CHAT_ID), config)).toBe(false);
       expect(telegramPoller._internals.isAuthorizedChat(msg(STRAY_CHAT_ID), config)).toBe(false);
     });
 
     test('fail-safe: empty TELEGRAM_SCOPED_CHAT_IDS preserves legacy main-profile behavior', () => {
       const config = telegramPoller._internals.getTelegramConfig({
         TELEGRAM_BOT_TOKEN: 'test-token',
-        TELEGRAM_CHAT_ID: String(JAMES_CHAT_ID),
-        TELEGRAM_AUTHORIZED_CHAT_IDS: `${JAMES_CHAT_ID},${SCOPED_PROFILE_CHAT_ID}`,
+        TELEGRAM_CHAT_ID: String(OPERATOR_CHAT_ID),
+        TELEGRAM_AUTHORIZED_CHAT_IDS: `${OPERATOR_CHAT_ID},${SCOPED_PROFILE_CHAT_ID}`,
         // No TELEGRAM_SCOPED_CHAT_IDS set
         SQUIDRUN_PROFILE: '',
       });
       // Both IDs should be accepted when no scoped scope is declared — matches pre-patch behavior.
-      expect(telegramPoller._internals.isAuthorizedChat(msg(JAMES_CHAT_ID), config)).toBe(true);
+      expect(telegramPoller._internals.isAuthorizedChat(msg(OPERATOR_CHAT_ID), config)).toBe(true);
       expect(telegramPoller._internals.isAuthorizedChat(msg(SCOPED_PROFILE_CHAT_ID), config)).toBe(true);
     });
   });

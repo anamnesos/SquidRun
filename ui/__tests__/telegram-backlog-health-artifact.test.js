@@ -3,7 +3,7 @@
  *
  * The bar is not "the reader returns a good object" and not "buildHealthStatus
  * penalises". It is: the JSON that gets EMITTED and the Markdown that gets
- * WRITTEN both show a degraded score and name the backlog. James reads the
+ * WRITTEN both show a degraded score and name the backlog. Operator reads the
  * artifact. Every layer above it can be correct while the artifact stays green
  * — that is precisely the failure this whole lane exists to eliminate, and it
  * has already happened once inside this fix.
@@ -78,9 +78,9 @@ describe('the emitted and written artifact carries the backlog', () => {
       routes: {
         main: {
           pendingCount: 6,
-          oldestPendingUpdateId: 808499316,
+          oldestPendingUpdateId: 700100102,
           oldestPendingReceivedAtMs: NOW - Math.round(8.6 * 60 * 60 * 1000),
-          blockedUpdateId: 808499316,
+          blockedUpdateId: 700100102,
           blockedReason: 'unprovable_pane:runtime_never_produced_proof',
           proofUnattainable: true,
           attemptedCount: 1,
@@ -280,7 +280,7 @@ describe('the emitted and written artifact carries the backlog', () => {
 
   test.each([
     ['missing', null],
-    ['profile-mismatched', { profile: 'sideprofile' }],
+    ['profile-mismatched', { profile: 'client' }],
     ['invalid-time', { updatedAtMs: null }],
   ])('%s active cursor evidence cannot exempt a stale backlog', (_label, cursorOverride) => {
     const { createHealthSnapshot } = require('../scripts/hm-health-snapshot');

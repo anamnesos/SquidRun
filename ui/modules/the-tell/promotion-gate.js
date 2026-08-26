@@ -7,12 +7,12 @@
 // READ-ONLY: evaluates a ledger object, runs nothing, touches no bus/screen/restart.
 //
 // Promotes ONLY the oracle-backed classes (overdue, tasks-incomplete) — they're machine-verified against
-// TrustQuote's own functions, so the human is already out of their common case. The our-concept classes
+// ExampleApp's own functions, so the human is already out of their common case. The our-concept classes
 // (margin floor, collision) have NO app-truth oracle and require a separate, higher bar — never promoted here.
 
 const PROMOTION = Object.freeze({
   MIN_SHADOW_DAYS: 7,
-  ORACLE_BACKED_CLASSES: Object.freeze(['trustquote:invoice-aging', 'trustquote:job-tasks-incomplete']),
+  ORACLE_BACKED_CLASSES: Object.freeze(['exampleapp:invoice-aging', 'exampleapp:job-tasks-incomplete']),
   // a spoke row's review.verdict, set by Architect during shadow (Architect's exact 3 + pending):
   //   'useful'      = correct AND genuinely valuable  -> satisfies the >=1-useful bar
   //   'real_catch'  = correct but not notable          -> neutral (doesn't block, doesn't satisfy useful)

@@ -52,7 +52,7 @@ function triageForCandidateType(type = '') {
       risk_level: 'relationship_shaping',
       triage_status: 'held_tentatively',
       triage_action: 'hold_and_revisit',
-      escalation_policy: 'escalate_to_james_only_if_sensitive_ambiguous_contradictory_or_durable_relationship_shaping',
+      escalation_policy: 'escalate_to_operator_only_if_sensitive_ambiguous_contradictory_or_durable_relationship_shaping',
       auto_accept_allowed: false,
     };
   }
@@ -61,7 +61,7 @@ function triageForCandidateType(type = '') {
       risk_level: 'user_impacting',
       triage_status: 'held_tentatively',
       triage_action: 'hold_and_revisit',
-      escalation_policy: 'escalate_to_james_only_if_ambiguous_contradictory_or_user_impacting',
+      escalation_policy: 'escalate_to_operator_only_if_ambiguous_contradictory_or_user_impacting',
       auto_accept_allowed: false,
     };
   }
@@ -69,7 +69,7 @@ function triageForCandidateType(type = '') {
     risk_level: 'low_operational_context',
     triage_status: 'auto_staged_tentative',
     triage_action: 'auto_stage_under_tested_rules',
-    escalation_policy: 'no_james_escalation_unless_later_contradiction_or_user_impact',
+    escalation_policy: 'no_operator_escalation_unless_later_contradiction_or_user_impact',
     auto_accept_allowed: true,
   };
 }
@@ -83,7 +83,7 @@ function candidateFromUserTurn(turn, index) {
   const candidate = {
     candidate_id: `mira-memory-candidate:${stableHash({ text, index, type: match.type }).slice(0, 16)}`,
     type: match.type,
-    statement: `Candidate learning from recent James turn: ${text}`,
+    statement: `Candidate learning from recent Operator turn: ${text}`,
     source: 'recent_panel_thread_context',
     source_role: 'user',
     source_text: text,
@@ -94,7 +94,7 @@ function candidateFromUserTurn(turn, index) {
     promotion_status: 'tentative_not_committed',
     ...triage,
     humanlike_memory_mode: 'tentative_understanding_revisable_over_time',
-    james_clickthrough_required: false,
+    operator_clickthrough_required: false,
     review_owner: 'mira_memory_triage',
   };
   return candidate;
@@ -138,7 +138,7 @@ function buildMiraMemoryCandidateStagingV1(input = {}) {
       visible_label: "Mira's tentative understandings",
       requires_human_or_review_gate: false,
       triage_owner: 'Mira',
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       visible_as_memory_settings_panel: false,
       humanlike_memory_mode: 'tentative_understanding_revisable_over_time',
       integrated_lived_loop: true,

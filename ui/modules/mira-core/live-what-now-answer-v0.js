@@ -189,9 +189,9 @@ function chooseAuthority(materializedSnapshot = null, liveSnapshot = null) {
   };
 }
 
-function countJamesActionLines(text = '') {
+function countOperatorActionLines(text = '') {
   return String(text || '').split(/\r?\n/)
-    .filter((line) => /^\s*JAMES ACTION:/i.test(line))
+    .filter((line) => /^\s*OPERATOR ACTION:/i.test(line))
     .length;
 }
 
@@ -505,9 +505,9 @@ function validateLiveWhatNowAnswer(answer = {}, evidence = {}) {
     }
   }
 
-  const actionLines = countJamesActionLines(answer.answer_text || '');
+  const actionLines = countOperatorActionLines(answer.answer_text || '');
   if (actionLines !== 1) {
-    violations.push(`james_action_line_count:${actionLines}`);
+    violations.push(`operator_action_line_count:${actionLines}`);
   }
 
   const health = evidence.sources?.startup_health;
@@ -521,7 +521,7 @@ function validateLiveWhatNowAnswer(answer = {}, evidence = {}) {
   return { ok: violations.length === 0, violations };
 }
 
-function buildAnswerTextV2({ happening, next, staleMarkers, health, jamesActionLine }) {
+function buildAnswerTextV2({ happening, next, staleMarkers, health, operatorActionLine }) {
   // Inline [stale] on threshold-crossed lines so the reader never has to do
   // threshold math from the raw age (Oracle follow-up on cdc180ff).
   const lines = happening.map((line) => `${line.text} (${line.source_ref}, ${formatAge(line.age_ms)}${line.stale ? ' [stale]' : ''})`);
@@ -534,7 +534,7 @@ function buildAnswerTextV2({ happening, next, staleMarkers, health, jamesActionL
   }
   const whose = next.whose_move ? `${next.whose_move}: ` : '';
   lines.push(`Next: ${whose}${next.text}${next.source_ref ? ` (${next.source_ref})` : ''}`);
-  lines.push(jamesActionLine);
+  lines.push(operatorActionLine);
   return lines.join('\n');
 }
 
@@ -669,16 +669,16 @@ function buildMiraLiveWhatNowAnswerV0(input = {}, options = {}) {
   const evidenceStaleMarkers = collectEvidenceStaleMarkers(evidence.sources);
   const staleMarkers = [...evidenceStaleMarkers, ...laneStaleMarkers].slice(0, 6);
   const health = evidence.sources.startup_health;
-  const jamesActionLine = health?.present && health.overall === 'FAIL'
-    ? `JAMES ACTION: startup health is FAIL${(health.warnings || [])[0] ? ` - ${(health.warnings || [])[0]}` : ''}`
-    : 'JAMES ACTION: NONE';
+  const operatorActionLine = health?.present && health.overall === 'FAIL'
+    ? `OPERATOR ACTION: startup health is FAIL${(health.warnings || [])[0] ? ` - ${(health.warnings || [])[0]}` : ''}`
+    : 'OPERATOR ACTION: NONE';
 
   const answerText = buildAnswerTextV2({
     happening,
     next,
     staleMarkers,
     health,
-    jamesActionLine,
+    operatorActionLine,
   });
 
   const answer = {
@@ -689,7 +689,7 @@ function buildMiraLiveWhatNowAnswerV0(input = {}, options = {}) {
     read_only: true,
     generated_at: new Date(nowMs).toISOString(),
     answer_text: answerText,
-    james_action_line_count: countJamesActionLines(answerText),
+    operator_action_line_count: countOperatorActionLines(answerText),
     happening,
     next,
     stale_markers: staleMarkers,
@@ -750,7 +750,7 @@ module.exports = {
   VERSION,
   buildMiraLiveWhatNowAnswerV0,
   buildWhatNowEvidenceBundle,
-  countJamesActionLines,
+  countOperatorActionLines,
   isMiraLiveWhatNowPrompt,
   validateLiveWhatNowAnswer,
 };

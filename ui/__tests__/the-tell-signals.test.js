@@ -12,10 +12,10 @@ const run = (signals) => evaluate({ positions: [], signals, accountValue: 600, n
 // ---------- promise:collision (the sharp one) ----------
 describe('promise:collision — fires ONLY on real-hours impossibility', () => {
   const collide = (overrides = {}) => sig({
-    id: 'collide1', type: 'promise:collision', context: 'promise:collision:eunbyul-charles',
+    id: 'collide1', type: 'promise:collision', context: 'promise:collision:client-charles',
     facts: {
       commitments: [
-        { id: 'c1', who: 'sideprofile', relationshipWeight: 0.95, what: 'review the Hillstate filing', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:eunbyul' },
+        { id: 'c1', who: 'Client', relationshipWeight: 0.95, what: 'review the Hillstate filing', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:client' },
         { id: 'c2', who: 'Charles', relationshipWeight: 0.8, what: 'the Saturday rough-in', dueMs: hrs(4), durationMin: 180, hardness: 'hard', madeInContextRef: 'sms:charles' },
       ],
       availableWindows: [{ startMs: NOW, endMs: hrs(4) }], existingBusyMin: 0,
@@ -35,7 +35,7 @@ describe('promise:collision — fires ONLY on real-hours impossibility', () => {
     // push the second deadline out so 5h of work fits before both are due
     const out = run([collide({
       commitments: [
-        { id: 'c1', who: 'sideprofile', relationshipWeight: 0.95, what: 'review', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:eunbyul' },
+        { id: 'c1', who: 'Client', relationshipWeight: 0.95, what: 'review', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:client' },
         { id: 'c2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', dueMs: hrs(10), durationMin: 180, hardness: 'hard', madeInContextRef: 'sms:charles' },
       ],
       availableWindows: [{ startMs: NOW, endMs: hrs(12) }],
@@ -47,7 +47,7 @@ describe('promise:collision — fires ONLY on real-hours impossibility', () => {
   test('SILENT when any colliding duration is a guess (cannot assert impossibility on soft input)', () => {
     const out = run([collide({
       commitments: [
-        { id: 'c1', who: 'sideprofile', relationshipWeight: 0.95, what: 'review', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:eunbyul' },
+        { id: 'c1', who: 'Client', relationshipWeight: 0.95, what: 'review', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:client' },
         { id: 'c2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', dueMs: hrs(4), durationMin: undefined, hardness: 'hard', madeInContextRef: 'sms:charles' },
       ],
     })]);
@@ -58,8 +58,8 @@ describe('promise:collision — fires ONLY on real-hours impossibility', () => {
   test('SILENT when both were set in the SAME conversation (he is not blind to the clash)', () => {
     const out = run([collide({
       commitments: [
-        { id: 'c1', who: 'sideprofile', relationshipWeight: 0.95, what: 'review', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:eunbyul' },
-        { id: 'c2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', dueMs: hrs(4), durationMin: 180, hardness: 'hard', madeInContextRef: 'telegram:eunbyul' },
+        { id: 'c1', who: 'Client', relationshipWeight: 0.95, what: 'review', dueMs: hrs(3), durationMin: 120, hardness: 'hard', madeInContextRef: 'telegram:client' },
+        { id: 'c2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', dueMs: hrs(4), durationMin: 180, hardness: 'hard', madeInContextRef: 'telegram:client' },
       ],
     })]);
     expect(out.speak).toBe(false);
@@ -77,9 +77,9 @@ describe('promise:collision — fires ONLY on real-hours impossibility', () => {
   });
 });
 
-// ---------- trustquote:job-margin ----------
-describe('trustquote:job-margin — under his own floor, only with enough history', () => {
-  const bid = (facts) => sig({ id: 'bid1', type: 'trustquote:job-margin', context: 'trustquote:job-margin:455', facts });
+// ---------- exampleapp:job-margin ----------
+describe('exampleapp:job-margin — under his own floor, only with enough history', () => {
+  const bid = (facts) => sig({ id: 'bid1', type: 'exampleapp:job-margin', context: 'exampleapp:job-margin:455', facts });
 
   test('SPEAKS when a ready-to-send bid is materially under his proven floor', () => {
     const out = run([bid({ bidAmount: 95000, jobType: 'rough-in', bidMarginPct: 0.18, historicalMargin: { floorPct: 0.30, sampleCount: 5 }, bidStatus: 'ready-to-send' })]);
@@ -107,9 +107,9 @@ describe('trustquote:job-margin — under his own floor, only with enough histor
   });
 });
 
-// ---------- trustquote:invoice-aging ----------
-describe('trustquote:invoice-aging — genuinely overdue, not a data lag', () => {
-  const inv = (facts) => sig({ id: 'inv1', type: 'trustquote:invoice-aging', context: 'trustquote:invoice-aging:109', facts });
+// ---------- exampleapp:invoice-aging ----------
+describe('exampleapp:invoice-aging — genuinely overdue, not a data lag', () => {
+  const inv = (facts) => sig({ id: 'inv1', type: 'exampleapp:invoice-aging', context: 'exampleapp:invoice-aging:109', facts });
 
   test('SPEAKS on a real, collectable, unchased overdue invoice', () => {
     const out = run([inv({ invoiceAmount: 800, dueMs: daysAgo(20), status: 'unpaid', isPendingJob: true, documentType: 'job', customerReachable: true })]);
@@ -123,7 +123,7 @@ describe('trustquote:invoice-aging — genuinely overdue, not a data lag', () =>
     expect(out.swallowed[0].reason).toBe('proposal_not_receivable');
   });
 
-  test('SILENT when the feed cannot prove TrustQuote isPendingJob', () => {
+  test('SILENT when the feed cannot prove ExampleApp isPendingJob', () => {
     const out = run([inv({ invoiceAmount: 800, dueMs: daysAgo(20), status: 'unpaid', documentType: 'job', customerReachable: true })]);
     expect(out.speak).toBe(false);
     expect(out.swallowed[0].reason).toBe('not_pending_job');
@@ -145,13 +145,13 @@ describe('the spine spans domains — one interrupt across his whole world', () 
         { tMs: NOW - 1800000, px: 3010 }, { tMs: NOW - 600000, px: 3014 },
         { tMs: NOW - 120000, px: 3015 }, { tMs: NOW - 60000, px: 3016 }, { tMs: NOW, px: 3018 },
       ] },
-      signals: [sig({ id: 'bid1', type: 'trustquote:job-margin', context: 'trustquote:job-margin:455',
+      signals: [sig({ id: 'bid1', type: 'exampleapp:job-margin', context: 'exampleapp:job-margin:455',
         facts: { bidAmount: 95000, jobType: 'rough-in', bidMarginPct: 0.18, historicalMargin: { floorPct: 0.30, sampleCount: 5 }, bidStatus: 'ready-to-send' } })],
       accountValue: 600, nowMs: NOW, glanceAtMs: NOW - 20 * 60000, state: {}, source: 'live',
     });
     expect(out.speak).toBe(true);
     // the job-margin signal (regret ~1.0) outranks the trading cliff (~0.85)
-    expect(out.context).toBe('trustquote:job-margin:455');
+    expect(out.context).toBe('exampleapp:job-margin:455');
     const swallowedEth = out.swallowed.find((s) => s.coin === 'ETH');
     expect(swallowedEth.reason).toBe('lower_regret_than_bid1');
   });
@@ -169,7 +169,7 @@ describe('promise:collision — confirmed scheduled bookings that overlap', () =
     id: 'sched1', type: 'promise:collision', context: 'promise:collision:schedule',
     facts: {
       commitments: [
-        { id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'water heater install', startMs: hrs(1), durationMin: 120, confirmed: true, customerId: 'cust-A', madeInContextRef: 'job:455' },
+        { id: 'b1', who: 'Customer A', relationshipWeight: 0.7, what: 'water heater install', startMs: hrs(1), durationMin: 120, confirmed: true, customerId: 'cust-A', madeInContextRef: 'job:455' },
         { id: 'b2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', startMs: hrs(2), durationMin: 120, confirmed: true, customerId: 'cust-B', madeInContextRef: 'job:456' },
       ],
       ...overrides,
@@ -187,7 +187,7 @@ describe('promise:collision — confirmed scheduled bookings that overlap', () =
   test('SILENT when one of the bookings is only tentative (no tentative holds)', () => {
     const out = run([book({
       commitments: [
-        { id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 120, confirmed: true, madeInContextRef: 'job:455' },
+        { id: 'b1', who: 'Customer A', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 120, confirmed: true, madeInContextRef: 'job:455' },
         { id: 'b2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', startMs: hrs(2), durationMin: 120, confirmed: false, madeInContextRef: 'job:456' },
       ],
     })]);
@@ -198,7 +198,7 @@ describe('promise:collision — confirmed scheduled bookings that overlap', () =
   test('SILENT when two confirmed bookings do NOT overlap', () => {
     const out = run([book({
       commitments: [
-        { id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 60, confirmed: true, madeInContextRef: 'job:455' },
+        { id: 'b1', who: 'Customer A', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 60, confirmed: true, madeInContextRef: 'job:455' },
         { id: 'b2', who: 'Charles', relationshipWeight: 0.8, what: 'rough-in', startMs: hrs(3), durationMin: 60, confirmed: true, madeInContextRef: 'job:456' },
       ],
     })]);
@@ -208,7 +208,7 @@ describe('promise:collision — confirmed scheduled bookings that overlap', () =
 
   test('SILENT with only a single confirmed booking', () => {
     const out = run([book({
-      commitments: [{ id: 'b1', who: 'Deepika', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 120, confirmed: true, madeInContextRef: 'job:455' }],
+      commitments: [{ id: 'b1', who: 'Customer A', relationshipWeight: 0.7, what: 'install', startMs: hrs(1), durationMin: 120, confirmed: true, madeInContextRef: 'job:455' }],
     })]);
     expect(out.speak).toBe(false);
     expect(out.swallowed[0].reason).toBe('no_two_confirmed_bookings');
@@ -217,7 +217,7 @@ describe('promise:collision — confirmed scheduled bookings that overlap', () =
 
 describe('defense-in-depth — a deleted tombstone is never a live signal', () => {
   test('SILENT on an isDeleted doc even if it would otherwise speak', () => {
-    const out = run([sig({ id: 'del1', type: 'trustquote:job-margin', context: 'trustquote:job-margin:dead',
+    const out = run([sig({ id: 'del1', type: 'exampleapp:job-margin', context: 'exampleapp:job-margin:dead',
       facts: { isDeleted: true, bidAmount: 95000, jobType: 'rough-in', bidMarginPct: 0.18, historicalMargin: { floorPct: 0.30, sampleCount: 5 }, bidStatus: 'ready-to-send' } })]);
     expect(out.speak).toBe(false);
     expect(out.swallowed[0].reason).toBe('deleted_tombstone');

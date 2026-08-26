@@ -14,14 +14,14 @@ const RECALL_END = '[/SQUIDRUN MEMORY RECALL]';
 const MEMORY_RECALL_MIN_MESSAGE_LENGTH = 24;
 const MEMORY_RECALL_WORK_REFERENCE_PATTERN = new RegExp(
   [
-    // trading vocabulary + common tickers James references
+    // trading vocabulary + common tickers Operator references
     'trade|trading|position|order|stop|pnl|wallet|funding|hyperliquid|alpaca',
     'btc|eth|sol|doge|hype|coin|price|long|short|market|chart',
     // build / runtime / ops vocabulary
     'squidrun|squid ?room|pane|arm|restart|commit|deploy|build|fix|bug|test|daemon',
     'memory|recall|status|update|progress|task|spec|gate|review',
     // products / cases / people
-    'trustquote|plumbhalo|telegram|invoice|case|eunbyul|sideprofile|sideprofile|hillstate|qeline',
+    'exampleapp|plumbhalo|telegram|invoice|case|client|client|Client|hillstate|qeline',
     // temporal / referential phrasing that points back at prior work
     'earlier|before|yesterday|last (session|time|night|week)|previous|remember|recall',
     "what about|where (are|is|did|were)|did you|how('?s| is| are) (the|it|things)|the one",
@@ -51,8 +51,8 @@ const PROFILE_SCOPE_KEYS = Object.freeze([
   'sourceProfile',
   'source_profile',
 ]);
-const sideprofile_NAME_PATTERN = /\b(sideprofile|eunbyul)\b|sideprofile/i;
-const sideprofile_CASE_SCOPE_PATTERN = /\b(korean fraud|korean case|daegu|customs case|26-05-00420|profile:sideprofile|window:sideprofile|runtime-sideprofile|context-snapshots-sideprofile|app-status-sideprofile|settings-sideprofile)\b/i;
+const CLIENT_NAME_PATTERN = /\b(client|client)\b|Client/i;
+const CLIENT_CASE_SCOPE_PATTERN = /\b(korean fraud|korean case|daegu|customs case|26-05-00420|profile:client|window:client|runtime-client|context-snapshots-client|app-status-client|settings-client)\b/i;
 const CASE_SCOPE_PATTERN = /\b(casework|case work|case-note|case note|case_evidence|case evidence)\b/i;
 
 function asObject(value) {
@@ -172,11 +172,11 @@ function classifyRecallItemScope(item = {}) {
     JSON.stringify(metadata),
   ].filter(Boolean).join(' ');
 
-  if (sideprofile_CASE_SCOPE_PATTERN.test(scopeText) || (sideprofile_NAME_PATTERN.test(scopeText) && CASE_SCOPE_PATTERN.test(scopeText))) {
+  if (CLIENT_CASE_SCOPE_PATTERN.test(scopeText) || (CLIENT_NAME_PATTERN.test(scopeText) && CASE_SCOPE_PATTERN.test(scopeText))) {
     return {
       scoped: true,
-      profile: 'sideprofile',
-      reason: 'sideprofile_case_scope',
+      profile: 'client',
+      reason: 'client_case_scope',
     };
   }
   if (CASE_SCOPE_PATTERN.test(scopeText)) {
@@ -493,7 +493,7 @@ function createMemoryBroker(options = {}) {
 // Archival session summaries ("Session 412 Summary — Total messages: 45 —
 // Participants: ...") are rollup metadata, not memory. Their sheer token
 // breadth makes them dominate coverage scoring, so they surfaced on nearly
-// every inbound message as multi-KB noise stapled to James's one-line
+// every inbound message as multi-KB noise stapled to Operator's one-line
 // Telegram texts. They are never a useful recall answer; drop the class.
 function isArchivalSessionSummaryItem(item = {}) {
   const title = String(item.title || '');

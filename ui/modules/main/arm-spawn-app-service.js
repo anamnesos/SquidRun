@@ -4,14 +4,14 @@ const log = require('../logger');
 const { WORKSPACE_PATH, getProjectRoot } = require('../../config');
 const { getActiveProfileName } = require('../../profile');
 const { SQUID_ROOM_TEAM_PANE_IDS } = require('../workspace-pane-shell');
-const { getTrustQuoteArmPaneIds } = require('../trustquote-arm-specs');
+const { getExampleAppArmPaneIds } = require('../exampleapp-arm-specs');
 const { toNonEmptyString } = require('./squidrun-root-paths');
 const { rollbackSpawn, spawnArmWithAtomicSession } = require('./arm-spawn-transaction');
 const { probeArmLiveness } = require('./arm-liveness-probe');
 const { recordArmSpawnLifecycle } = require('./arm-spawn-journal');
 
 const SQUID_ROOM_ARM_PANE_ID_SET = new Set(
-  getTrustQuoteArmPaneIds().map((paneId) => String(paneId)),
+  getExampleAppArmPaneIds().map((paneId) => String(paneId)),
 );
 const SQUID_ROOM_TEAM_PANE_ID_SET = new Set(
   (SQUID_ROOM_TEAM_PANE_IDS || []).map((paneId) => String(paneId)),

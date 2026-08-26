@@ -69,7 +69,7 @@ function usage() {
     ok: true,
     schema: ARM_STATE_PROJECTION_SCHEMA,
     usage: [
-      'node ui/scripts/hm-arm-state.js status --app-room trustquote --session app-session-406:trustquote --json',
+      'node ui/scripts/hm-arm-state.js status --app-room exampleapp --session app-session-406:exampleapp --json',
       'node ui/scripts/hm-arm-state.js status --registry-id <id> [--db <path>] [--allow-create] [--no-rows]',
     ],
     readOnly: true,
@@ -114,7 +114,7 @@ function printText(result) {
   console.log(`Desired/ready/missing: ${registry.desiredCount}/${registry.readyCount}/${registry.missingCount}`);
   console.log(`Watchdogs: open=${watchdogs.open || 0} overdue=${watchdogs.overdue || 0} escalated=${watchdogs.escalated || 0}`);
   console.log(`Apply queue: total=${queue.total || 0} pendingApproval=${queue.pendingApproval || 0} executable=${queue.executable || 0}`);
-  console.log('Read-only projection: no dispatch, no watchdog advance, no TrustQuote room behavior change.');
+  console.log('Read-only projection: no dispatch, no watchdog advance, no ExampleApp room behavior change.');
 }
 
 function main(argv = process.argv.slice(2)) {

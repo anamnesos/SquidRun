@@ -9,7 +9,7 @@
  * is correct to hold it forever, and correct to refuse to send it again. Only a
  * human who can point at the answer can break that tie.
  *
- * Update 808499316 is exactly this: answered as Telegram 22314 / ledger 78453.
+ * Update 700100102 is exactly this: answered as Telegram 22314 / ledger 78453.
  * Re-delivering it would duplicate real business work in front of a customer.
  *
  * WHAT IT WILL NOT DO, BY CONSTRUCTION:
@@ -25,8 +25,8 @@
  *
  * DRY RUN IS THE DEFAULT. Nothing is written without --apply.
  *
- *   node ui/scripts/hm-telegram-recover-inbound.js --dir <spool-dir> --update-id 808499316
- *   node ui/scripts/hm-telegram-recover-inbound.js --dir <spool-dir> --update-id 808499316 \
+ *   node ui/scripts/hm-telegram-recover-inbound.js --dir <spool-dir> --update-id 700100102
+ *   node ui/scripts/hm-telegram-recover-inbound.js --dir <spool-dir> --update-id 700100102 \
  *        --evidence "answered as Telegram 22314 / ledger 78453" --apply
  */
 const fs = require('node:fs');

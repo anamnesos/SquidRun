@@ -2379,7 +2379,7 @@ function planGuardedOrphanDeletes(options = {}) {
               nodeId: node.nodeId,
               contentHash: node.contentHash,
               blockers,
-              purgeRecommendation: target.reason || 'Adjudicated as superseded or relocated; recommend purge after Architect/James approval.',
+              purgeRecommendation: target.reason || 'Adjudicated as superseded or relocated; recommend purge after Architect/Operator approval.',
               relationalProfile: summarizeRelationalProfile(relationalProfile),
             }
           ));

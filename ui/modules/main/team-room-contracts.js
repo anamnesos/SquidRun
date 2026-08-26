@@ -12,7 +12,7 @@ const MAX_ATTACHMENTS_PER_MESSAGE = 12;
 const MAX_CONSECUTIVE_AGENT_POSTS = 6;
 const SAME_ROOT_COVERAGE_WINDOW_MS = 45_000;
 const TEAM_ROOM_PROMPT_INSTRUCTION = 'reply via hm-room or stay silent.';
-const TEAM_ROOM_NOTIFICATION_INSTRUCTION = 'Only when James must be buzzed, add --notify: question requires --reason real_question; needs_james or failure requires --reason new_evidence_or_action or material_dissent_or_correction. Ordinary replies omit --notify.';
+const TEAM_ROOM_NOTIFICATION_INSTRUCTION = 'Only when Operator must be buzzed, add --notify: question requires --reason real_question; needs_operator or failure requires --reason new_evidence_or_action or material_dissent_or_correction. Ordinary replies omit --notify.';
 
 const MEMBER_KINDS = Object.freeze({
   HUMAN: 'human',
@@ -30,7 +30,7 @@ const PARTICIPATION_REASONS = Object.freeze({
 const PARTICIPATION_REASON_SET = new Set(Object.values(PARTICIPATION_REASONS));
 const NOTIFICATION_CLASSES = Object.freeze({
   FAILURE: 'failure',
-  NEEDS_JAMES: 'needs_james',
+  NEEDS_OPERATOR: 'needs_operator',
   QUESTION: 'question',
 });
 const NOTIFICATION_CLASS_SET = new Set(Object.values(NOTIFICATION_CLASSES));
@@ -62,7 +62,7 @@ const SUBSTANCE_STOP_WORDS = new Set([
   'are', 'as', 'at', 'be', 'been', 'being', 'but', 'by', 'can', 'could', 'damn', 'did',
   'do', 'does', 'doing', 'evidence', 'for', 'from', 'fuck', 'fucking', 'ha', 'had', 'has',
   'have', 'having', 'he', 'hell', 'her', 'here', 'hers', 'him', 'his', 'how', 'i', 'if',
-  'im', 'in', 'into', 'is', 'it', 'its', 'james', 'just', 'me', 'mine', 'my', 'new',
+  'im', 'in', 'into', 'is', 'it', 'its', 'operator', 'just', 'me', 'mine', 'my', 'new',
   'next', 'no', 'not', 'now', 'of', 'officially', 'oh', 'on', 'one', 'or', 'our', 'ours',
   'perfect', 'post', 'really', 'result', 'she', 'so', 'some', 'that', 'thats', 'the',
   'their', 'theirs', 'them', 'then', 'there', 'these', 'they', 'thing', 'this', 'those',
@@ -121,10 +121,10 @@ const SUBSTANCE_ALIASES = Object.freeze({
 const ROOM_MEMBER_MENTION_ALIASES = Object.freeze({
   architect: Object.freeze(['architect', 'mira']),
   builder: Object.freeze(['builder', 'rook']),
-  james: Object.freeze(['james']),
+  operator: Object.freeze(['operator']),
   oracle: Object.freeze(['oracle', 'vera']),
 });
-const DIRECT_ROOM_MENTION_PATTERN = /(^|[^\p{L}\p{N}_])@(?:architect|builder|james|mira|oracle|rook|vera)\b/iu;
+const DIRECT_ROOM_MENTION_PATTERN = /(^|[^\p{L}\p{N}_])@(?:architect|builder|operator|mira|oracle|rook|vera)\b/iu;
 
 const EXPLICIT_ROOM_SOURCES = new Set([
   'room_cli',
@@ -154,13 +154,13 @@ const DANGEROUS_METADATA_KEYS = new Set(['__proto__', 'constructor', 'prototype'
 
 const DEFAULT_ROOM_MEMBERS = Object.freeze([
   Object.freeze({
-    memberId: 'james',
+    memberId: 'operator',
     roomId: DEFAULT_ROOM_ID,
     profileName: DEFAULT_PROFILE_NAME,
-    displayName: 'James',
+    displayName: 'You',
     memberKind: MEMBER_KINDS.HUMAN,
-    role: 'james',
-    avatarKey: 'james',
+    role: 'operator',
+    avatarKey: 'operator',
     active: true,
   }),
   Object.freeze({
@@ -233,7 +233,7 @@ function isRoomNotificationClassAllowed(notificationClass, participationReason) 
   if (notificationClass === NOTIFICATION_CLASSES.QUESTION) {
     return participationReason === PARTICIPATION_REASONS.REAL_QUESTION;
   }
-  if ([NOTIFICATION_CLASSES.NEEDS_JAMES, NOTIFICATION_CLASSES.FAILURE].includes(notificationClass)) {
+  if ([NOTIFICATION_CLASSES.NEEDS_OPERATOR, NOTIFICATION_CLASSES.FAILURE].includes(notificationClass)) {
     return [
       PARTICIPATION_REASONS.NEW_EVIDENCE_OR_ACTION,
       PARTICIPATION_REASONS.MATERIAL_DISSENT_OR_CORRECTION,
@@ -243,7 +243,7 @@ function isRoomNotificationClassAllowed(notificationClass, participationReason) 
 }
 
 /**
- * Origin-independent notification policy for James's room client.
+ * Origin-independent notification policy for Operator's room client.
  *
  * This deliberately fails quiet: only a trusted agent message carrying both
  * an attention-worthy participation reason and an explicit compatible

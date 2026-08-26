@@ -22,10 +22,10 @@ function tempProject() {
     }, null, 2),
   );
   fs.writeFileSync(
-    path.join(projectRoot, 'workspace', 'knowledge', 'james-relationship-state.json'),
+    path.join(projectRoot, 'workspace', 'knowledge', 'operator-relationship-state.json'),
     JSON.stringify({
-      user_name: 'James',
-      what_mira_knows_about_james: 'James wants choice, curiosity, tension, and point of view.',
+      user_name: 'Operator',
+      what_mira_knows_about_operator: 'Operator wants choice, curiosity, tension, and point of view.',
     }, null, 2),
   );
   fs.writeFileSync(

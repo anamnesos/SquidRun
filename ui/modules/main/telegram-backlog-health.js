@@ -1,14 +1,14 @@
 /**
  * TELEGRAM BACKLOG HEALTH — the check that would have caught S491 in minutes.
  *
- * On 2026-08-03 James said "telegram not working". Six of his messages had been
+ * On 2026-08-03 Operator said "telegram not working". Six of his messages had been
  * sitting in the durable queue for up to 8.6 hours, including live plumbing job
  * instructions, behind one head-of-line record that could never be proven.
  * Throughout, startup health scored 100/100.
  *
  * It was not lying. It was answering a different question. Poller freshness
  * asks "are we still RECEIVING", and the poller was genuinely fine — it kept
- * accepting James's messages and writing them durably to disk. Nothing anywhere
+ * accepting Operator's messages and writing them durably to disk. Nothing anywhere
  * asked "is anything being DELIVERED". A channel can be perfectly fresh and
  * perfectly mute at the same time, and that combination is precisely the outage
  * shape, not an edge case around it.

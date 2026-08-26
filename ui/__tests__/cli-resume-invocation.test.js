@@ -280,7 +280,7 @@ describe('cli-resume-invocation', () => {
   describe('claude session store path encoding', () => {
     test('encodes drive-colon and separators to dashes (D:\\projects\\squidrun -> D--projects-squidrun)', () => {
       expect(encodeClaudeProjectDir('D:\\projects\\squidrun')).toBe('D--projects-squidrun');
-      expect(encodeClaudeProjectDir('D:/projects/TrustQuote')).toBe('D--projects-TrustQuote');
+      expect(encodeClaudeProjectDir('D:/projects/ExampleApp')).toBe('D--projects-ExampleApp');
     });
 
     test('store path ends at <encodedCwd>/<sessionId>.jsonl', () => {

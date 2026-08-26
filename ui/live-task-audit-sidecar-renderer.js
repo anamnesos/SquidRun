@@ -64,11 +64,11 @@
   let refreshTimer = null;
   let lastSnapshotOk = false;
   let currentSnapshot = null;
-  const SECTION_ORDER = ['Mira', 'TrustQuote', 'PC Hardware', 'SquidRun', 'Other'];
+  const SECTION_ORDER = ['Mira', 'ExampleApp', 'PC Hardware', 'SquidRun', 'Other'];
   const STATUS_LABELS = {
     active: 'Active',
-    ask_james: 'Ask James',
-    ask_james_protected: 'Protected - ask James',
+    ask_operator: 'Ask operator',
+    ask_operator_protected: 'Protected - ask operator',
     ask_verify: 'Needs verification',
     blocked: 'Blocked',
     canceled: 'Canceled',
@@ -106,8 +106,8 @@
     builder: 'Builder',
     codex: 'Codex',
     oracle: 'Oracle',
-    trustquote_builder: 'TrustQuote Builder',
-    trustquote_oracle: 'TrustQuote Oracle',
+    exampleapp_builder: 'ExampleApp Builder',
+    exampleapp_oracle: 'ExampleApp Oracle',
     unassigned: 'Unassigned',
   };
 
@@ -275,7 +275,7 @@
     const source = `${item.sourceRef || ''} ${item.source?.label || ''} ${item.source?.kind || ''}`.toLowerCase();
     const title = String(item.title || '').toLowerCase();
     const haystack = `${projectName} ${profile} ${source} ${title} ${item.kind || ''}`.toLowerCase();
-    if (haystack.includes('trustquote')) return 'TrustQuote';
+    if (haystack.includes('exampleapp')) return 'ExampleApp';
     if (/\bmira\b|presence|north-star|voice/.test(haystack)) return 'Mira';
     if (/squidrun|task-audit|codex|memory|evidence|mission|restart|hm-send|telegram|supervisor|scheduler|bridge|gemini|firmware|localmodel|future-items/.test(haystack)) return 'SquidRun';
     return 'Other';

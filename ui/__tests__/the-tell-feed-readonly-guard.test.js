@@ -1,9 +1,9 @@
 'use strict';
 
 // READ-ONLY GUARD (audit finding #4, code-side defense-in-depth).
-// The TrustQuote->Tell path reads his LIVE customer Firestore with a FULL admin (read+write) credential.
+// The ExampleApp->Tell path reads his LIVE customer Firestore with a FULL admin (read+write) credential.
 // Today the feed only reads (.collection/.where/.get). A scoped read-only service account is the real fix,
-// but that's a Firebase IAM console op for James. Until then, this guard FAILS the build the moment any
+// but that's a Firebase IAM console op for Operator. Until then, this guard FAILS the build the moment any
 // Firestore WRITE idiom appears in the Tell read path — so an accidental write to his customer data can't
 // ship silently. (In-memory Map.set / cache.set are not Firestore writes and are intentionally allowed.)
 
@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const FEED = path.join(ROOT, 'modules', 'main', 'trustquote-tell-feed.js');
+const FEED = path.join(ROOT, 'modules', 'main', 'exampleapp-tell-feed.js');
 const SHADOW = path.join(ROOT, 'modules', 'main', 'the-tell-shadow-runner.js');
 
 // Unambiguous Firestore WRITE idioms (none of these match an in-memory Map/Set/cache .set()).
@@ -31,7 +31,7 @@ function scan(file) {
 }
 
 describe('Tell Firestore path stays READ-ONLY (no writes to his live customer data)', () => {
-  test('the TrustQuote->Tell feed contains zero Firestore write idioms', () => {
+  test('the ExampleApp->Tell feed contains zero Firestore write idioms', () => {
     const hits = scan(FEED);
     expect(hits).toEqual([]); // if this fails: a write idiom entered the read-only feed — needs explicit review + a scoped credential
   });

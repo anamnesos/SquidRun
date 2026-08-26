@@ -171,8 +171,8 @@ describe('mira core pulse v0', () => {
     }
   });
 
-  test('false Phil invoice memory remains contested and pending review', () => {
-    const check = acceptance('false-phil-invoice-memory-contested');
+  test('false Customer invoice memory remains contested and pending review', () => {
+    const check = acceptance('false-customer-invoice-memory-contested');
     const pulse = buildMiraCorePulse({
       inputSignals: check.inputSignals,
       nowMs: Date.parse('2026-05-06T05:00:00.000Z'),

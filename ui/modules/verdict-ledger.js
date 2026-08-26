@@ -11,7 +11,7 @@
  * - RESOLUTION IS IMMUTABLE: a resolved outcome is never overwritten —
  *   corrections happen by superseding with a NEW record that cites the old.
  * - SMALL-N APPLIES TO US: credibility below 5 resolutions reports
- *   INSUFFICIENT, not a number — the same floor we gave James's pricing.
+ *   INSUFFICIENT, not a number — the same floor we gave Operator's pricing.
  * - EVIDENCE EXPIRES: records may declare expiresAt; unresolved past expiry
  *   become 'expired' — visible, excluded from accuracy, never silently green.
  */

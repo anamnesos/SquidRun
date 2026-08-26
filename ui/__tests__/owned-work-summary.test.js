@@ -11,10 +11,10 @@ describe('owned-work-summary', () => {
   beforeEach(() => {
     jest.resetModules();
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'owned-work-summary-'));
-    queuePath = path.join(tempRoot, 'runtime-sideprofile', 'agent-task-queue.json');
+    queuePath = path.join(tempRoot, 'runtime-client', 'agent-task-queue.json');
     jest.doMock('../config', () => ({
       ...require('./helpers/mock-config').mockDefaultConfig,
-      getActiveProfile: () => 'sideprofile',
+      getActiveProfile: () => 'client',
       resolveCoordPath: (relPath) => path.join(
         tempRoot,
         String(relPath || '')
@@ -45,7 +45,7 @@ describe('owned-work-summary', () => {
               state: 'blocked',
               riskClass: 'approval_required',
               message: 'Send customer invoice email',
-              blockedReason: 'Needs James approval',
+              blockedReason: 'Needs Operator approval',
               wakeTrigger: 'user approval',
               continueAfter: '2026-05-05T00:00:00.000Z',
               restartPersistence: true,
@@ -88,14 +88,14 @@ describe('owned-work-summary', () => {
 
     const result = summary.buildOwnedWorkSummary({
       queuePath,
-      profileName: 'sideprofile',
+      profileName: 'client',
       nowMs,
       staleAfterMs: 60000,
     });
 
     expect(result).toEqual(expect.objectContaining({
       ok: true,
-      profileName: 'sideprofile',
+      profileName: 'client',
       queuePath,
       updatedAt: expect.any(String),
       staleAfterMs: 60000,
@@ -158,7 +158,7 @@ describe('owned-work-summary', () => {
 
     const result = await handlers.get('get-owned-work-summary')({}, {
       queuePath,
-      profileName: 'sideprofile',
+      profileName: 'client',
       staleAfterMs: 60000,
     });
 

@@ -738,7 +738,7 @@ async function postAudioChunkToBroker(blob, status = lastStatus, fetchImpl = glo
     body: JSON.stringify({
       audioBase64,
       mimeType: blob.type || 'audio/webm',
-      speaker: 'James',
+      speaker: 'Operator',
       metadata: {
         source: 'renderer-media-recorder',
       },

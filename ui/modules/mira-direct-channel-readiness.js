@@ -281,7 +281,7 @@ function buildMiraDirectChannelReadiness({
       liveRouteChanged: false,
       currentSquidRunRouteUntouched: true,
     },
-    jamesGate: {
+    operatorGate: {
       required: true,
       when: 'create_or_provide_and_test_real_separate_new_mira_channel_bot_chat_or_switch_live_route_owner',
     },

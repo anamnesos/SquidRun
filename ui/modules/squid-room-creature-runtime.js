@@ -406,7 +406,7 @@ function renderFrame(nowMs) {
   }
 }
 
-// THE RIBBON TAIL (James's leap, S466): the dotted chain's replacement -
+// THE RIBBON TAIL (Operator's leap, S466): the dotted chain's replacement -
 // ONE full-viewport overlay canvas between creatures and boxes drawing a
 // curved ribbon mouth -> box-attach per speaking creature. PERF LAW: fixed
 // segment count, precomputed alpha ramp, cached colors, pooled point

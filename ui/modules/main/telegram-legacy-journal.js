@@ -53,7 +53,7 @@ const DISPOSITIONS_NAME = 'terminal-dispositions.jsonl';
  * list any consumer can edit.
  *
  * That is not a style point here. This module's whole job is refusing values
- * nobody defined, and the drain retires James's message WITHOUT DELIVERING IT
+ * nobody defined, and the drain retires Operator's message WITHOUT DELIVERING IT
  * on a recognised disposition. One `require(...).TERMINAL_DISPOSITIONS.add(x)`
  * anywhere in the process — a test helper, a future module, a careless
  * normaliser — and an arbitrary string parses, retires, and the message is gone
@@ -90,7 +90,7 @@ function isRecognizedTerminalDisposition(value) {
 /**
  * Exact allowed keys. `atMs` and `generation` are optional on an attempt
  * because records written before those fields existed legitimately lack them —
- * 808499316 is exactly that record, and a gate that rejected it would wedge the
+ * 700100102 is exactly that record, and a gate that rejected it would wedge the
  * queue it exists to unwedge. Nothing else is optional and nothing else is
  * allowed.
  */
@@ -334,7 +334,7 @@ function readLegacyJournalSnapshot(dir, deps = {}) {
   if (!dispositions.ok) return { ...dispositions, reads };
 
   // CROSS-FILE IS NOT A CONFLICT. An attempt AND a terminal disposition for the
-  // same legacy update is the EXPECTED shape of a resolved record - 808499316
+  // same legacy update is the EXPECTED shape of a resolved record - 700100102
   // is precisely that, attempted long ago and since proven answered - and
   // treating it as contradictory would wedge the one record this repair is
   // meant to release.
@@ -404,7 +404,7 @@ function evaluateLegacySourceGate(input = {}) {
     };
   }
   if (attempt && attempt.state === 'attempted') {
-    // Attempted with nothing proving how it ended. The live 808499316 shape
+    // Attempted with nothing proving how it ended. The live 700100102 shape
     // before its disposition existed: never safely re-sendable, never provably
     // sent, so it holds until a human resolves it.
     return {

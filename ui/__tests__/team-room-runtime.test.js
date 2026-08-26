@@ -374,7 +374,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     });
     const started = await runtime.start();
     expect(started.ok).toBe(true);
-    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', {
+    const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', {
       ttlMs: 30 * 24 * 60 * 60 * 1000,
     });
     expect(paired.ok).toBe(true);
@@ -429,7 +429,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       socket.once('error', reject);
     });
     socket.send(JSON.stringify({ type: 'presence', focused: true }));
-    await waitFor(() => runtime._isMemberPresent('james'));
+    await waitFor(() => runtime._isMemberPresent('operator'));
 
     const cliOptions = {
       projectRoot: tempRoot,
@@ -438,7 +438,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       stderr: { write: () => {} },
     };
     expect(await runRoomCli([
-      'post', '--reason', 'real_question', '--notify', 'question', 'Need James once.',
+      'post', '--reason', 'real_question', '--notify', 'question', 'Need Operator once.',
     ], cliOptions)).toBe(0);
     await waitFor(() => fs.existsSync(runtime.pushReceiptPath));
     expect(JSON.parse(fs.readFileSync(runtime.pushReceiptPath, 'utf8'))).toEqual(expect.objectContaining({
@@ -447,20 +447,20 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(webPush.sendNotification).not.toHaveBeenCalled();
 
     socket.send(JSON.stringify({ type: 'presence', focused: false }));
-    await waitFor(() => !runtime._isMemberPresent('james'));
+    await waitFor(() => !runtime._isMemberPresent('operator'));
     expect(await runRoomCli([
-      'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_james', 'Need James now.',
+      'post', '--reason', 'new_evidence_or_action', '--notify', 'needs_operator', 'Need Operator now.',
     ], cliOptions)).toBe(0);
     await waitFor(() => webPush.sendNotification.mock.calls.length === 1);
     const receipt = JSON.parse(fs.readFileSync(runtime.pushReceiptPath, 'utf8'));
     expect(receipt).toEqual(expect.objectContaining({
-      class: 'needs_james', ok: true, sent: 1, failed: 0,
+      class: 'needs_operator', ok: true, sent: 1, failed: 0,
       reason: 'team_room_push_delivered',
     }));
     const receiptText = JSON.stringify(receipt);
     expect(receiptText).not.toContain(subscription.endpoint);
     expect(receiptText).not.toContain(subscription.keys.auth);
-    expect(receiptText).not.toContain('Need James now.');
+    expect(receiptText).not.toContain('Need Operator now.');
     socket.close();
   });
 
@@ -472,8 +472,8 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     for (let index = 1; index <= 205; index += 1) {
       const posted = runtime.store.postMessage({
         identity: {
-          memberId: 'james', roomId: 'main', profileName: 'main', memberKind: 'human',
-          role: 'james', paneId: null, source: 'room_web',
+          memberId: 'operator', roomId: 'main', profileName: 'main', memberKind: 'human',
+          role: 'operator', paneId: null, source: 'room_web',
         },
         payload: { body: `History message ${index}.`, clientNonce: `history-page-${index}` },
       });
@@ -854,7 +854,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const firstStart = await runtime.start();
     expect(firstStart.ok).toBe(true);
     const fixedPort = runtime.server.address().port;
-    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
+    const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
     expect(paired.ok).toBe(true);
     const cookie = `squidrun_team_room=${paired.token}`;
     const firstPost = await request(firstStart.origin, '/api/messages', {
@@ -898,7 +898,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
   test('bounds shutdown when a WebSocket peer ignores the graceful close', async () => {
     runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
     const started = await runtime.start();
-    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', { ttlMs: 60_000 });
+    const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', { ttlMs: 60_000 });
     const socket = new WebSocket(started.origin.replace(/^http/u, 'ws') + '/ws', {
       headers: { Cookie: `squidrun_team_room=${paired.token}`, Origin: started.origin },
     });
@@ -987,7 +987,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
 
     expect(runtime.stopping).toBe(true);
     runtime._scheduleDispatch([{ status: 'queued', targetMemberId: 'builder' }]);
-    expect(runtime._schedulePush({ metadata: { notificationClass: 'needs_james' } })).toBeNull();
+    expect(runtime._schedulePush({ metadata: { notificationClass: 'needs_operator' } })).toBeNull();
     expect(runtime.dispatchPromises.size).toBe(1);
     expect(runtime.pushPromises.size).toBe(1);
 
@@ -1009,7 +1009,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
   test('catches up from the authoritative snapshot after a WebSocket drop', async () => {
     runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
     const started = await runtime.start();
-    const paired = runtime._issueCredential('james', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
+    const paired = runtime._issueCredential('operator', 'room_web', 'paired_device', { ttlMs: 30 * 24 * 60 * 60 * 1000 });
     const cookie = `squidrun_team_room=${paired.token}`;
     const firstSocket = new WebSocket(started.origin.replace(/^http/u, 'ws') + '/ws', {
       headers: { Cookie: cookie, Origin: started.origin },
@@ -1496,7 +1496,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(posted.statusCode).toBe(201);
     expect(posted.payload).toEqual(expect.objectContaining({
       ok: true,
-      message: expect.objectContaining({ authorId: 'james', clientNonce: 'web-runtime-1' }),
+      message: expect.objectContaining({ authorId: 'operator', clientNonce: 'web-runtime-1' }),
     }));
     await waitFor(() => deliveries.length === 3);
     expect(deliveries.map((delivery) => delivery.member.memberId).sort())
@@ -1669,8 +1669,8 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(seedStore.init().ok).toBe(true);
     const seeded = seedStore.postMessage({
       identity: {
-        memberId: 'james', roomId: 'main', profileName: 'main', memberKind: 'human',
-        role: 'james', paneId: null, source: 'room_web',
+        memberId: 'operator', roomId: 'main', profileName: 'main', memberKind: 'human',
+        role: 'operator', paneId: null, source: 'room_web',
       },
       payload: { body: 'Recover me at boot.', clientNonce: 'boot-recovery-1' },
     });
@@ -1696,8 +1696,8 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     expect(seedStore.init().ok).toBe(true);
     const seeded = seedStore.postMessage({
       identity: {
-        memberId: 'james', roomId: 'main', profileName: 'main', memberKind: 'human',
-        role: 'james', paneId: null, source: 'room_web',
+        memberId: 'operator', roomId: 'main', profileName: 'main', memberKind: 'human',
+        role: 'operator', paneId: null, source: 'room_web',
       },
       payload: { body: 'Recover the young claim too.', clientNonce: 'boot-young-claim-1' },
     });
@@ -1745,7 +1745,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       role: 'builder', paneId: '2', profileName: 'main', paneLaunchId: `pl_${'2'.repeat(32)}`,
       appGeneration: 'app-session-512', source: 'room_cli',
     }));
-    expect(fs.existsSync(path.join(tempRoot, '.squidrun', 'runtime', 'team-room', 'credentials', 'james.json'))).toBe(false);
+    expect(fs.existsSync(path.join(tempRoot, '.squidrun', 'runtime', 'team-room', 'credentials', 'operator.json'))).toBe(false);
     expect(await request(secondStart.origin, '/api/cli/snapshot', { token: firstCredential.token }))
       .toEqual(expect.objectContaining({ statusCode: 401, payload: expect.objectContaining({ reason: 'room_credential_revoked' }) }));
     expect(await request(secondStart.origin, '/api/cli/snapshot', { token: secondCredential.token }))
@@ -1802,7 +1802,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
       method: 'POST',
       headers: {
         Origin: remoteOrigin,
-        'Tailscale-User-Login': 'james@example.test',
+        'Tailscale-User-Login': 'operator@example.test',
         'Tailscale-User-Profile-Pic': 'https://attacker.invalid/pic',
         'Content-Type': 'application/json',
       },

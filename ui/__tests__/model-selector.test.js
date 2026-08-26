@@ -48,16 +48,16 @@ describe('model-selector owner assertions', () => {
 
   test('accepts a matching owner instance assertion', () => {
     setRendererScope({
-      windowKey: 'sideprofile',
-      profileName: 'sideprofile',
-      sessionScopeId: 'app-session-428:sideprofile',
+      windowKey: 'client',
+      profileName: 'client',
+      sessionScopeId: 'app-session-428:client',
     });
 
     expect(_internals.isOwnerAssertionMatch({
       ownerInstance: {
-        windowKey: 'sideprofile',
-        profileName: 'sideprofile',
-        sessionScopeId: 'app-session-428:sideprofile',
+        windowKey: 'client',
+        profileName: 'client',
+        sessionScopeId: 'app-session-428:client',
       },
     })).toBe(true);
   });
@@ -71,29 +71,29 @@ describe('model-selector owner assertions', () => {
 
     expect(_internals.isOwnerAssertionMatch({
       ownerInstance: {
-        windowKey: 'sideprofile',
-        profileName: 'sideprofile',
-        sessionScopeId: 'app-session-428:sideprofile',
+        windowKey: 'client',
+        profileName: 'client',
+        sessionScopeId: 'app-session-428:client',
       },
     })).toBe(false);
   });
 
   test('rejects a matching window key with the wrong session scope', () => {
     setRendererScope({
-      windowKey: 'sideprofile',
-      profileName: 'sideprofile',
-      sessionScopeId: 'app-session-999:sideprofile',
+      windowKey: 'client',
+      profileName: 'client',
+      sessionScopeId: 'app-session-999:client',
     });
 
     expect(_internals.isOwnerAssertionMatch({
-      ownerWindowKey: 'sideprofile',
-      ownerProfileName: 'sideprofile',
-      ownerSessionScopeId: 'app-session-428:sideprofile',
+      ownerWindowKey: 'client',
+      ownerProfileName: 'client',
+      ownerSessionScopeId: 'app-session-428:client',
     })).toBe(false);
   });
 
   test('a sessionScopeId SCHEME mismatch never demotes the true owner (S463 Bug 2)', () => {
-    // Exact production values from James's failed pane-2 switch: the owner
+    // Exact production values from Operator's failed pane-2 switch: the owner
     // registry froze the boot fallback (instance scheme) while the renderer
     // carried the canonical session scheme. Ownership must fall back to
     // windowKey + profileName instead of silently skipping the respawn.

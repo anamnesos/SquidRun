@@ -1235,6 +1235,14 @@ function quotePowerShellLiteral(value) {
   return `'${String(value).replace(/'/gu, "''")}'`;
 }
 
+// Windows PowerShell 5 rebuilds a native command line after evaluating its own
+// string literals. A bare embedded `"` is consumed as native argv syntax, so a
+// TOML argument containing a quoted path is split at its spaces. Prefix the
+// quote for the Windows argv parser; the child receives the original `"` byte.
+function quotePowerShellNativeLiteral(value) {
+  return quotePowerShellLiteral(String(value).replace(/"/gu, '\\"'));
+}
+
 function parseShellEnvironmentPolicyExcludeOverride(value) {
   const source = String(value || '').trim();
   const match = /^shell_environment_policy\.exclude=\[\s*(?:'([^'\r\n]*)'|"((?:[^"\\\r\n]|\\.)*)")\s*\]$/u
@@ -1469,13 +1477,20 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
   if (!hookEntry?.path) {
     return { ok: false, reason: 'codex_computer_use_hook_script_missing' };
   }
-  if (/[\s'"]/u.test(hookEntry.path)) {
+  // The hook is an integrity-pinned tracked file, but it still becomes shell
+  // text inside Codex's command hook. Quote ordinary whitespace so installs
+  // under paths such as `C:\Users\Example User\...` remain usable; refuse the
+  // characters that can escape or expand inside the double-quoted path.
+  if (/['"\0\r\n`$%!]/u.test(hookEntry.path)) {
     return {
       ok: false,
       reason: 'codex_computer_use_hook_script_native_argv_unsafe',
     };
   }
-  const hookCommand = `node ${hookEntry.path}`;
+  const serializedHookPath = /\s/u.test(hookEntry.path)
+    ? `"${hookEntry.path}"`
+    : hookEntry.path;
+  const hookCommand = `node ${serializedHookPath}`;
   let hookOverride;
   try {
     hookOverride = [
@@ -1494,8 +1509,8 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
     };
   }
   // TOML literal-string quotes survive PowerShell's Windows-native argv
-  // serialization. Embedded double quotes do not: PowerShell strips them and
-  // Codex then sees a scalar string instead of a TOML sequence.
+  // serialization. The hook's quoted script path needs the native-argv escape
+  // above so those embedded double quotes survive as data too.
   const environmentOverride = "shell_environment_policy.exclude=['SQUIDRUN_CUA_*']";
   const parsedEnvironmentOverride = parseShellEnvironmentPolicyExcludeOverride(
     environmentOverride
@@ -1520,7 +1535,7 @@ function buildCodexComputerUseProofInvocation(command, claim, options = {}) {
   const addedArguments = [
     '--dangerously-bypass-hook-trust',
     '-c',
-    quotePowerShellLiteral(hookOverride),
+    quotePowerShellNativeLiteral(hookOverride),
     '-c',
     quotePowerShellLiteral(environmentOverride),
   ].join(' ');

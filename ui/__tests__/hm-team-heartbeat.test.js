@@ -28,10 +28,10 @@ describe('team heartbeat config contract', () => {
       { id: 'pm', time: '18:23' },
     ]);
     expect(value.focusRotation.map((entry) => entry.id)).toEqual([
-      'james-schedule',
+      'operator-schedule',
       'open-threads-sweep',
       'site-booking-health',
-      'trustquote-drift',
+      'exampleapp-drift',
       'memory-rule-hygiene',
       'propose-one-improvement',
       'one-good-question',
@@ -116,7 +116,7 @@ describe('team heartbeat identity, prompt, and rotation', () => {
       scheduledWindow: 'am',
       focus: DEFAULT_CONFIG.focusRotation[0],
     });
-    expect(prompt).toMatch(/^HEARTBEAT team-heartbeat-2026-08-19-am window=AM focus=james-schedule:/);
+    expect(prompt).toMatch(/^HEARTBEAT team-heartbeat-2026-08-19-am window=AM focus=operator-schedule:/);
     expect(prompt).toContain('ONE bounded useful action');
     expect(prompt).toContain('Read-only is the default');
     expect(prompt).toContain('Never touch trading/PARKED lanes');
@@ -137,7 +137,7 @@ describe('team heartbeat identity, prompt, and rotation', () => {
 
 describe('team heartbeat routed-proof and retry dedupe', () => {
   const beatId = 'team-heartbeat-2026-08-19-am';
-  const body = `HEARTBEAT ${beatId} window=AM focus=james-schedule: check.`;
+  const body = `HEARTBEAT ${beatId} window=AM focus=operator-schedule: check.`;
 
   test('accepts only fresh main-scope routed/acked rows from sender heartbeat', () => {
     const rows = [

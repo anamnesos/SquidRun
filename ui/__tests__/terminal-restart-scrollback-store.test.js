@@ -75,12 +75,12 @@ describe('terminal restart scrollback store', () => {
     const filePath = path.join(dir, 'terminal-restart-scrollback.json');
 
     saveRestartScrollbackSnapshot(filePath, [
-      { paneId: 'trustquote-app', cwd: 'D:/projects/TrustQuote', scrollback: 'app body' },
+      { paneId: 'exampleapp-app', cwd: 'D:/projects/ExampleApp', scrollback: 'app body' },
     ]);
 
     const loaded = loadRestartScrollbackSnapshot(filePath);
-    expect(loaded.panes['trustquote-app']).toEqual(expect.objectContaining({
-      cwd: 'D:/projects/TrustQuote',
+    expect(loaded.panes['exampleapp-app']).toEqual(expect.objectContaining({
+      cwd: 'D:/projects/ExampleApp',
       scrollback: 'app body',
     }));
   });

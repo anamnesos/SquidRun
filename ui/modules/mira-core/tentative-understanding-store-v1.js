@@ -34,7 +34,7 @@ function triageForCandidate(candidate = {}) {
       triage_action: 'hold_and_revisit',
       escalation_policy: 'rare_escalation_if_sensitive_ambiguous_contradictory_or_relationship_shaping',
       auto_accept_allowed: false,
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
     };
   }
   if (type === 'user_preference') {
@@ -44,7 +44,7 @@ function triageForCandidate(candidate = {}) {
       triage_action: 'hold_and_revisit',
       escalation_policy: 'rare_escalation_if_ambiguous_contradictory_or_user_impacting',
       auto_accept_allowed: false,
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
     };
   }
   return {
@@ -53,7 +53,7 @@ function triageForCandidate(candidate = {}) {
     triage_action: 'auto_stage_under_tested_rules',
     escalation_policy: 'no_escalation_unless_later_contradiction_or_user_impact',
     auto_accept_allowed: true,
-    james_clickthrough_required: false,
+    operator_clickthrough_required: false,
   };
 }
 
@@ -120,7 +120,7 @@ function candidateToMemoryPr(candidate = {}, options = {}) {
       surface_id: asString(options.surfaceId, null),
       visible_label: "Mira's tentative understandings",
       owner: 'mira_memory_triage',
-      james_clickthrough_required: false,
+      operator_clickthrough_required: false,
       oracle_role: 'audit_groundedness_and_hallucination_risk_only',
       builder_role: 'mechanism_only',
       hidden_agent_only_promotion_path: false,
@@ -150,7 +150,7 @@ function normalizeStoreRow(row = {}) {
     promotion_status: sourcePayload.promotion_status || TENTATIVE_PROMOTION_STATUS,
     auto_promotion: sourcePayload.auto_promotion === true,
     owner: sourcePayload.owner || 'mira_memory_triage',
-    james_clickthrough_required: sourcePayload.james_clickthrough_required === true,
+    operator_clickthrough_required: sourcePayload.operator_clickthrough_required === true,
     visible_as_memory_settings_panel: sourcePayload.visible_as_memory_settings_panel === true,
     hidden_agent_only_promotion_path: sourcePayload.hidden_agent_only_promotion_path === true,
     source_trace: row.source_trace || null,
@@ -172,7 +172,7 @@ function basePersistenceResult(overrides = {}) {
     internal_scaffold: true,
     visible_as_memory_settings_panel: false,
     owner: 'mira_memory_triage',
-    james_clickthrough_required: false,
+    operator_clickthrough_required: false,
     durable_memory_commit: false,
     promotion_status: TENTATIVE_PROMOTION_STATUS,
     auto_promotion: false,

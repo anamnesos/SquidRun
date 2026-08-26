@@ -6,7 +6,7 @@
  * REQUIRED FIRST by every replica/probe script that runs under electron.exe
  * outside the live app (S426 incident: replica rigs hit EPIPE on console.log
  * after the parent pipe closed, and Electron's DEFAULT uncaughtException
- * handler popped a native error dialog on James's desktop PER process).
+ * handler popped a native error dialog on Operator's desktop PER process).
  *
  * Guarantees, by construction:
  * - no native dialogs, ever (uncaughtException handled; showErrorBox no-op);

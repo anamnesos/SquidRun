@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * hm-lane-heartbeat.js — the engine James remembered.
+ * hm-lane-heartbeat.js — the engine Operator remembered.
  *
  * Generalizes the wake machinery that once ran 24-hour days (but only ever
  * covered oracle/architect) to EVERY mind with open lane work: an OPEN lane

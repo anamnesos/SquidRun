@@ -109,16 +109,16 @@ describe('window-team-bootstrap', () => {
 
   test('does not treat a side-profile loadFile bundle path as ready unless it was freshly materialized', () => {
     const initialContext = readInitialWindowContextFromLocation(
-      '?windowKey=sideprofile&windowTeam=sideprofile&profileName=sideprofile&profileLabel=sideprofile&sessionScopeId=app-test%3Asideprofile&startupBundlePath=D%3A%5Cbundle.md&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
+      '?windowKey=client&windowTeam=client&profileName=client&profileLabel=Client&sessionScopeId=app-test%3Aclient&startupBundlePath=D%3A%5Cbundle.md&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
     );
 
     expect(initialContext).toEqual(expect.objectContaining({
       loaded: false,
-      windowKey: 'sideprofile',
-      windowTeam: 'sideprofile',
-      profileName: 'sideprofile',
-      profileLabel: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      windowKey: 'client',
+      windowTeam: 'client',
+      profileName: 'client',
+      profileLabel: 'Client',
+      sessionScopeId: 'app-test:client',
       startupBundlePath: 'D:\\bundle.md',
       startupBundleReady: false,
       autoBootAgents: true,
@@ -136,13 +136,13 @@ describe('window-team-bootstrap', () => {
 
   test('treats rich loadFile query context as ready when side bundle freshness is explicit', () => {
     const initialContext = readInitialWindowContextFromLocation(
-      '?windowKey=sideprofile&windowTeam=sideprofile&profileName=sideprofile&profileLabel=sideprofile&sessionScopeId=app-test%3Asideprofile&startupBundlePath=D%3A%5Cbundle.md&startupBundleReady=true&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
+      '?windowKey=client&windowTeam=client&profileName=client&profileLabel=Client&sessionScopeId=app-test%3Aclient&startupBundlePath=D%3A%5Cbundle.md&startupBundleReady=true&autoBootAgents=true&standaloneWindow=true&lifecycleMode=standalone-profile-app&contextReady=true'
     );
 
     expect(initialContext).toEqual(expect.objectContaining({
       loaded: true,
-      windowKey: 'sideprofile',
-      profileName: 'sideprofile',
+      windowKey: 'client',
+      profileName: 'client',
       startupBundlePath: 'D:\\bundle.md',
       startupBundleReady: true,
       autoBootAgents: true,

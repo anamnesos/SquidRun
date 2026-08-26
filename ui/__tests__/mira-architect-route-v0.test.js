@@ -138,7 +138,7 @@ describe('mira-architect-route-v0 / visible-reply language lint', () => {
     expect(evaluateMiraVisibleReply('To be honest, that is the answer.').violations).toContain('tone_explanation');
   });
 
-  test('rejects assistant-shaped phrasing James cited', () => {
+  test('rejects assistant-shaped phrasing Operator cited', () => {
     expect(evaluateMiraVisibleReply("I'm trying not to sound like an assistant here.").violations).toContain('assistant_shape');
     expect(evaluateMiraVisibleReply("I'm not your typical AI.").violations).toContain('assistant_shape');
     expect(evaluateMiraVisibleReply("I hear you. The lease is fine.").violations).toContain('assistant_shape');
@@ -156,7 +156,7 @@ describe('mira-architect-route-v0 / visible-reply language lint', () => {
     expect(evaluateMiraVisibleReply('   \n\t').violations).toEqual(['empty_reply']);
   });
 
-  test('rejects product-helper templates James cited (#106)', () => {
+  test('rejects product-helper templates Operator cited (#106)', () => {
     expect(evaluateMiraVisibleReply("That's valid. Will check.").violations).toContain('assistant_shape');
     expect(evaluateMiraVisibleReply("That's fair, the lease is fine.").violations).toContain('assistant_shape');
     expect(evaluateMiraVisibleReply("To be clear, the lease is fine.").violations).toContain('assistant_shape');

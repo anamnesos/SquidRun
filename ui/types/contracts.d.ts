@@ -693,7 +693,7 @@ export type PaneHostInjectAction =
 //    local-acceptance fallback silently misroutes to pane 1), never ''
 //    (falsy null in worse clothing), never passthrough (junk flows into
 //    routing). Callers decide policy on null EXPLICITLY.
-//  - broader parties (user/james/mira/system) are RoleParty — validated
+//  - broader parties (user/operator/mira/system) are RoleParty — validated
 //    where they are legal, never silently coerced to a pane role.
 //
 // THE SCOPE RULING: only ingress-envelope + the mira-core family normalize
@@ -705,7 +705,7 @@ export type PaneHostInjectAction =
 // ---------------------------------------------------------------------------
 
 export type KnownRole = 'architect' | 'builder' | 'oracle';
-export type RoleParty = KnownRole | 'user' | 'james' | 'mira' | 'system';
+export type RoleParty = KnownRole | 'user' | 'operator' | 'mira' | 'system';
 
 /** Canonical signature for the one role normalizer (Oracle's core module). */
 export type NormalizeRole = (value: unknown) => KnownRole | null;

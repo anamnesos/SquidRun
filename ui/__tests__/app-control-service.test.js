@@ -119,7 +119,7 @@ describe('app-control-service', () => {
     const restartTelegramPoller = jest.fn(() => ({
       success: true,
       started: true,
-      reason: 'sideprofile-router-boundary',
+      reason: 'client-router-boundary',
     }));
     const getAppWindows = jest.fn(() => {
       throw new Error('window reload path must not be used for Telegram restart');
@@ -132,15 +132,15 @@ describe('app-control-service', () => {
       restartTelegramPoller,
       getAppWindows,
       getPaneHostWindows,
-    }, 'restart-telegram-poller', { reason: 'sideprofile-router-boundary' });
+    }, 'restart-telegram-poller', { reason: 'client-router-boundary' });
 
     expect(result).toEqual(expect.objectContaining({
       success: true,
       action: 'restart-telegram-poller',
       started: true,
-      reason: 'sideprofile-router-boundary',
+      reason: 'client-router-boundary',
     }));
-    expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'sideprofile-router-boundary' });
+    expect(restartTelegramPoller).toHaveBeenCalledWith({ reason: 'client-router-boundary' });
     expect(getAppWindows).not.toHaveBeenCalled();
     expect(getPaneHostWindows).not.toHaveBeenCalled();
   });
@@ -159,7 +159,7 @@ describe('app-control-service', () => {
       getAppWindow: jest.fn(),
     }, 'terminal-scroll-probe', {
       windowKey: 'squid-room',
-      containerId: 'terminal-trustquote-app',
+      containerId: 'terminal-exampleapp-app',
       op: 'dispatchKey',
       key: 'PageUp',
     });
@@ -199,8 +199,8 @@ describe('app-control-service', () => {
       success: true,
       requestedWindowKey: 'squid-room',
       windowKey: 'squid-room',
-      containerId: 'terminal-trustquote-app',
-      paneId: 'trustquote-app',
+      containerId: 'terminal-exampleapp-app',
+      paneId: 'exampleapp-app',
       op: 'dispatchKey',
       key: 'PageUp',
       dispatchTarget: 'xterm-helper-textarea',
@@ -218,7 +218,7 @@ describe('app-control-service', () => {
       getAppWindow,
     }, 'terminal-scroll-probe', {
       windowKey: 'squid-room',
-      containerId: 'terminal-trustquote-app',
+      containerId: 'terminal-exampleapp-app',
       op: 'dispatchKey',
       key: 'PageUp',
     });

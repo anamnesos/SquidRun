@@ -174,7 +174,7 @@ describe('watcher module', () => {
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'terminal-fit-telemetry.jsonl'));
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'session-state.json'));
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime', 'team-memory.sqlite'));
-    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime-sideprofile', 'session.md'));
+    watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'runtime-client', 'session.md'));
     watcher.handleFileChange(path.join('D:', 'repo', '.squidrun', 'perf-profile.json'));
     jest.runOnlyPendingTimers();
 

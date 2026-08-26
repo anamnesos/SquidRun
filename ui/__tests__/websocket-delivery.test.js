@@ -175,7 +175,7 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
-  test('routes TrustQuote arm targets through the local pane handler when no arm WebSocket client is registered', async () => {
+  test('routes ExampleApp arm targets through the local pane handler when no arm WebSocket client is registered', async () => {
     const routeScope = {
       profileName: 'main',
       windowKey: 'squid-room',
@@ -183,52 +183,52 @@ describe('WebSocket Delivery Audit', () => {
     };
     const worker = await connectAndRegister({
       port,
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       ...routeScope,
     });
     activeClients.add(worker);
 
-    const requestId = 'trustquote-arm-handler-health-1';
+    const requestId = 'exampleapp-arm-handler-health-1';
     const healthPromise = waitForMessage(
       worker,
       (msg) => msg.type === 'health-check-result' && msg.requestId === requestId
     );
     worker.send(JSON.stringify({
       type: 'health-check',
-      target: 'trustquote-lead',
+      target: 'exampleapp-lead',
       requestId,
     }));
     const health = await healthPromise;
     expect(health.healthy).toBe(true);
     expect(health.status).toBe('handler_route_available');
     expect(health.source).toBe('local_message_handler');
-    expect(health.role).toBe('trustquote-lead');
-    expect(health.paneId).toBe('trustquote-lead');
+    expect(health.role).toBe('exampleapp-lead');
+    expect(health.paneId).toBe('exampleapp-lead');
 
     onMessageSpy.mockImplementation((payload) => {
-      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'trustquote-arm-handler-1') {
+      if (payload?.message?.type === 'send' && payload?.message?.messageId === 'exampleapp-arm-handler-1') {
         return {
           ok: true,
           accepted: true,
           queued: true,
           verified: true,
           status: 'delivered.verified',
-          paneId: 'trustquote-lead',
+          paneId: 'exampleapp-lead',
           mode: 'daemon-pty',
         };
       }
       return undefined;
     });
 
-    const messageId = 'trustquote-arm-handler-1';
+    const messageId = 'exampleapp-arm-handler-1';
     const ackPromise = waitForMessage(
       worker,
       (msg) => msg.type === 'send-ack' && msg.messageId === messageId
     );
     worker.send(JSON.stringify({
       type: 'send',
-      target: 'trustquote-lead',
+      target: 'exampleapp-lead',
       content: 'invoice status',
       messageId,
       ackRequired: true,
@@ -239,11 +239,11 @@ describe('WebSocket Delivery Audit', () => {
     expect(ack.status).toBe('delivered.verified');
     expect(ack.wsDeliveryCount).toBe(0);
     expect(onMessageSpy).toHaveBeenCalledWith(expect.objectContaining({
-      role: 'trustquote-invoice',
-      paneId: 'trustquote-invoice',
+      role: 'exampleapp-invoice',
+      paneId: 'exampleapp-invoice',
       message: expect.objectContaining({
         type: 'send',
-        target: 'trustquote-lead',
+        target: 'exampleapp-lead',
         messageId,
       }),
     }));
@@ -256,9 +256,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedSender);
 
@@ -291,7 +291,7 @@ describe('WebSocket Delivery Audit', () => {
     expect(ack.ok).toBe(false);
     expect(ack.status).toBe('scoped_route_not_ready');
     expect(ack.failClosed).toBe(true);
-    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'sideprofile' }));
+    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'client' }));
     expect(leakedToMain).toBe(false);
   });
 
@@ -302,9 +302,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedSender);
 
@@ -373,9 +373,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedSender);
 
@@ -426,18 +426,18 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedReceiver);
     const scopedSender = await connectAndRegister({
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedSender);
 
@@ -465,35 +465,35 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
   });
 
-  test('sideprofile restart-readiness handshake proves scoped back-and-forth without main leak', async () => {
+  test('Client restart-readiness handshake proves scoped back-and-forth without main leak', async () => {
     const mainBuilder = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
     activeClients.add(mainBuilder);
     const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
     activeClients.add(mainArchitect);
-    const sideprofileArchitect = await connectAndRegister({
+    const clientArchitect = await connectAndRegister({
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
-    activeClients.add(sideprofileArchitect);
-    const sideprofileBuilder = await connectAndRegister({
+    activeClients.add(clientArchitect);
+    const clientBuilder = await connectAndRegister({
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
-    activeClients.add(sideprofileBuilder);
+    activeClients.add(clientBuilder);
 
     const leakedToMain = [];
     mainBuilder.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type === 'message' && /sideprofile restart handshake/.test(msg.content || '')) {
+        if (msg.type === 'message' && /Client restart handshake/.test(msg.content || '')) {
           leakedToMain.push(msg);
         }
       } catch (_err) {
@@ -501,30 +501,30 @@ describe('WebSocket Delivery Audit', () => {
       }
     });
 
-    const helloMessageId = 'sideprofile-handshake-builder-1';
+    const helloMessageId = 'client-handshake-builder-1';
     const builderDelivery = waitForMessage(
-      sideprofileBuilder,
-      (msg) => msg.type === 'message' && /profile=sideprofile window=sideprofile/.test(msg.content || '')
+      clientBuilder,
+      (msg) => msg.type === 'message' && /profile=client window=client/.test(msg.content || '')
     );
     const helloAck = waitForMessage(
-      sideprofileArchitect,
+      clientArchitect,
       (msg) => msg.type === 'send-ack' && msg.messageId === helloMessageId
     );
 
-    sideprofileArchitect.send(JSON.stringify({
+    clientArchitect.send(JSON.stringify({
       type: 'send',
       target: 'builder',
-      content: 'sideprofile restart handshake: profile=sideprofile window=sideprofile context=sideprofile/Rachel; plain builder/oracle targets stay same-profile only.',
+      content: 'Client restart handshake: profile=client window=client context=Client/Client; plain builder/oracle targets stay same-profile only.',
       messageId: helloMessageId,
       ackRequired: true,
       metadata: {
         sender: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
         handshake: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
           notMainContext: true,
           sameProfileTargetsOnly: true,
         },
@@ -535,30 +535,30 @@ describe('WebSocket Delivery Audit', () => {
     expect(helloAckMsg.ok).toBe(true);
     expect(helloAckMsg.status).toBe('delivered.websocket');
     expect(builderMsg.metadata).toEqual(expect.objectContaining({
-      sender: expect.objectContaining({ profileName: 'sideprofile', windowKey: 'sideprofile' }),
+      sender: expect.objectContaining({ profileName: 'client', windowKey: 'client' }),
       handshake: expect.objectContaining({ notMainContext: true, sameProfileTargetsOnly: true }),
     }));
 
-    const replyMessageId = 'sideprofile-handshake-architect-1';
+    const replyMessageId = 'client-handshake-architect-1';
     const architectReplyDelivery = waitForMessage(
-      sideprofileArchitect,
+      clientArchitect,
       (msg) => msg.type === 'message' && /same-profile canonical reply path confirmed/.test(msg.content || '')
     );
     const replyAck = waitForMessage(
-      sideprofileBuilder,
+      clientBuilder,
       (msg) => msg.type === 'send-ack' && msg.messageId === replyMessageId
     );
 
-    sideprofileBuilder.send(JSON.stringify({
+    clientBuilder.send(JSON.stringify({
       type: 'send',
       target: 'architect',
-      content: 'sideprofile restart handshake received: same-profile canonical reply path confirmed.',
+      content: 'Client restart handshake received: same-profile canonical reply path confirmed.',
       messageId: replyMessageId,
       ackRequired: true,
       metadata: {
         sender: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
         handshake: {
           received: true,
@@ -571,13 +571,13 @@ describe('WebSocket Delivery Audit', () => {
     expect(replyAckMsg.ok).toBe(true);
     expect(replyAckMsg.status).toBe('delivered.websocket');
     expect(replyMsg.metadata).toEqual(expect.objectContaining({
-      sender: expect.objectContaining({ profileName: 'sideprofile', windowKey: 'sideprofile' }),
+      sender: expect.objectContaining({ profileName: 'client', windowKey: 'client' }),
       handshake: expect.objectContaining({ received: true, sameProfileReply: true }),
     }));
 
-    const diagnosticMessageId = 'sideprofile-handshake-diagnostic-1';
+    const diagnosticMessageId = 'client-handshake-diagnostic-1';
     const diagnosticDelivery = waitForMessage(
-      sideprofileArchitect,
+      clientArchitect,
       (msg) => msg.type === 'message' && /diagnostic path from main Architect/.test(msg.content || '')
     );
     const diagnosticAck = waitForMessage(
@@ -588,13 +588,13 @@ describe('WebSocket Delivery Audit', () => {
     mainArchitect.send(JSON.stringify({
       type: 'send',
       target: 'architect',
-      content: 'sideprofile restart handshake diagnostic path from main Architect.',
+      content: 'Client restart handshake diagnostic path from main Architect.',
       messageId: diagnosticMessageId,
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
           channel: 'scoped-diagnostic',
         },
       },
@@ -604,8 +604,8 @@ describe('WebSocket Delivery Audit', () => {
     expect(diagnosticAckMsg.ok).toBe(true);
     expect(diagnosticMsg.metadata).toEqual(expect.objectContaining({
       routing: expect.objectContaining({
-        profileName: 'sideprofile',
-        windowKey: 'sideprofile',
+        profileName: 'client',
+        windowKey: 'client',
         channel: 'scoped-diagnostic',
       }),
     }));
@@ -619,8 +619,8 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
     });
     activeClients.add(scopedReceiver);
     const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -699,8 +699,8 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
       },
     }));
@@ -717,7 +717,7 @@ describe('WebSocket Delivery Audit', () => {
     expect(leakedToMain).toBe(false);
   });
 
-  test('rejects sideprofile/Rachel context aimed at main Builder and notifies main Architect', async () => {
+  test('rejects Client/Client context aimed at main Builder and notifies main Architect', async () => {
     const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
     activeClients.add(mainArchitect);
     const mainReceiver = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
@@ -727,7 +727,7 @@ describe('WebSocket Delivery Audit', () => {
     mainReceiver.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type === 'message' && msg.content.includes('Rachel')) executedByMainBuilder = true;
+        if (msg.type === 'message' && msg.content.includes('Client')) executedByMainBuilder = true;
       } catch (_err) {
         // Ignore non-JSON frames.
       }
@@ -746,12 +746,12 @@ describe('WebSocket Delivery Audit', () => {
     mainArchitect.send(JSON.stringify({
       type: 'send',
       target: 'builder',
-      content: 'sideprofile Rachel case follow-up belongs in the side window',
+      content: 'Client Client case follow-up belongs in the side window',
       messageId,
       ackRequired: true,
       metadata: {
         sender: {
-          profileName: 'sideprofile',
+          profileName: 'client',
         },
       },
     }));
@@ -778,7 +778,7 @@ describe('WebSocket Delivery Audit', () => {
     mainReceiver.on('message', (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
-        if (msg.type === 'message' && msg.content.includes('sideprofile')) executedByMainBuilder = true;
+        if (msg.type === 'message' && msg.content.includes('Client')) executedByMainBuilder = true;
       } catch (_err) {
         // Ignore non-JSON frames.
       }
@@ -793,7 +793,7 @@ describe('WebSocket Delivery Audit', () => {
     mainArchitect.send(JSON.stringify({
       type: 'send',
       target: 'builder',
-      content: 'sideprofile side-window case context with no scope metadata',
+      content: 'Client side-window case context with no scope metadata',
       messageId,
       ackRequired: true,
     }));
@@ -814,8 +814,8 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
     });
     activeClients.add(scopedReceiver);
     const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -845,8 +845,8 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
       },
     }));
@@ -864,11 +864,11 @@ describe('WebSocket Delivery Audit', () => {
 
   test('allows side-profile builder to receive repo-relative implementation diagnostic', async () => {
     const scopedArchitect = await connectAndRegister({
-      port, role: 'architect', paneId: '1', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'architect', paneId: '1', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedArchitect);
     const scopedBuilder = await connectAndRegister({
-      port, role: 'builder', paneId: '2', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'builder', paneId: '2', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedBuilder);
 
@@ -898,11 +898,11 @@ describe('WebSocket Delivery Audit', () => {
 
   test('allows side-profile builder to receive generic operational words like worktree', async () => {
     const scopedArchitect = await connectAndRegister({
-      port, role: 'architect', paneId: '1', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'architect', paneId: '1', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedArchitect);
     const scopedBuilder = await connectAndRegister({
-      port, role: 'builder', paneId: '2', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'builder', paneId: '2', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedBuilder);
 
@@ -919,7 +919,7 @@ describe('WebSocket Delivery Audit', () => {
     scopedArchitect.send(JSON.stringify({
       type: 'send',
       target: 'builder',
-      content: 'worktree state for the sideprofile profile got out of sync',
+      content: 'worktree state for the client profile got out of sync',
       messageId,
       ackRequired: true,
     }));
@@ -932,18 +932,18 @@ describe('WebSocket Delivery Audit', () => {
 
   test('allows side-profile builder to receive within-profile absolute path', async () => {
     const scopedArchitect = await connectAndRegister({
-      port, role: 'architect', paneId: '1', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'architect', paneId: '1', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedArchitect);
     const scopedBuilder = await connectAndRegister({
-      port, role: 'builder', paneId: '2', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'builder', paneId: '2', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedBuilder);
 
     const messageId = 'allow-within-profile-path-1';
     const deliveryPromise = waitForMessage(
       scopedBuilder,
-      (msg) => msg.type === 'message' && msg.content.includes('/profiles/sideprofile/workspace/')
+      (msg) => msg.type === 'message' && msg.content.includes('/profiles/client/workspace/')
     );
     const ackPromise = waitForMessage(
       scopedArchitect,
@@ -953,7 +953,7 @@ describe('WebSocket Delivery Audit', () => {
     scopedArchitect.send(JSON.stringify({
       type: 'send',
       target: 'builder',
-      content: 'open D:/projects/squidrun/.squidrun/profiles/sideprofile/workspace/notes/draft.md',
+      content: 'open D:/projects/squidrun/.squidrun/profiles/client/workspace/notes/draft.md',
       messageId,
       ackRequired: true,
     }));
@@ -961,16 +961,16 @@ describe('WebSocket Delivery Audit', () => {
     const [ack, delivered] = await Promise.all([ackPromise, deliveryPromise]);
     expect(ack.ok).toBe(true);
     expect(ack.status).not.toBe('routing_error');
-    expect(delivered.content).toContain('/profiles/sideprofile/workspace/');
+    expect(delivered.content).toContain('/profiles/client/workspace/');
   });
 
   test('allows side-profile builder to receive the word fixture in implementation notes', async () => {
     const scopedArchitect = await connectAndRegister({
-      port, role: 'architect', paneId: '1', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'architect', paneId: '1', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedArchitect);
     const scopedBuilder = await connectAndRegister({
-      port, role: 'builder', paneId: '2', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'builder', paneId: '2', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedBuilder);
 
@@ -1000,7 +1000,7 @@ describe('WebSocket Delivery Audit', () => {
 
   test('still rejects main-bound trading term aimed at side-profile builder', async () => {
     const scopedReceiver = await connectAndRegister({
-      port, role: 'builder', paneId: '2', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'builder', paneId: '2', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedReceiver);
     const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -1018,7 +1018,7 @@ describe('WebSocket Delivery Audit', () => {
       content: 'hyperliquid order failed retry now',
       messageId,
       ackRequired: true,
-      metadata: { routing: { profileName: 'sideprofile', windowKey: 'sideprofile' } },
+      metadata: { routing: { profileName: 'client', windowKey: 'client' } },
     }));
 
     const ack = await ackPromise;
@@ -1029,13 +1029,13 @@ describe('WebSocket Delivery Audit', () => {
       reason: 'content_context_mismatch',
       pattern: 'MAIN_CONTEXT_PATTERN',
       targetRole: 'builder',
-      targetProfile: 'sideprofile',
+      targetProfile: 'client',
     }));
   });
 
   test('rejects foreign main-tree absolute path aimed at side-profile builder', async () => {
     const scopedReceiver = await connectAndRegister({
-      port, role: 'builder', paneId: '2', profileName: 'sideprofile', windowKey: 'sideprofile',
+      port, role: 'builder', paneId: '2', profileName: 'client', windowKey: 'client',
     });
     activeClients.add(scopedReceiver);
     const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -1053,7 +1053,7 @@ describe('WebSocket Delivery Audit', () => {
       content: 'look at D:/projects/squidrun/ui/scripts/hm-send.js for the patch',
       messageId,
       ackRequired: true,
-      metadata: { routing: { profileName: 'sideprofile', windowKey: 'sideprofile' } },
+      metadata: { routing: { profileName: 'client', windowKey: 'client' } },
     }));
 
     const ack = await ackPromise;
@@ -1064,7 +1064,7 @@ describe('WebSocket Delivery Audit', () => {
       reason: 'content_context_mismatch',
       pattern: 'foreign_main_tree_path',
       targetRole: 'builder',
-      targetProfile: 'sideprofile',
+      targetProfile: 'client',
     }));
   });
 
@@ -1083,7 +1083,7 @@ describe('WebSocket Delivery Audit', () => {
     mainArchitect.send(JSON.stringify({
       type: 'send',
       target: 'builder',
-      content: 'sideprofile case file is at ./notes/draft.md',
+      content: 'client case file is at ./notes/draft.md',
       messageId,
       ackRequired: true,
     }));
@@ -1105,16 +1105,16 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
     });
     activeClients.add(scopedArchitect);
     const scopedBuilder = await connectAndRegister({
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
     });
     activeClients.add(scopedBuilder);
     const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -1137,8 +1137,8 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
           channel: 'scoped-diagnostic',
         },
       },
@@ -1171,8 +1171,8 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
           channel: 'scoped-diagnostic',
         },
       },
@@ -1194,18 +1194,18 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedArchitect);
     const scopedBuilder = await connectAndRegister({
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedBuilder);
     const mainArchitect = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -1241,18 +1241,18 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
         sourceAddress: 'architect@main',
-        targetAddress: 'architect@sideprofile',
+        targetAddress: 'architect@client',
         routeAttribution: {
           sourceProfileName: 'main',
           sourceWindowKey: 'main',
           sourceAddress: 'architect@main',
-          targetProfileName: 'sideprofile',
-          targetWindowKey: 'sideprofile',
-          targetAddress: 'architect@sideprofile',
+          targetProfileName: 'client',
+          targetWindowKey: 'client',
+          targetAddress: 'architect@client',
         },
       },
     }));
@@ -1264,10 +1264,10 @@ describe('WebSocket Delivery Audit', () => {
     expect(received.from).toBe('architect');
     expect(received.metadata).toEqual(expect.objectContaining({
       sourceAddress: 'architect@main',
-      targetAddress: 'architect@sideprofile',
+      targetAddress: 'architect@client',
       routeAttribution: expect.objectContaining({
         sourceAddress: 'architect@main',
-        targetAddress: 'architect@sideprofile',
+        targetAddress: 'architect@client',
       }),
     }));
     expect(leakedToScopedBuilder).toBe(false);
@@ -1306,18 +1306,18 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
         sourceAddress: 'architect@main',
-        targetAddress: 'architect@sideprofile',
+        targetAddress: 'architect@client',
         routeAttribution: {
           sourceProfileName: 'main',
           sourceWindowKey: 'main',
           sourceAddress: 'architect@main',
-          targetProfileName: 'sideprofile',
-          targetWindowKey: 'sideprofile',
-          targetAddress: 'architect@sideprofile',
+          targetProfileName: 'client',
+          targetWindowKey: 'client',
+          targetAddress: 'architect@client',
         },
       },
     }));
@@ -1341,9 +1341,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedArchitect);
 
@@ -1379,12 +1379,12 @@ describe('WebSocket Delivery Audit', () => {
           profileName: 'main',
           windowKey: 'main',
         },
-        sourceAddress: 'architect@sideprofile',
+        sourceAddress: 'architect@client',
         targetAddress: 'architect@main',
         routeAttribution: {
-          sourceProfileName: 'sideprofile',
-          sourceWindowKey: 'sideprofile',
-          sourceAddress: 'architect@sideprofile',
+          sourceProfileName: 'client',
+          sourceWindowKey: 'client',
+          sourceAddress: 'architect@client',
           targetProfileName: 'main',
           targetWindowKey: 'main',
           targetAddress: 'architect@main',
@@ -1413,9 +1413,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedBuilder);
 
@@ -1464,9 +1464,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedArchitect);
     const mainBuilder = await connectAndRegister({ port, role: 'builder', paneId: '2', profileName: 'main' });
@@ -1498,8 +1498,8 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
       },
     }));
@@ -1508,7 +1508,7 @@ describe('WebSocket Delivery Audit', () => {
     await sleep(100);
     expect(ack.ok).toBe(false);
     expect(ack.status).toBe('cross_profile_scope_mismatch');
-    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'sideprofile' }));
+    expect(ack.routeScope).toEqual(expect.objectContaining({ profileName: 'client' }));
     expect(leakedToSide).toBe(false);
   });
 
@@ -1517,8 +1517,8 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'builder',
       paneId: '2',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
     });
     activeClients.add(scopedReceiver);
     const mainSender = await connectAndRegister({ port, role: 'architect', paneId: '1', profileName: 'main' });
@@ -1542,8 +1542,8 @@ describe('WebSocket Delivery Audit', () => {
       ackRequired: true,
       metadata: {
         routing: {
-          profileName: 'sideprofile',
-          windowKey: 'sideprofile',
+          profileName: 'client',
+          windowKey: 'client',
         },
       },
     }));
@@ -2115,9 +2115,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedProbe);
 
@@ -2137,8 +2137,8 @@ describe('WebSocket Delivery Audit', () => {
     expect(health.status).toBe('handler_route_available');
     expect(health.source).toBe('local_message_handler');
     expect(health.routeScope).toEqual(expect.objectContaining({
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
     }));
   });
 
@@ -2147,9 +2147,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedProbe);
 
@@ -2184,9 +2184,9 @@ describe('WebSocket Delivery Audit', () => {
       port,
       role: 'architect',
       paneId: '1',
-      profileName: 'sideprofile',
-      windowKey: 'sideprofile',
-      sessionScopeId: 'app-test:sideprofile',
+      profileName: 'client',
+      windowKey: 'client',
+      sessionScopeId: 'app-test:client',
     });
     activeClients.add(scopedSender);
 

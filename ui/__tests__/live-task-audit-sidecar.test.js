@@ -369,12 +369,12 @@ describe('live-task-audit-sidecar', () => {
           updatedAt: '2026-06-01T07:30:00.000Z',
         },
         {
-          id: 'trustquote-prod-local-only-debt-393',
-          title: 'Track TrustQuote local-only deploy debt read-only',
+          id: 'exampleapp-prod-local-only-debt-393',
+          title: 'Track ExampleApp local-only deploy debt read-only',
           status: 'watch',
           kind: 'cross_project_read_only',
           updatedAt: '2026-06-01T07:31:00.000Z',
-          profile: 'trustquote',
+          profile: 'exampleapp',
         },
       ],
     });
@@ -386,10 +386,10 @@ describe('live-task-audit-sidecar', () => {
     });
 
     expect(snapshot.future.items.map((item) => item.id)).toEqual([
-      'trustquote-prod-local-only-debt-393',
+      'exampleapp-prod-local-only-debt-393',
       'mira-live-vs-prototype-debt-393',
     ]);
-    expect(snapshot.future.items.map((item) => item.section)).toEqual(['TrustQuote', 'Mira']);
+    expect(snapshot.future.items.map((item) => item.section)).toEqual(['ExampleApp', 'Mira']);
     expect(snapshot.history.items).toEqual([
       expect.objectContaining({
         id: 'verify-stray-electron-main-bundle-391',
@@ -435,8 +435,12 @@ describe('live-task-audit-sidecar', () => {
       now: '2026-06-02T22:50:00.000Z',
     });
 
-    expect(sidecar.TASK_AUDIT_SECTIONS).toEqual(['Mira', 'TrustQuote', 'PC Hardware', 'SquidRun', 'Other']);
+    expect(sidecar.TASK_AUDIT_SECTIONS).toEqual(['Mira', 'ExampleApp', 'PC Hardware', 'SquidRun', 'Other']);
     expect(snapshot.active.items.map((item) => item.section)).toEqual(['PC Hardware', 'PC Hardware']);
+    expect(sidecar.classifyTaskAuditSection({
+      title: 'BIOS firmware currency for X870E AORUS ELITE WIFI7',
+      sourceRef: 'C:/temp/mira/a3/cache.json',
+    })).toBe('PC Hardware');
   });
 
   test('falls back to current-lane and queue while keeping stale markers in future audit', () => {

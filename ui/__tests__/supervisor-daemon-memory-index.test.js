@@ -48,9 +48,9 @@ describe('SupervisorDaemon memory index refresh scheduling', () => {
     const daemon = new SupervisorDaemon({
       projectRoot: tempDir,
       dbPath: path.join(tempDir, 'supervisor.db'),
-      logPath: path.join(tempDir, '.squidrun', 'runtime-sideprofile', 'supervisor.log'),
-      statusPath: path.join(tempDir, '.squidrun', 'runtime-sideprofile', 'supervisor-status.json'),
-      pidPath: path.join(tempDir, '.squidrun', 'runtime-sideprofile', 'supervisor.pid'),
+      logPath: path.join(tempDir, '.squidrun', 'runtime-client', 'supervisor.log'),
+      statusPath: path.join(tempDir, '.squidrun', 'runtime-client', 'supervisor-status.json'),
+      pidPath: path.join(tempDir, '.squidrun', 'runtime-client', 'supervisor.pid'),
       logger: makeLogger(),
       memorySearchIndex: { indexAll: jest.fn(), close: jest.fn() },
       env: { SQUIDRUN_PROFILE: 'scoped' },

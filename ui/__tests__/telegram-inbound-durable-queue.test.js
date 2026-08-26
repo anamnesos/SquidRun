@@ -11,7 +11,7 @@
  * delivered. Silent loss: the cursor says delivered, the file disagrees, and
  * nothing errors.
  *
- * That is exactly the incident shape — updates 808499314 and 808499315 arrived
+ * That is exactly the incident shape — updates 700100100 and 700100101 arrived
  * and drained together. Building app-down continuity on that path unchanged
  * would have turned a DELAY bug into a LOSS bug, which is strictly worse
  * because it looks like success.
@@ -49,10 +49,10 @@ describe('the defect being fixed (reproduced, not assumed)', () => {
 
 describe('durable append queue keyed by updateId', () => {
   test('BOTH messages survive one poll batch, in updateId order', () => {
-    queue.append(dir, { updateId: 808499314, text: 'first message', chatId: REDACTED });
-    queue.append(dir, { updateId: 808499315, text: 'second message', chatId: REDACTED });
+    queue.append(dir, { updateId: 700100100, text: 'first message', chatId: 7000000001 });
+    queue.append(dir, { updateId: 700100101, text: 'second message', chatId: 7000000001 });
     const pending = queue.readPending(dir);
-    expect(pending.map((e) => e.updateId)).toEqual([808499314, 808499315]);
+    expect(pending.map((e) => e.updateId)).toEqual([700100100, 700100101]);
     expect(pending.map((e) => e.text)).toEqual(['first message', 'second message']);
   });
 
@@ -136,9 +136,9 @@ describe('durable append queue keyed by updateId', () => {
   });
 
   test('CHAT ISOLATION: entries carry their chatId and can be filtered', () => {
-    queue.append(dir, { updateId: 1, text: 'main', chatId: REDACTED });
-    queue.append(dir, { updateId: 2, text: 'other', chatId: REDACTED-CHAT-ID });
-    const mainOnly = queue.readPending(dir, { chatId: REDACTED });
+    queue.append(dir, { updateId: 1, text: 'main', chatId: 7000000001 });
+    queue.append(dir, { updateId: 2, text: 'other', chatId: 7000000002 });
+    const mainOnly = queue.readPending(dir, { chatId: 7000000001 });
     expect(mainOnly.map((e) => e.updateId)).toEqual([1]);
   });
 

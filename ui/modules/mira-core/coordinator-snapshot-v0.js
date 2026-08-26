@@ -383,10 +383,10 @@ function pendingTelegramCount(pendingPaneDeliveries) {
   }).length;
 }
 
-function detectTrustQuoteClosed(messages = []) {
+function detectExampleAppClosed(messages = []) {
   const match = normalizeEvidenceMessages(messages).find((message) => {
     const body = String(message.body || '');
-    return /trustquote/i.test(body)
+    return /exampleapp/i.test(body)
       && /tony\s+l[ui]/i.test(body)
       && /\b(done|sent|closed|paid|complete|completed)\b/i.test(body);
   });
@@ -825,7 +825,7 @@ module.exports = {
   ZERO_SIDE_EFFECT_COUNTERS,
   buildMiraCoordinatorSnapshotV0,
   defaultReadLocalState,
-  detectTrustQuoteClosed,
+  detectExampleAppClosed,
   pendingTelegramCount,
   uiMetadataPreflight,
   validateMiraCoordinatorSnapshotV0Output,

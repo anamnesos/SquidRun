@@ -66,7 +66,7 @@ describe('watcher-worker.js', () => {
     expect(ignored('D:/repo/.squidrun/runtime/session-state.json')).toBe(true);
     expect(ignored('D:/repo/.squidrun/runtime/team-memory.sqlite')).toBe(true);
     expect(ignored('D:/repo/.squidrun/runtime')).toBe(true);
-    expect(ignored('D:/repo/.squidrun/runtime-sideprofile/session.md')).toBe(true);
+    expect(ignored('D:/repo/.squidrun/runtime-client/session.md')).toBe(true);
     expect(ignored('D:/repo/.squidrun/perf-profile.json')).toBe(true);
     expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/logs/app.log')).toBe(true);
     expect(worker.isRuntimeNoopPath('D:/repo/.squidrun/runtime/terminal-fit-telemetry.jsonl')).toBe(true);

@@ -44,23 +44,23 @@ class FakeDaemonClient extends EventEmitter {
 }
 
 function writeCaptureFile(tempDir) {
-  const capturePath = path.join(tempDir, 'capture-pane-trustquote-app.png');
+  const capturePath = path.join(tempDir, 'capture-pane-exampleapp-app.png');
   fs.writeFileSync(capturePath, 'capture image');
   return capturePath;
 }
 
 describe('hm-visible-pane-submit-harness', () => {
-  test('resolves explicit Squid Room TrustQuote arm pane ids', () => {
-    expect(resolvePaneId({ windowKey: 'squid-room', targetRole: 'trustquote-app', paneId: 'trustquote-app' })).toBe('trustquote-app');
+  test('resolves explicit Squid Room ExampleApp arm pane ids', () => {
+    expect(resolvePaneId({ windowKey: 'squid-room', targetRole: 'exampleapp-app', paneId: 'exampleapp-app' })).toBe('exampleapp-app');
     expect(resolvePaneId({ windowKey: 'squid-room', targetRole: 'builder' })).toBe('2');
   });
 
-  test('collects CLI options for a Squid Room TrustQuote visible pane run', () => {
+  test('collects CLI options for a Squid Room ExampleApp visible pane run', () => {
     const parsed = parseArgs([
       'run',
       '--window-key', 'squid-room',
-      '--target-role', 'trustquote-app',
-      '--pane-id', 'trustquote-app',
+      '--target-role', 'exampleapp-app',
+      '--pane-id', 'exampleapp-app',
       '--message', 'What do you see?',
       '--artifact-root', 'D:/tmp/artifacts',
     ]);
@@ -69,23 +69,23 @@ describe('hm-visible-pane-submit-harness', () => {
     expect(options).toMatchObject({
       command: 'run',
       windowKey: 'squid-room',
-      targetRole: 'trustquote-app',
-      paneId: 'trustquote-app',
+      targetRole: 'exampleapp-app',
+      paneId: 'exampleapp-app',
       message: 'What do you see?',
       capturePort: 9900,
     });
   });
 
-  test('writes manifest that the surface guard accepts for the same Squid Room TrustQuote pane surface', async () => {
+  test('writes manifest that the surface guard accepts for the same Squid Room ExampleApp pane surface', async () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'visible-pane-submit-'));
     const capturePath = writeCaptureFile(tempDir);
 
     try {
       const result = await runHarness({
         windowKey: 'squid-room',
-        targetRole: 'trustquote-app',
-        paneId: 'trustquote-app',
-        terminalId: 'trustquote-app',
+        targetRole: 'exampleapp-app',
+        paneId: 'exampleapp-app',
+        terminalId: 'exampleapp-app',
         message: 'Harness prompt',
         role: 'builder',
         port: 9900,
@@ -111,7 +111,7 @@ describe('hm-visible-pane-submit-harness', () => {
         captureScreenshot: async (payload) => ({
           success: true,
           path: capturePath,
-          paneId: 'trustquote-app',
+          paneId: 'exampleapp-app',
           scope: 'pane',
           imageSha256: 'b'.repeat(64),
           captureEvent: {
@@ -131,12 +131,12 @@ describe('hm-visible-pane-submit-harness', () => {
         schema: 'squidrun.visible_pane_submit_harness.v0',
         producer: 'hm-visible-pane-submit-harness',
         windowKey: 'squid-room',
-        paneId: 'trustquote-app',
-        targetRole: 'trustquote-app',
+        paneId: 'exampleapp-app',
+        targetRole: 'exampleapp-app',
         surface: {
           sameWindowUserSurface: true,
           windowKey: 'squid-room',
-          paneId: 'trustquote-app',
+          paneId: 'exampleapp-app',
         },
         capture: {
           provider: 'squidrun-app-websocket-screenshot',
@@ -145,13 +145,13 @@ describe('hm-visible-pane-submit-harness', () => {
           eventSource: 'squidrun-electron-main-capture-event',
           imageSha256: 'b'.repeat(64),
           windowKey: 'squid-room',
-          paneId: 'trustquote-app',
+          paneId: 'exampleapp-app',
           scope: 'pane',
         },
       });
       expect(validateSurfaceArtifact(result.screenshotPath, {
         nowMs: NOW_MS,
-        content: `Visible in the TrustQuote dashboard: ${result.screenshotPath}`,
+        content: `Visible in the ExampleApp dashboard: ${result.screenshotPath}`,
         captureEventVerifier: () => ({ ok: true }),
       })).toEqual(expect.objectContaining({ ok: true }));
     } finally {
@@ -166,9 +166,9 @@ describe('hm-visible-pane-submit-harness', () => {
     try {
       await expect(runHarness({
         windowKey: 'squid-room',
-        targetRole: 'trustquote-app',
-        paneId: 'trustquote-app',
-        terminalId: 'trustquote-app',
+        targetRole: 'exampleapp-app',
+        paneId: 'exampleapp-app',
+        terminalId: 'exampleapp-app',
         message: 'Harness prompt',
         role: 'builder',
         port: 9900,
@@ -193,7 +193,7 @@ describe('hm-visible-pane-submit-harness', () => {
         captureScreenshot: async () => ({
           success: true,
           path: capturePath,
-          paneId: 'trustquote-app',
+          paneId: 'exampleapp-app',
           scope: 'pane',
         }),
       })).rejects.toThrow(/app-side capture event/);

@@ -11,8 +11,8 @@ const {
   isAllowedInvokeChannel,
 } = require('../modules/bridge/channel-policy');
 const {
-  seedTrustQuoteArmRegistry,
-} = require('../modules/main/trustquote-arm-registry-seed');
+  seedExampleAppArmRegistry,
+} = require('../modules/main/exampleapp-arm-registry-seed');
 const {
   queryArmMissingWatchdogs,
   closeArmRegistryStores,
@@ -81,7 +81,7 @@ maybeDescribe('arm state projection IPC handler', () => {
       schema: 'squidrun.arm_state_projection.v0',
       projectionOnly: true,
       readOnly: true,
-      registry: { appRoomId: 'trustquote' },
+      registry: { appRoomId: 'exampleapp' },
       sideEffects: {
         writesPerformed: 0,
         dispatchesPerformed: 0,
@@ -94,16 +94,16 @@ maybeDescribe('arm state projection IPC handler', () => {
     expect(ipcMain.handle).toHaveBeenCalledWith(ARM_STATE_PROJECTION_CHANNEL, expect.any(Function));
 
     const response = await registered[ARM_STATE_PROJECTION_CHANNEL](null, {
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
       dbPath,
       nowMs: 12345,
       includeRows: false,
     });
 
     expect(buildArmStateProjection).toHaveBeenCalledWith({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-406:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-406:exampleapp',
     }, {
       nowMs: 12345,
       includeRows: false,
@@ -119,20 +119,20 @@ maybeDescribe('arm state projection IPC handler', () => {
   });
 
   test('returns projection output without advancing watchdogs or dispatching apply requests', () => {
-    const sessionId = 'app-session-handler:trustquote';
-    const seeded = seedTrustQuoteArmRegistry({
+    const sessionId = 'app-session-handler:exampleapp';
+    const seeded = seedExampleAppArmRegistry({
       dbPath,
       sessionId,
       nowMs: 1_000,
     });
     expect(seeded.ok).toBe(true);
     expect(tickMissingArmWatchdog({
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       sessionId,
     }, { dbPath, nowMs: 2_000, dryRun: true }).ok).toBe(true);
     expect(enqueueArmApplyRequest({
       requestId: 'handler-money-write-1',
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       sessionId,
       armKey: 'invoice',
       actionCategory: 'money_write',
@@ -145,7 +145,7 @@ maybeDescribe('arm state projection IPC handler', () => {
     const beforeRequests = queryArmApplyRequests({ registryId: seeded.registry.registryId }, { dbPath });
 
     const response = buildArmStateProjectionResponse({
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       sessionId,
       nowMs: 999_000,
     }, { dbPath });
@@ -182,8 +182,8 @@ maybeDescribe('arm state projection IPC handler', () => {
   });
 
   test('ignores renderer-supplied db path and does not create alternate database files', () => {
-    const sessionId = 'app-session-handler-override:trustquote';
-    const seeded = seedTrustQuoteArmRegistry({
+    const sessionId = 'app-session-handler-override:exampleapp';
+    const seeded = seedExampleAppArmRegistry({
       dbPath,
       sessionId,
       nowMs: 1_000,
@@ -192,7 +192,7 @@ maybeDescribe('arm state projection IPC handler', () => {
     const alternateDbPath = path.join(tempDir, 'projection-attack.db');
 
     const response = buildArmStateProjectionResponse({
-      appRoomId: 'trustquote',
+      appRoomId: 'exampleapp',
       sessionId,
       db_path: alternateDbPath,
       nowMs: 9_000,
@@ -216,15 +216,15 @@ maybeDescribe('arm state projection IPC handler', () => {
   });
 
   test('resolves canonical manifest across sessions without seeding a new one', () => {
-    const seeded = seedTrustQuoteArmRegistry({
+    const seeded = seedExampleAppArmRegistry({
       dbPath,
-      sessionId: 'app-session-handler-existing:trustquote',
+      sessionId: 'app-session-handler-existing:exampleapp',
       nowMs: 1_000,
     });
     expect(seeded.ok).toBe(true);
     const response = buildArmStateProjectionResponse({
-      appRoomId: 'trustquote',
-      sessionId: 'app-session-missing:trustquote',
+      appRoomId: 'exampleapp',
+      sessionId: 'app-session-missing:exampleapp',
       nowMs: 5_000,
     }, { dbPath });
 
@@ -237,8 +237,8 @@ maybeDescribe('arm state projection IPC handler', () => {
       executorEnabled: false,
     }));
     expect(response.registry).toEqual(expect.objectContaining({
-      sessionId: 'app-room:trustquote',
-      readinessSessionId: 'app-session-missing:trustquote',
+      sessionId: 'app-room:exampleapp',
+      readinessSessionId: 'app-session-missing:exampleapp',
       desiredCount: 4,
       readyCount: 0,
       missingCount: 4,
