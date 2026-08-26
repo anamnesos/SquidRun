@@ -17,6 +17,9 @@ const {
 const { TeamRoomStore } = require('../modules/main/team-room-store');
 const { main: runRoomCli } = require('../scripts/hm-room');
 
+const ORIGINAL_RENAME_SYNC = fs.renameSync.bind(fs);
+const ORIGINAL_UNLINK_SYNC = fs.unlinkSync.bind(fs);
+
 function request(origin, route, options = {}) {
   return new Promise((resolve, reject) => {
     const body = options.body === undefined ? null : Buffer.from(JSON.stringify(options.body), 'utf8');
@@ -229,14 +232,13 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     fs.writeFileSync(residue, 'crash residue');
     fs.writeFileSync(unrelated, 'unrelated sentinel');
     runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
-    const realUnlink = fs.unlinkSync;
     const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation((filePath) => {
       if (path.resolve(String(filePath)) === path.resolve(residue)) {
         const error = new Error('injected_recovery_lock');
         error.code = 'EBUSY';
         throw error;
       }
-      return realUnlink(filePath);
+      return ORIGINAL_UNLINK_SYNC(filePath);
     });
 
     await expect(runtime.start()).resolves.toEqual(expect.objectContaining({
@@ -1226,7 +1228,6 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const runtimeRoot = path.join(tempRoot, '.squidrun', 'runtime', 'team-room');
     const manifestPath = path.join(runtimeRoot, 'runtime.json');
     const credentialPath = path.join(runtimeRoot, 'credentials', 'builder.json');
-    const realRename = fs.renameSync;
     let failedToken;
     let failedPort;
     let injected = false;
@@ -1237,7 +1238,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
         failedPort = Number(runtime.server.address().port);
         throw new Error('injected_initial_manifest_publish_failure');
       }
-      return realRename(source, destination);
+      return ORIGINAL_RENAME_SYNC(source, destination);
     });
 
     await expect(runtime.start()).resolves.toEqual({
@@ -1293,7 +1294,6 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const runtimeRoot = path.join(tempRoot, '.squidrun', 'runtime', 'team-room');
     const manifestPath = path.join(runtimeRoot, 'runtime.json');
     const credentialPath = path.join(runtimeRoot, 'credentials', 'builder.json');
-    const realRename = fs.renameSync;
     let failedToken;
     let injected = false;
     const renameSpy = jest.spyOn(fs, 'renameSync').mockImplementation((source, destination) => {
@@ -1302,7 +1302,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
         failedToken = JSON.parse(fs.readFileSync(source, 'utf8')).token;
         throw new Error('injected_builder_credential_publish_failure');
       }
-      return realRename(source, destination);
+      return ORIGINAL_RENAME_SYNC(source, destination);
     });
 
     await expect(runtime.start()).resolves.toEqual({
@@ -1337,8 +1337,6 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const runtimeRoot = path.join(tempRoot, '.squidrun', 'runtime', 'team-room');
     const manifestPath = path.join(runtimeRoot, 'runtime.json');
     const credentialPath = path.join(runtimeRoot, 'credentials', 'builder.json');
-    const realRename = fs.renameSync;
-    const realUnlink = fs.unlinkSync;
     let failedToken;
     let ownedTemporaryPath;
     let renameInjected = false;
@@ -1350,7 +1348,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
         failedToken = JSON.parse(fs.readFileSync(source, 'utf8')).token;
         throw new Error('injected_builder_credential_rename_failure');
       }
-      return realRename(source, destination);
+      return ORIGINAL_RENAME_SYNC(source, destination);
     });
     const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation((target) => {
       if (!unlinkInjected && ownedTemporaryPath && path.resolve(target) === ownedTemporaryPath) {
@@ -1359,7 +1357,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
         error.code = 'EBUSY';
         throw error;
       }
-      return realUnlink(target);
+      return ORIGINAL_UNLINK_SYNC(target);
     });
 
     await expect(runtime.start()).resolves.toEqual({
@@ -1432,14 +1430,13 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     const oldCredential = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'credentials', 'builder.json'), 'utf8'));
     builderLaunchId = `pl_${'7'.repeat(32)}`;
 
-    const realRename = fs.renameSync;
     let injected = false;
     const renameSpy = jest.spyOn(fs, 'renameSync').mockImplementation((source, destination) => {
       if (!injected && path.resolve(destination) === path.resolve(manifestPath)) {
         injected = true;
         throw new Error('injected_manifest_publish_failure');
       }
-      return realRename(source, destination);
+      return ORIGINAL_RENAME_SYNC(source, destination);
     });
     await expect(runtime.start()).resolves.toEqual(expect.objectContaining({
       ok: false,

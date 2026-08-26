@@ -29,6 +29,8 @@ module.exports = {
   setupFiles: ['<rootDir>/__tests__/noise-setup.js'],
   // Setup file for global mocks
   setupFilesAfterEnv: ['<rootDir>/__tests__/setup.js'],
+  // A failed assertion must not leak an fs/process spy into the next test.
+  restoreMocks: true,
   // Increase timeout for async tests
   testTimeout: 10000,
 };

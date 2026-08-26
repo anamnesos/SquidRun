@@ -17,14 +17,20 @@ describe('runtime contracts on the mount harness', () => {
 
   beforeAll(() => {
     room = createMountedRoom({ petIds: ['builder', 'oracle'] });
-    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => fakeNow);
     runtime = require('../modules/squid-room-creature-runtime');
     runtime.mountSquidRoomCreatures();
     room.step(5, 16);
   });
 
-  afterAll(() => {
+  beforeEach(() => {
+    nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => fakeNow);
+  });
+
+  afterEach(() => {
     nowSpy.mockRestore();
+  });
+
+  afterAll(() => {
     runtime.unmountSquidRoomCreatures?.();
     room.destroy();
   });
