@@ -1,12 +1,14 @@
 [extend]
 useDefault = true
 
-# These exact values are deliberately fake inputs used to prove redaction and
-# routing behavior. Keep the allowlist value-scoped so a real secret in the
-# same test files still fails CI.
+# These exact values are either deliberate synthetic inputs used to prove
+# redaction/routing behavior or a reviewed source-code identifier that the
+# generic key rule mistakes for a credential. Keep the allowlist value-scoped
+# so a real secret in the same files still fails CI.
 [allowlist]
-description = "Reviewed synthetic test values"
+description = "Reviewed non-secret test values and identifiers"
 regexes = [
+  '''VISIBLE_PRESENCE_A0_PROOF_KEY''',
   '''sk-1234567890abcdefghijklmnop''',
   '''ghp_1234567890abcdefghijklmnop''',
   '''sk-testsecret12345678901234567890''',
