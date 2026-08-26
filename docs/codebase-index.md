@@ -94,7 +94,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `.env.example` | config | 2615 |
 | `.gitattributes` | config | 317 |
 | `.gitignore` | config | 790 |
-| `.gitleaks.toml` | config | 531 |
+| `.gitleaks.toml` | config | 681 |
 | `AGENTS.md` | doc | 2519 |
 | `ARCHITECTURE.md` | doc | 5675 |
 | `CLAUDE-AI.md` | doc | 3856 |
