@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { canonicalPathContains } = require('./canonical-path');
 
 const {
   MAIN_ORACLE_CODEX_POLICY,
@@ -31,16 +32,13 @@ function defaultCodexSessionRoot(env = process.env) {
   return path.resolve(codexHome || path.join(os.homedir(), '.codex'), 'sessions');
 }
 
-function isPathInside(candidate, root, platform = process.platform) {
-  const candidatePath = path.resolve(candidate);
-  const rootPath = path.resolve(root);
-  const relative = path.relative(rootPath, candidatePath);
-  if (!relative || relative === '.') return false;
-  if (relative.startsWith('..') || path.isAbsolute(relative)) return false;
-  if (platform === 'win32') {
-    return candidatePath.toLowerCase().startsWith(`${rootPath.toLowerCase()}${path.sep}`);
-  }
-  return true;
+function isPathInside(candidate, root, platform = process.platform, fsImpl = fs) {
+  return canonicalPathContains(root, candidate, {
+    platform,
+    fsImpl,
+    allowEqual: false,
+    allowMissing: true,
+  });
 }
 
 function sameFileIdentity(left, right) {
@@ -100,7 +98,7 @@ function readLatestLiveState(transcriptPath, options = {}) {
   if (!targetPath || !sessionId || !EXACT_SESSION_ID_PATTERN.test(sessionId)) {
     return { ok: false, reason: 'transcript_identity_invalid' };
   }
-  if (!isPathInside(targetPath, codexSessionRoot, platform)) {
+  if (!isPathInside(targetPath, codexSessionRoot, platform, fsImpl)) {
     return { ok: false, reason: 'transcript_outside_codex_session_root' };
   }
   if (!path.basename(targetPath).toLowerCase().includes(sessionId.toLowerCase())) {

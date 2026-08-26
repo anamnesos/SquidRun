@@ -235,12 +235,12 @@ describe('memory consistency check', () => {
       requestedProfile: 'client',
       reason: 'profile_workspace_junction_to_shared_corpus',
       requestedProjectRoot: path.resolve(profileRoot),
-      effectiveProjectRoot: path.resolve(mainRoot),
+      effectiveProjectRoot: fs.realpathSync.native(mainRoot),
       profileCognitiveDbPath: path.resolve(profileRoot, '.squidrun', 'runtime-client', 'cognitive-memory.db'),
-      cognitiveDbPath: path.resolve(mainDbPath),
+      cognitiveDbPath: fs.realpathSync.native(mainDbPath),
     }));
     expect(result.workspaceDir).toBe(fs.realpathSync.native(mainWorkspace));
-    expect(result.cognitiveDbPath).toBe(path.resolve(mainDbPath));
+    expect(result.cognitiveDbPath).toBe(fs.realpathSync.native(mainDbPath));
     expect(result.summary.knowledgeEntryCount).toBe(entries.length);
     expect(result.summary.knowledgeNodeCount).toBe(entries.length);
   });

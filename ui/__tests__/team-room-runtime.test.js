@@ -233,7 +233,7 @@ describe('Team Room HTTP/WebSocket runtime', () => {
     fs.writeFileSync(unrelated, 'unrelated sentinel');
     runtime = new TeamRoomRuntime(runtimeOptions(tempRoot, async () => ({ ok: true })));
     const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation((filePath) => {
-      if (path.resolve(String(filePath)) === path.resolve(residue)) {
+      if (fs.realpathSync.native(String(filePath)) === fs.realpathSync.native(residue)) {
         const error = new Error('injected_recovery_lock');
         error.code = 'EBUSY';
         throw error;

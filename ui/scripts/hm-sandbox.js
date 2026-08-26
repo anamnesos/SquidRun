@@ -26,6 +26,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const {
+  canonicalPathContains,
+  canonicalizePathIdentity,
+} = require('../modules/canonical-path');
 
 const SANDBOX_ROOT_NAME = 'squidrun-siege-sandboxes';
 
@@ -71,13 +75,17 @@ function destroySandbox(repo, name) {
 
 function listSandboxes(repo) {
   const root = sandboxRoot(repo);
+  const canonicalRoot = canonicalizePathIdentity(root, { allowMissing: true });
   const rows = git(repo, ['worktree', 'list', '--porcelain']).split('\n\n');
   const sandboxes = [];
   for (const row of rows) {
     const wt = row.split('\n').find((l) => l.startsWith('worktree '));
     if (!wt) continue;
-    const wtPath = path.resolve(wt.slice('worktree '.length));
-    if (wtPath.startsWith(path.resolve(root) + path.sep)) {
+    const wtPath = canonicalizePathIdentity(wt.slice('worktree '.length), { allowMissing: false });
+    if (canonicalRoot && wtPath && canonicalPathContains(canonicalRoot, wtPath, {
+      allowEqual: false,
+      allowMissing: false,
+    })) {
       sandboxes.push({ name: path.basename(wtPath), path: wtPath });
     }
   }

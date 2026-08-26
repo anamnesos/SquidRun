@@ -2,6 +2,12 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const {
+  canonicalPathContains,
+  canonicalPathsEqual,
+  canonicalizePathIdentity,
+  comparablePathIdentity,
+} = require('./canonical-path');
 
 const SCHEMA = 'squidrun.codex_pane_sessions.v1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -12,6 +18,10 @@ const CORE_PANE_ROLES = Object.freeze({
   '2': 'builder',
   '3': 'oracle',
 });
+
+function normalizePath(value) {
+  return comparablePathIdentity(value, { allowMissing: true }) || '';
+}
 
 function ok(value = {}) {
   return { ok: true, ...value };
@@ -27,24 +37,6 @@ function normalizePaneId(value) {
 
 function normalizeRole(value) {
   return String(value ?? '').trim().toLowerCase();
-}
-
-function normalizePath(value) {
-  if (typeof value !== 'string' || !value.trim()) return '';
-  return path.resolve(value.trim()).replace(/[\\/]+$/, '').toLowerCase();
-}
-
-function realPath(value) {
-  try {
-    return fs.realpathSync.native(path.resolve(value));
-  } catch {
-    return null;
-  }
-}
-
-function isInside(root, target) {
-  const rel = path.relative(root, target);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 function defaultCodexSessionRoot(options = {}) {
@@ -88,31 +80,46 @@ function validateTranscript(input = {}, options = {}) {
   if (!transcriptPath) return fail('transcript_path_missing');
 
   const configuredRoot = options.codexSessionRoot || defaultCodexSessionRoot(options);
-  const rootResolved = path.resolve(configuredRoot);
-  const transcriptResolved = path.resolve(transcriptPath);
-  if (!isInside(rootResolved, transcriptResolved)) {
-    return fail('transcript_outside_codex_session_store');
-  }
-  const relativeParts = path.relative(rootResolved, transcriptResolved)
+  const transcriptLexical = path.resolve(transcriptPath);
+  const parsedTranscript = path.parse(transcriptLexical);
+  const lexicalParts = transcriptLexical.slice(parsedTranscript.root.length)
     .split(path.sep)
     .filter(Boolean);
-  let lexicalCursor = rootResolved;
-  for (const part of relativeParts) {
+  let lexicalCursor = parsedTranscript.root;
+  let lexicalMissing = false;
+  for (const part of lexicalParts) {
     lexicalCursor = path.join(lexicalCursor, part);
     try {
       if (fs.lstatSync(lexicalCursor).isSymbolicLink()) {
         return fail('transcript_symlink_refused');
       }
     } catch (err) {
-      if (err.code === 'ENOENT') return fail('transcript_missing');
+      if (err.code === 'ENOENT') {
+        lexicalMissing = true;
+        break;
+      }
       return fail('transcript_unreadable', { message: err.message });
     }
   }
-  const rootReal = realPath(configuredRoot);
-  const transcriptReal = realPath(transcriptPath);
+
+  const rootResolved = canonicalizePathIdentity(configuredRoot, { allowMissing: false });
+  const transcriptResolved = canonicalizePathIdentity(transcriptPath, { allowMissing: true });
+  if (!rootResolved) return fail('codex_session_root_missing');
+  if (!transcriptResolved || !canonicalPathContains(rootResolved, transcriptResolved, {
+    allowEqual: true,
+    allowMissing: true,
+  })) {
+    return fail('transcript_outside_codex_session_store');
+  }
+  if (lexicalMissing) return fail('transcript_missing');
+
+  const rootReal = rootResolved;
+  const transcriptReal = canonicalizePathIdentity(transcriptPath, { allowMissing: false });
   if (!rootReal) return fail('codex_session_root_missing');
   if (!transcriptReal) return fail('transcript_missing');
-  if (!isInside(rootReal, transcriptReal)) return fail('transcript_outside_codex_session_store');
+  if (!canonicalPathContains(rootReal, transcriptReal, { allowEqual: true, allowMissing: false })) {
+    return fail('transcript_outside_codex_session_store');
+  }
 
   let stat;
   try {
@@ -127,7 +134,7 @@ function validateTranscript(input = {}, options = {}) {
   if (!UUID_RE.test(meta.sessionId) || meta.sessionId.toLowerCase() !== String(input.sessionId || '').toLowerCase()) {
     return fail('transcript_session_id_mismatch');
   }
-  if (!meta.cwd || normalizePath(meta.cwd) !== normalizePath(input.cwd)) {
+  if (!meta.cwd || !canonicalPathsEqual(meta.cwd, input.cwd, { allowMissing: true })) {
     return fail('transcript_cwd_mismatch');
   }
   return ok({ transcriptPath: transcriptReal, sessionMeta: meta });
@@ -167,8 +174,8 @@ function validateBindingFacts(input = {}, options = {}) {
     }
   }
   if (!cwd || !projectRoot || !expectedCwd) return fail('cwd_identity_missing');
-  if (normalizePath(cwd) !== normalizePath(projectRoot)
-      || normalizePath(cwd) !== normalizePath(expectedCwd)) {
+  if (!canonicalPathsEqual(cwd, projectRoot, { allowMissing: true })
+      || !canonicalPathsEqual(cwd, expectedCwd, { allowMissing: true })) {
     return fail('cwd_identity_mismatch');
   }
   if (!PANE_LAUNCH_RE.test(String(input.paneLaunchId || '').trim())) {

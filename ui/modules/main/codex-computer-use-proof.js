@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { pathToFileURL } = require('url');
+const { canonicalPathsEqual } = require('../canonical-path');
 
 const PROOF_ATTESTATION_SCHEMA = 'squidrun.codex_computer_use_post_tool_attestation.v1';
 const PROOF_JOURNAL_SCHEMA = 'squidrun.codex_computer_use_post_tool_journal.v1';
@@ -40,10 +41,7 @@ function normalizePath(value) {
 }
 
 function pathsEqual(left, right, platform = process.platform) {
-  const a = normalizePath(left);
-  const b = normalizePath(right);
-  if (!a || !b) return false;
-  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  return canonicalPathsEqual(left, right, { platform, allowMissing: true });
 }
 
 // EXTRACTED, NOT COPIED. This rule is now shared with the v7 section 4 Telegram

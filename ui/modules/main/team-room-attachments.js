@@ -3,6 +3,10 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const {
+  canonicalPathContains,
+  canonicalizePathIdentity,
+} = require('../canonical-path');
 
 const DEFAULT_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const HASH_CHUNK_BYTES = 1024 * 1024;
@@ -33,15 +37,31 @@ function sanitizeAttachmentName(value) {
   return safe || 'attachment';
 }
 
-function isContainedPath(rootPath, candidatePath) {
-  const relative = path.relative(rootPath, candidatePath);
-  return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
-}
-
 function resolveSafeExistingFile(rootPath, candidatePath) {
-  const resolvedRoot = path.resolve(String(rootPath || ''));
-  const resolvedCandidate = path.resolve(String(candidatePath || ''));
-  if (!rootPath || !candidatePath || !isContainedPath(resolvedRoot, resolvedCandidate)) {
+  const candidateLexical = path.resolve(String(candidatePath || ''));
+  const parsedCandidate = path.parse(candidateLexical);
+  let lexicalCursor = parsedCandidate.root;
+  const lexicalParts = candidateLexical.slice(parsedCandidate.root.length)
+    .split(path.sep)
+    .filter(Boolean);
+  for (const part of lexicalParts) {
+    lexicalCursor = path.join(lexicalCursor, part);
+    try {
+      if (fs.lstatSync(lexicalCursor).isSymbolicLink()) {
+        return { ok: false, reason: 'attachment_symlink_forbidden' };
+      }
+    } catch {
+      break;
+    }
+  }
+
+  const resolvedRoot = canonicalizePathIdentity(String(rootPath || ''), { allowMissing: true });
+  const resolvedCandidate = canonicalizePathIdentity(String(candidatePath || ''), { allowMissing: true });
+  if (!rootPath || !candidatePath || !resolvedRoot || !resolvedCandidate
+      || !canonicalPathContains(resolvedRoot, resolvedCandidate, {
+        allowEqual: false,
+        allowMissing: true,
+      })) {
     return { ok: false, reason: 'attachment_path_outside_root' };
   }
 
@@ -59,7 +79,10 @@ function resolveSafeExistingFile(rootPath, candidatePath) {
       if (item.isSymbolicLink()) return { ok: false, reason: 'attachment_symlink_forbidden' };
     }
     const candidateReal = fs.realpathSync.native(resolvedCandidate);
-    if (!isContainedPath(rootReal, candidateReal)) {
+    if (!canonicalPathContains(rootReal, candidateReal, {
+      allowEqual: false,
+      allowMissing: false,
+    })) {
       return { ok: false, reason: 'attachment_real_path_outside_root' };
     }
     const stat = fs.statSync(candidateReal);

@@ -6,7 +6,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 
 ## Metadata
 - Source command: `git ls-files --cached --others --exclude-standard`
-- Total files listed: 1284
+- Total files listed: 1286
 - Scope: tracked files plus nonignored untracked files visible to Git
 - Excluded by design: ignored dependencies, runtime databases, logs, backups, local private overlays, and other files hidden by `.gitignore`
 - Freshness semantics: committed Markdown omits volatile commit identity, branch name, working-tree status, and file byte counts; use `--json` for live diagnostics.
@@ -19,8 +19,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - root: 26
 - scripts: 1
 - tools: 3
-- ui/__tests__: 536
-- ui/modules: 441
+- ui/__tests__: 537
+- ui/modules: 442
 - ui/other: 55
 - ui/scripts: 172
 - ui/styles: 19
@@ -32,8 +32,8 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 - file: 1
 - jpg: 1
 - script: 174
-- source: 463
-- test: 536
+- source: 464
+- test: 537
 - txt: 3
 - webmanifest: 1
 - woff2: 7
@@ -173,6 +173,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/__tests__/build-1b-native-probe.test.js` | test |
 | `ui/__tests__/build-1b-window-capture.test.js` | test |
 | `ui/__tests__/bus-reliability-trace.test.js` | test |
+| `ui/__tests__/canonical-path.test.js` | test |
 | `ui/__tests__/capability-planner.test.js` | test |
 | `ui/__tests__/capture-only-terminal-fence-orchestrator.test.js` | test |
 | `ui/__tests__/capture-only-terminal-session.test.js` | test |
@@ -690,6 +691,7 @@ This file is the full Git-visible inventory for agent navigation. It is delibera
 | `ui/modules/bridge/safe-ipc.js` | source |
 | `ui/modules/buffered-file-writer.js` | source |
 | `ui/modules/bus-reliability-trace.js` | source |
+| `ui/modules/canonical-path.js` | source |
 | `ui/modules/capability-planner.js` | source |
 | `ui/modules/claude-model-options.js` | source |
 | `ui/modules/claude-session-process-reaper.js` | source |

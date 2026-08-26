@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { canonicalPathsEqual } = require('./canonical-path');
 
 const SOURCE_PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const MAIN_ORACLE_CODEX_POLICY = Object.freeze({
@@ -24,14 +25,7 @@ function normalizePolicyToken(value) {
 }
 
 function pathsEqual(left, right, platform = process.platform) {
-  const leftPath = normalizeText(left);
-  const rightPath = normalizeText(right);
-  if (!leftPath || !rightPath) return false;
-  const resolvedLeft = path.resolve(leftPath);
-  const resolvedRight = path.resolve(rightPath);
-  return platform === 'win32'
-    ? resolvedLeft.toLowerCase() === resolvedRight.toLowerCase()
-    : resolvedLeft === resolvedRight;
+  return canonicalPathsEqual(left, right, { platform, allowMissing: true });
 }
 
 function tokenizeCommand(command = '') {

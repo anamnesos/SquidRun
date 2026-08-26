@@ -691,7 +691,7 @@ describe('fresh target-only Codex invocation', () => {
       env: {},
     })).toEqual(expect.objectContaining({
       ok: true,
-      path: fs.realpathSync(executablePath),
+      path: fs.realpathSync.native(executablePath),
       sha256: proof.sha256File(executablePath),
       packageVersion: '0.146.0',
       platformPackageVersion: '0.146.0-win32-x64',
@@ -726,7 +726,7 @@ describe('fresh target-only Codex invocation', () => {
     expect(invocation.command).not.toContain(state.claim.proof.secret);
     expect(invocation.command).not.toContain('codex-computer-use.exe');
     expect(invocation.command).toContain(
-      `& '${state.codexExecutablePath.replace(/'/gu, "''")}'`
+      `& '${fs.realpathSync.native(state.codexExecutablePath).replace(/'/gu, "''")}'`
     );
   });
 
@@ -905,7 +905,7 @@ describe('fresh target-only Codex invocation', () => {
     expect(invocation).toEqual(expect.objectContaining({
       ok: true,
       argv: [
-        state.codexExecutablePath,
+        fs.realpathSync.native(state.codexExecutablePath),
         '--model',
         'gpt-5.6-sol',
         '--search',
@@ -917,7 +917,7 @@ describe('fresh target-only Codex invocation', () => {
       ],
     }));
     expect(invocation.command).toContain(
-      `& '${state.codexExecutablePath.replace(/'/gu, "''")}' `
+      `& '${fs.realpathSync.native(state.codexExecutablePath).replace(/'/gu, "''")}' `
         + "'--model' 'gpt-5.6-sol'"
     );
     expect(invocation.command).toContain("'--ask-for-approval' 'never'");
@@ -1021,7 +1021,7 @@ describe('fresh target-only Codex invocation', () => {
       state.claim
     )).toEqual(expect.objectContaining({
       ok: true,
-      argv: [state.codexExecutablePath],
+      argv: [fs.realpathSync.native(state.codexExecutablePath)],
     }));
   });
 
@@ -1036,7 +1036,7 @@ describe('fresh target-only Codex invocation', () => {
     )).toEqual(expect.objectContaining({
       ok: true,
       argv: [
-        state.codexExecutablePath,
+        fs.realpathSync.native(state.codexExecutablePath),
         '--model',
         'gpt-5.6-sol',
         '--sandbox',
