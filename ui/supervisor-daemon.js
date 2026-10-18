@@ -5787,7 +5787,9 @@ class SupervisorDaemon {
     const targets = [];
 
     if (fs.existsSync(paths.knowledgeDir)) {
-      targets.push(path.join(paths.knowledgeDir, '**', '*.md'));
+      // chokidar >= 4 has no glob support: watch the directory and keep
+      // only Markdown files via getMemoryIndexWatchIgnored().
+      targets.push(paths.knowledgeDir);
     }
     if (fs.existsSync(path.dirname(paths.handoffPath))) {
       targets.push(paths.handoffPath);
@@ -5795,7 +5797,7 @@ class SupervisorDaemon {
     if (Array.isArray(paths.caseEvidenceDirs)) {
       for (const evidenceDir of paths.caseEvidenceDirs) {
         if (fs.existsSync(evidenceDir)) {
-          targets.push(path.join(evidenceDir, '**', '*'));
+          targets.push(evidenceDir);
         }
       }
     }
@@ -5964,6 +5966,18 @@ class SupervisorDaemon {
     return this.memoryIndexRefreshPromise;
   }
 
+  getMemoryIndexWatchIgnored() {
+    const paths = resolveWorkspacePaths();
+    const knowledgeDir = paths.knowledgeDir ? path.resolve(paths.knowledgeDir) : '';
+    return (candidatePath, stats) => {
+      if (!knowledgeDir || !stats || !stats.isFile()) return false;
+      const resolved = path.resolve(String(candidatePath || ''));
+      const rel = path.relative(knowledgeDir, resolved);
+      if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return false;
+      return path.extname(resolved).toLowerCase() !== '.md';
+    };
+  }
+
   startMemoryIndexWatcher() {
     if (!this.memoryIndexEnabled || this.memoryIndexWatcher) return;
     const targets = this.getMemoryIndexWatchTargets();
@@ -5974,6 +5988,7 @@ class SupervisorDaemon {
 
     this.memoryIndexWatcher = chokidar.watch(targets, {
       ignoreInitial: true,
+      ignored: this.getMemoryIndexWatchIgnored(),
       awaitWriteFinish: {
         stabilityThreshold: 500,
         pollInterval: 100,
